@@ -423,6 +423,43 @@ textarea:focus{border-color:var(--accent);}
   padding:10px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;margin-top:10px;}
 .food-study-btn{background:none;border:none;color:var(--accent2);font-size:11px;cursor:pointer;
   padding:2px 6px;border-radius:4px;font-family:'DM Sans',sans-serif;}
+
+/* FITNESS TAB */
+.fitness-goal-card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);
+  padding:14px;margin-bottom:10px;position:relative;}
+.fitness-goal-card.completed{border-color:var(--fiber);opacity:.8;}
+.fg-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.fg-icon{font-size:24px;}
+.fg-info{flex:1;}
+.fg-name{font-size:14px;font-weight:700;}
+.fg-category{font-size:11px;color:var(--muted);}
+.fg-progress-bar{height:8px;background:var(--bg4);border-radius:99px;overflow:hidden;margin:8px 0;}
+.fg-progress-fill{height:100%;border-radius:99px;transition:width .7s cubic-bezier(.4,0,.2,1);}
+.fg-stats{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);}
+.fg-current{font-family:'Syne',sans-serif;font-size:16px;font-weight:800;color:var(--accent2);}
+.fg-target{font-size:12px;color:var(--muted);}
+.fg-actions{display:flex;gap:8px;margin-top:10px;}
+.fg-log-btn{flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;
+  padding:8px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;}
+.fg-delete-btn{background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;
+  padding:8px 12px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;}
+.fg-milestone{display:inline-flex;align-items:center;gap:4px;background:var(--bg4);
+  border-radius:99px;padding:3px 8px;font-size:11px;margin:2px;color:var(--muted);}
+.fg-milestone.reached{background:rgba(45,212,160,.15);color:var(--fiber);}
+.workout-log-entry{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);}
+.workout-log-entry:last-child{border-bottom:none;}
+.wle-info{flex:1;}
+.wle-name{font-size:13px;font-weight:600;}
+.wle-meta{font-size:11px;color:var(--muted);margin-top:2px;}
+.wle-val{font-family:'Syne',sans-serif;font-size:16px;font-weight:800;color:var(--accent2);}
+.category-filter{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;}
+.category-filter::-webkit-scrollbar{display:none;}
+.cat-pill{flex-shrink:0;padding:5px 12px;border-radius:99px;border:1px solid var(--border2);
+  background:var(--bg3);font-size:12px;font-weight:600;cursor:pointer;transition:.15s;
+  font-family:'DM Sans',sans-serif;color:var(--muted);}
+.cat-pill.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.streak-badge{display:flex;align-items:center;gap:6px;background:var(--bg4);border-radius:10px;
+  padding:8px 12px;margin-bottom:8px;}
 </style>
 </head>
 <body>
@@ -624,10 +661,55 @@ textarea:focus{border-color:var(--accent);}
         <div class="card-title">Micronutrients</div>
         <div id="goal-rows-micro"></div>
       </div>
+      <div class="card">
+        <div class="card-title">🏋️ Fitness Goals</div>
+        <div id="fitness-goals-summary"></div>
+        <button onclick="showPage('fitness',document.querySelector('.nav-btn:nth-child(5)'))" style="width:100%;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:10px;padding:10px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;margin-top:8px;">Go to Fitness Tab →</button>
+      </div>
     </div>
 
 
 
+
+    <!-- ══ FITNESS PAGE ══ -->
+    <div class="page" id="page-fitness">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div><div class="page-title">Fitness</div><div class="page-date">Goal Tracking</div></div>
+          <button class="hdr-action" onclick="openFitnessGoalModal()">＋ Goal</button>
+        </div>
+      </div>
+
+      <!-- AI Goal Generator -->
+      <div class="card">
+        <div class="card-title">🤖 AI Goal Suggestions</div>
+        <div class="ai-desc">Tell AI what you want to achieve and it will create specific, measurable fitness goals with milestones.</div>
+        <div class="input-group">
+          <label class="input-label">What do you want to achieve?</label>
+          <textarea id="fitness-ai-input" rows="3" placeholder="e.g. I want to bench press 315 lbs eventually&#10;or: hike 9 miles without stopping&#10;or: run a 5K in under 25 minutes&#10;or: do 20 pull-ups"></textarea>
+        </div>
+        <button class="btn-ai" onclick="generateFitnessGoals()" id="fitness-ai-btn">
+          <span>🤖 Generate Goals & Milestones</span>
+        </button>
+        <div id="fitness-ai-status" class="ai-status"></div>
+      </div>
+
+      <!-- Category Filter -->
+      <div style="padding:0 16px;">
+        <div class="category-filter" id="fitness-category-filter"></div>
+      </div>
+
+      <!-- Goals List -->
+      <div id="fitness-goals-list"></div>
+
+      <!-- Recent Workout Log -->
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div class="card-title" style="margin:0;">📋 Recent Workouts</div>
+        </div>
+        <div id="recent-workouts-list"></div>
+      </div>
+    </div>
     <!-- ══ HEALTH PAGE ══ -->
     <div class="page" id="page-health">
       <div class="hdr">
@@ -792,6 +874,10 @@ textarea:focus{border-color:var(--accent);}
     <button class="nav-btn" onclick="showPage('planner',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       <span>Planner</span>
+    </button>
+    <button class="nav-btn" onclick="showPage('fitness',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6.5 6.5h11M6.5 17.5h11M3 12h18"/><circle cx="6.5" cy="6.5" r="2"/><circle cx="17.5" cy="6.5" r="2"/><circle cx="6.5" cy="17.5" r="2"/><circle cx="17.5" cy="17.5" r="2"/></svg>
+      <span>Fitness</span>
     </button>
     <button class="nav-btn" onclick="showPage('health',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -1068,6 +1154,7 @@ function showPage(name, btn){
   if(name==='search') initSearchPage();
   if(name==='planner') initPlannerPage();
   if(name==='health') initHealthPage();
+  if(name==='fitness') initFitnessPage();
 }
 
 function changeDay(dir){
@@ -2149,6 +2236,49 @@ function addFromSearch(food){
 </script>
 
 
+
+<!-- FITNESS GOAL MODAL -->
+<div id="fitness-goal-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);z-index:500;align-items:flex-end;justify-content:center;">
+  <div style="background:var(--bg2);border-radius:24px 24px 0 0;border:1px solid var(--border2);width:100%;max-width:480px;padding:20px 20px max(20px,env(safe-area-inset-bottom));max-height:90vh;overflow-y:auto;">
+    <div style="width:36px;height:4px;background:var(--muted2);border-radius:99px;margin:0 auto 18px;"></div>
+    <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;margin-bottom:16px;">🏋️ New Fitness Goal</div>
+    <div class="input-group"><label class="input-label">Goal Name</label><input type="text" id="fg-name" placeholder="e.g. Bench Press 315 lbs"></div>
+    <div class="input-group">
+      <label class="input-label">Category</label>
+      <select id="fg-category">
+        <option value="Strength">💪 Strength</option>
+        <option value="Cardio">🏃 Cardio</option>
+        <option value="Endurance">🥾 Endurance</option>
+        <option value="Flexibility">🧘 Flexibility</option>
+        <option value="Body">⚖️ Body</option>
+        <option value="Sport">🏅 Sport</option>
+        <option value="Other">🎯 Other</option>
+      </select>
+    </div>
+    <div class="input-row">
+      <div class="input-group"><label class="input-label">Current</label><input type="number" id="fg-current" placeholder="0" step="any" min="0"></div>
+      <div class="input-group"><label class="input-label">Target</label><input type="number" id="fg-target" placeholder="315" step="any" min="0"></div>
+    </div>
+    <div class="input-group"><label class="input-label">Unit</label><input type="text" id="fg-unit" placeholder="e.g. lbs, miles, minutes, reps"></div>
+    <div class="input-group"><label class="input-label">Notes / Why</label><textarea id="fg-notes" rows="2" placeholder="Why is this goal important to you?"></textarea></div>
+    <div class="input-group"><label class="input-label">Target Date (optional)</label><input type="date" id="fg-date"></div>
+    <button onclick="saveFitnessGoal()" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:var(--r2);padding:14px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:600;cursor:pointer;">＋ Add Goal</button>
+    <button onclick="document.getElementById('fitness-goal-modal').style.display='none'" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:var(--r2);padding:12px;font-family:'DM Sans',sans-serif;font-size:14px;cursor:pointer;margin-top:8px;">Cancel</button>
+  </div>
+</div>
+
+<!-- LOG PROGRESS MODAL -->
+<div id="fitness-log-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);z-index:500;align-items:flex-end;justify-content:center;">
+  <div style="background:var(--bg2);border-radius:24px 24px 0 0;border:1px solid var(--border2);width:100%;max-width:480px;padding:20px 20px max(20px,env(safe-area-inset-bottom));">
+    <div style="width:36px;height:4px;background:var(--muted2);border-radius:99px;margin:0 auto 18px;"></div>
+    <div style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;margin-bottom:4px;" id="log-modal-title">Log Progress</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;" id="log-modal-subtitle"></div>
+    <div class="input-group"><label class="input-label">New Value</label><input type="number" id="fg-log-value" placeholder="0" step="any" min="0"></div>
+    <div class="input-group"><label class="input-label">Notes (optional)</label><input type="text" id="fg-log-notes" placeholder="e.g. Felt strong today, new PR!"></div>
+    <button onclick="logFitnessProgress()" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:var(--r2);padding:14px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:600;cursor:pointer;">✓ Log Progress</button>
+    <button onclick="document.getElementById('fitness-log-modal').style.display='none'" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:var(--r2);padding:12px;font-family:'DM Sans',sans-serif;font-size:14px;cursor:pointer;margin-top:8px;">Cancel</button>
+  </div>
+</div>
 <!-- EXERCISE MODAL -->
 <div id="exercise-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);z-index:500;align-items:flex-end;justify-content:center;">
   <div style="background:var(--bg2);border-radius:24px 24px 0 0;border:1px solid var(--border2);width:100%;max-width:480px;padding:20px 20px max(20px,env(safe-area-inset-bottom));">
@@ -2685,7 +2815,7 @@ async function generateHealthRecommendations(){
   statusEl.textContent = 'Analyzing your health profile...';
   document.getElementById('health-recommendations').innerHTML = '';
 
-  const prompt = 'You are a clinical nutritionist. A user says: "' + input + '". Create personalized nutrition recommendations. Return ONLY valid JSON (no markdown, no explanation):\n{\n"conditions":["condition1","condition2"],\n"summary":"2 sentence summary of their situation and approach",\n"recommendations":[{"nutrient":"Sodium","icon":"emoji","direction":"decrease","current_typical":3500,"recommended":1500,"unit":"mg","why":"Detailed clinical reason specific to their condition","study_title":"Real study title","study_url":"https://pubmed.ncbi.nlm.nih.gov/12345678","goal_key":"sodium"}],\n"suggested_goals":{"calories":2000,"protein":150,"carbs":200,"fat":65,"fiber":30,"sugar":25,"sodium":1500,"potassium":4700,"vitc":90,"iron":18,"calcium":1000,"vitd":20},\n"goals_reasoning":"Why these specific numbers fit their situation"\n}\nGive 4-7 recommendations. Use real conditions: high BP needs low sodium+high potassium; diabetes needs low sugar+high fiber; high cholesterol needs low fat+high fiber; anemia needs high iron+vitC. All suggested_goals must have realistic positive numbers.';
+  const prompt = 'You are a clinical nutritionist. A user says: "' + input + '". Create personalized nutrition recommendations. Return ONLY valid JSON (no markdown, no explanation):\n{\n"conditions":["condition1","condition2"],\n"summary":"2 sentence summary of their situation and approach",\n"recommendations":[{"nutrient":"Sodium","icon":"emoji","direction":"decrease","current_typical":3500,"recommended":1500,"unit":"mg","why":"Detailed clinical reason specific to their condition","study_title":"Real study title","study_url":"https://pubmed.ncbi.nlm.nih.gov/12345678","goal_key":"sodium"}],\n"suggested_goals":{"calories":2000,"protein":150,"carbs":200,"fat":65,"fiber":30,"sugar":25,"sodium":1500,"potassium":4700,"vitc":90,"iron":18,"calcium":1000,"vitd":20},\n"goals_reasoning":"Why these specific numbers fit their situation"\n}\nGive 4-7 recommendations. Use real conditions: high BP needs low sodium+high potassium; diabetes needs low sugar+high fiber; high cholesterol needs low fat+high fiber; anemia needs high iron+vitC. All suggested_goals must have realistic positive numbers. IMPORTANT: For weight loss, calories MUST be below 2000 (typically 1200-1800 depending on the person). Do NOT default to 2000 calories. Calculate actual TDEE minus deficit. A sedentary person wanting to lose weight should be 1200-1500 calories. An active person 1500-1800. NEVER set calories to exactly 2000 unless they are maintaining weight at high activity.';
 
   try {
     const res = await callClaude({
@@ -2850,7 +2980,7 @@ async function generateWorkoutRecommendations(){
 
   const currentGoals = loadGoals();
 
-  const prompt = 'You are a certified personal trainer and sports nutritionist. A user says: "' + input + '". Their current nutrition goals: calories='+currentGoals.calories+', protein='+currentGoals.protein+'g. Create personalized fitness and nutrition recommendations. Return ONLY valid JSON (no markdown):\n{\n"tags":["goal1","activity level","any limitations"],\n"summary":"2 sentence summary of their fitness situation and strategy",\n"workout_plan":[{"day":"Monday","focus":"Chest & Triceps","exercises":[{"name":"Bench Press","sets":4,"reps":"8-10","notes":"Focus on form"}]},{"day":"Tuesday","focus":"Rest or Cardio"}],\n"recommendations":[{"category":"Nutrition","icon":"emoji","title":"recommendation title","why":"detailed explanation with science","action":"specific actionable advice","study_title":"real study title","study_url":"https://pubmed.ncbi.nlm.nih.gov/PMID"}],\n"suggested_goals":{"calories":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0},\n"goals_reasoning":"why these macros fit their fitness goals",\n"weekly_calorie_burn":0,\n"tdee":0\n}\nRules: For muscle building set protein to 0.7-1g per lb bodyweight. For fat loss create 300-500 cal deficit. For endurance increase carbs. Give a realistic 5-7 day workout plan. Give 3-5 specific recommendations. Use real PubMed studies.';
+  const prompt = 'You are a certified personal trainer and sports nutritionist. A user says: "' + input + '". Their current nutrition goals: calories='+currentGoals.calories+', protein='+currentGoals.protein+'g. Create personalized fitness and nutrition recommendations. Return ONLY valid JSON (no markdown):\n{\n"tags":["goal1","activity level","any limitations"],\n"summary":"2 sentence summary of their fitness situation and strategy",\n"workout_plan":[{"day":"Monday","focus":"Chest & Triceps","exercises":[{"name":"Bench Press","sets":4,"reps":"8-10","notes":"Focus on form"}]},{"day":"Tuesday","focus":"Rest or Cardio"}],\n"recommendations":[{"category":"Nutrition","icon":"emoji","title":"recommendation title","why":"detailed explanation with science","action":"specific actionable advice","study_title":"real study title","study_url":"https://pubmed.ncbi.nlm.nih.gov/PMID"}],\n"suggested_goals":{"calories":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0},\n"goals_reasoning":"why these macros fit their fitness goals",\n"weekly_calorie_burn":0,\n"tdee":0\n}\nRules: For muscle building set protein to 0.7-1g per lb bodyweight. For fat loss create 300-500 cal deficit from TDEE. IMPORTANT: If TDEE is 1800, set calories to 1300-1500. Never default to 2000 for weight loss. Calculate real numbers based on their stats. For endurance increase carbs. Give a realistic 5-7 day workout plan. Give 3-5 specific recommendations. Use real PubMed studies.';
 
   try {
     const res = await callClaude({
@@ -3196,6 +3326,361 @@ function renderHistory(){
 
   // Init calendar in month view
   renderCalMonth();
+}
+
+</script>
+
+<script>
+
+// ══════════════════════════════════════
+// FITNESS GOALS
+// ══════════════════════════════════════
+var currentLogGoalId = null;
+var fitnessCategoryFilter = 'All';
+
+var CATEGORY_ICONS = {
+  'Strength':'💪','Cardio':'🏃','Endurance':'🥾','Flexibility':'🧘',
+  'Body':'⚖️','Sport':'🏅','Other':'🎯','All':'🏋️'
+};
+var CATEGORY_COLORS = {
+  'Strength':'#ff6b9d','Cardio':'#ffb347','Endurance':'#2dd4a0',
+  'Flexibility':'#c084fc','Body':'#4aa8ff','Sport':'#fbbf24','Other':'#6666aa'
+};
+
+function loadFitnessGoals(){
+  try{ return JSON.parse(localStorage.getItem('vitl_fitness_goals')||'[]'); }
+  catch(e){ return []; }
+}
+function saveFitnessGoals(data){ localStorage.setItem('vitl_fitness_goals', JSON.stringify(data)); }
+
+function loadFitnessLog(){
+  try{ return JSON.parse(localStorage.getItem('vitl_fitness_log')||'[]'); }
+  catch(e){ return []; }
+}
+function saveFitnessLog(data){ localStorage.setItem('vitl_fitness_log', JSON.stringify(data)); }
+
+function initFitnessPage(){
+  renderCategoryFilter();
+  renderFitnessGoals();
+  renderRecentWorkouts();
+  syncFitnessGoalsToGoalsTab();
+}
+
+function openFitnessGoalModal(){
+  document.getElementById('fitness-goal-modal').style.display='flex';
+  document.getElementById('fg-name').value='';
+  document.getElementById('fg-current').value='';
+  document.getElementById('fg-target').value='';
+  document.getElementById('fg-unit').value='';
+  document.getElementById('fg-notes').value='';
+  document.getElementById('fg-date').value='';
+}
+
+function saveFitnessGoal(){
+  var name = document.getElementById('fg-name').value.trim();
+  var category = document.getElementById('fg-category').value;
+  var current = parseFloat(document.getElementById('fg-current').value)||0;
+  var target = parseFloat(document.getElementById('fg-target').value)||0;
+  var unit = document.getElementById('fg-unit').value.trim();
+  var notes = document.getElementById('fg-notes').value.trim();
+  var targetDate = document.getElementById('fg-date').value;
+  if(!name||!target) return;
+
+  var goals = loadFitnessGoals();
+  var goal = {
+    id: Date.now(),
+    name: name,
+    category: category,
+    current: current,
+    target: target,
+    unit: unit,
+    notes: notes,
+    targetDate: targetDate,
+    created: dateKey(0),
+    completed: false,
+    milestones: generateMilestones(current, target),
+    history: current > 0 ? [{date:dateKey(0),value:current,notes:'Starting point'}] : []
+  };
+  goals.push(goal);
+  saveFitnessGoals(goals);
+  document.getElementById('fitness-goal-modal').style.display='none';
+  renderCategoryFilter();
+  renderFitnessGoals();
+  syncFitnessGoalsToGoalsTab();
+  showToast('✓ Goal added!');
+}
+
+function generateMilestones(current, target){
+  var milestones = [];
+  var range = target - current;
+  var steps = [0.25, 0.5, 0.75, 1.0];
+  steps.forEach(function(pct){
+    milestones.push({
+      value: Math.round((current + range * pct) * 10) / 10,
+      pct: pct,
+      reached: false
+    });
+  });
+  return milestones;
+}
+
+function openLogModal(goalId){
+  currentLogGoalId = goalId;
+  var goals = loadFitnessGoals();
+  var goal = goals.find(function(g){ return g.id===goalId; });
+  if(!goal) return;
+  document.getElementById('log-modal-title').textContent = goal.name;
+  document.getElementById('log-modal-subtitle').textContent = 'Current: '+goal.current+' '+goal.unit+' → Target: '+goal.target+' '+goal.unit;
+  document.getElementById('fg-log-value').value = '';
+  document.getElementById('fg-log-notes').value = '';
+  document.getElementById('fitness-log-modal').style.display='flex';
+}
+
+function logFitnessProgress(){
+  var value = parseFloat(document.getElementById('fg-log-value').value);
+  var notes = document.getElementById('fg-log-notes').value.trim();
+  if(!value || !currentLogGoalId) return;
+
+  var goals = loadFitnessGoals();
+  var goalIdx = goals.findIndex(function(g){ return g.id===currentLogGoalId; });
+  if(goalIdx === -1) return;
+
+  var goal = goals[goalIdx];
+  var prevValue = goal.current;
+  goal.current = value;
+  goal.history = goal.history||[];
+  goal.history.unshift({date:dateKey(0), value:value, notes:notes});
+
+  // Check milestones
+  var newMilestones = [];
+  goal.milestones.forEach(function(m){
+    var reached = value >= m.value;
+    if(reached && !m.reached){
+      showToast('🎉 Milestone reached: '+m.value+' '+goal.unit+'!', 4000);
+    }
+    newMilestones.push(Object.assign({},m,{reached:reached}));
+  });
+  goal.milestones = newMilestones;
+
+  // Check if completed
+  if(value >= goal.target && !goal.completed){
+    goal.completed = true;
+    showToast('🏆 GOAL ACHIEVED: '+goal.name+'!', 5000);
+  }
+
+  goals[goalIdx] = goal;
+  saveFitnessGoals(goals);
+
+  // Add to fitness log
+  var log = loadFitnessLog();
+  log.unshift({
+    id: Date.now(),
+    goalId: currentLogGoalId,
+    goalName: goal.name,
+    category: goal.category,
+    value: value,
+    unit: goal.unit,
+    prevValue: prevValue,
+    notes: notes,
+    date: dateKey(0)
+  });
+  saveFitnessLog(log.slice(0, 200));
+
+  document.getElementById('fitness-log-modal').style.display='none';
+  renderFitnessGoals();
+  renderRecentWorkouts();
+  syncFitnessGoalsToGoalsTab();
+  showToast('✓ Progress logged!');
+}
+
+function deleteFitnessGoal(id){
+  if(!confirm('Delete this goal?')) return;
+  var goals = loadFitnessGoals().filter(function(g){ return g.id!==id; });
+  saveFitnessGoals(goals);
+  renderCategoryFilter();
+  renderFitnessGoals();
+  syncFitnessGoalsToGoalsTab();
+}
+
+function renderCategoryFilter(){
+  var goals = loadFitnessGoals();
+  var categories = ['All'];
+  goals.forEach(function(g){ if(categories.indexOf(g.category)===-1) categories.push(g.category); });
+  var el = document.getElementById('fitness-category-filter');
+  if(!el) return;
+  el.innerHTML = categories.map(function(c){
+    return '<button class="cat-pill '+(c===fitnessCategoryFilter?'active':'')+'" data-cat="'+c+'" onclick="setFitnessCategory(this.dataset.cat)">'+(CATEGORY_ICONS[c]||'')+'  '+c+'</button>';
+  }).join('');
+}
+
+function setFitnessCategory(cat){
+  fitnessCategoryFilter = cat;
+  renderCategoryFilter();
+  renderFitnessGoals();
+}
+
+function renderFitnessGoals(){
+  var el = document.getElementById('fitness-goals-list');
+  if(!el) return;
+  var goals = loadFitnessGoals();
+  if(fitnessCategoryFilter !== 'All'){
+    goals = goals.filter(function(g){ return g.category===fitnessCategoryFilter; });
+  }
+  // Sort: incomplete first, then by progress %
+  goals.sort(function(a,b){
+    if(a.completed !== b.completed) return a.completed ? 1 : -1;
+    var pctA = a.current/a.target;
+    var pctB = b.current/b.target;
+    return pctB - pctA;
+  });
+  if(!goals.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">🎯</div><div class="empty-text">No fitness goals yet.<br>Tap + Goal or use AI to create goals.</div></div>';
+    return;
+  }
+  el.innerHTML = goals.map(function(goal){
+    var pct = Math.min(100, (goal.current/goal.target)*100);
+    var color = CATEGORY_COLORS[goal.category]||'var(--accent)';
+    var remaining = goal.target - goal.current;
+    var reachedCount = (goal.milestones||[]).filter(function(m){return m.reached;}).length;
+    var totalMilestones = (goal.milestones||[]).length;
+    var daysLeft = '';
+    if(goal.targetDate){
+      var target = new Date(goal.targetDate);
+      var today = new Date();
+      var diff = Math.ceil((target-today)/(1000*60*60*24));
+      daysLeft = diff > 0 ? diff+' days left' : diff===0 ? 'Due today!' : Math.abs(diff)+' days overdue';
+    }
+    var lastEntry = goal.history&&goal.history.length>0 ? goal.history[0] : null;
+    var improvement = lastEntry && goal.history.length>1 ? (goal.history[0].value - goal.history[1].value) : null;
+
+    return '<div class="fitness-goal-card'+(goal.completed?' completed':'')+'">'+
+      '<div class="fg-header">'+
+        '<span class="fg-icon">'+(CATEGORY_ICONS[goal.category]||'🎯')+'</span>'+
+        '<div class="fg-info">'+
+          '<div class="fg-name">'+(goal.completed?'✅ ':'')+goal.name+'</div>'+
+          '<div class="fg-category" style="color:'+color+';">'+goal.category+(daysLeft?' · '+daysLeft:'')+'</div>'+
+        '</div>'+
+        '<div style="text-align:right;">'+
+          '<div class="fg-current">'+goal.current+'</div>'+
+          '<div class="fg-target">of '+goal.target+' '+goal.unit+'</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="fg-progress-bar">'+
+        '<div class="fg-progress-fill" style="width:'+pct+'%;background:'+color+';"></div>'+
+      '</div>'+
+      '<div class="fg-stats">'+
+        '<span>'+pct.toFixed(0)+'% complete</span>'+
+        (remaining>0?'<span>'+remaining+' '+goal.unit+' to go</span>':'<span style="color:var(--fiber);">Goal achieved!</span>')+
+      '</div>'+
+      (goal.milestones&&goal.milestones.length?
+        '<div style="margin-top:8px;display:flex;flex-wrap:wrap;">'+(goal.milestones.map(function(m){
+          return '<span class="fg-milestone'+(m.reached?' reached':'')+'">'+
+            (m.reached?'✓ ':'')+m.value+' '+goal.unit+' ('+Math.round(m.pct*100)+'%)'+
+          '</span>';
+        }).join(''))+'</div>':'')+
+      (improvement!==null?
+        '<div style="font-size:12px;color:'+(improvement>0?'var(--fiber)':improvement<0?'var(--sugar)':'var(--muted)')+';margin-top:6px;">'+
+          (improvement>0?'↑ +':improvement<0?'↓ ':'')+improvement+' '+goal.unit+' since last log'+
+        '</div>':'')+
+      (goal.notes?'<div style="font-size:12px;color:var(--muted);margin-top:6px;font-style:italic;">'+goal.notes+'</div>':'')+
+      '<div class="fg-actions">'+
+        (goal.completed?'':'<button class="fg-log-btn" onclick="openLogModal('+goal.id+')">📊 Log Progress</button>')+
+        '<button class="fg-delete-btn" onclick="deleteFitnessGoal('+goal.id+')">Delete</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+function renderRecentWorkouts(){
+  var el = document.getElementById('recent-workouts-list');
+  if(!el) return;
+  var log = loadFitnessLog().slice(0,10);
+  if(!log.length){
+    el.innerHTML='<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px;">No workouts logged yet.</div>';
+    return;
+  }
+  el.innerHTML = log.map(function(entry){
+    var color = CATEGORY_COLORS[entry.category]||'var(--accent)';
+    return '<div class="workout-log-entry">'+
+      '<div style="font-size:20px;margin-right:10px;">'+(CATEGORY_ICONS[entry.category]||'🎯')+'</div>'+
+      '<div class="wle-info">'+
+        '<div class="wle-name">'+entry.goalName+'</div>'+
+        '<div class="wle-meta">'+entry.date+(entry.notes?' · '+entry.notes:'')+'</div>'+
+      '</div>'+
+      '<div class="wle-val" style="color:'+color+';">'+entry.value+' '+entry.unit+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+async function generateFitnessGoals(){
+  var input = document.getElementById('fitness-ai-input').value.trim();
+  if(!input){ document.getElementById('fitness-ai-input').focus(); return; }
+
+  var btn = document.getElementById('fitness-ai-btn');
+  var statusEl = document.getElementById('fitness-ai-status');
+  btn.disabled=true;
+  btn.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  statusEl.textContent='Creating your fitness goals...';
+
+  var prompt = 'A person wants to achieve: "'+input+'". Create specific measurable fitness goals with realistic milestones. Return ONLY JSON (no markdown):\n{\n"goals":[{\n"name":"Bench Press",\n"category":"Strength",\n"current":135,\n"target":315,\n"unit":"lbs",\n"notes":"Why this matters",\n"intermediate_goals":["Bench 185 lbs","Bench 225 lbs","Bench 275 lbs"],\n"weekly_plan":"What to do each week to achieve this",\n"timeframe":"Realistic timeframe like 18 months"\n}]\n}\nCreate 2-4 specific, measurable goals. For strength: include current estimated ability if not stated. For cardio/endurance: break down distance/time goals. For each goal give realistic intermediate milestones. Category options: Strength, Cardio, Endurance, Flexibility, Body, Sport, Other.';
+
+  try {
+    var res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:prompt}]});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data = await res.json();
+    var text = (data.content&&data.content[0]&&data.content[0].text)||'';
+    var match = text.match(/\{[\s\S]*\}/);
+    if(!match) throw new Error('No JSON');
+    var result = JSON.parse(match[0]);
+
+    var goals = loadFitnessGoals();
+    result.goals.forEach(function(g){
+      var newGoal = {
+        id: Date.now()+Math.random(),
+        name: g.name,
+        category: g.category||'Other',
+        current: g.current||0,
+        target: g.target,
+        unit: g.unit,
+        notes: (g.notes||'')+(g.weekly_plan?' | Plan: '+g.weekly_plan:'')+(g.timeframe?' | Timeframe: '+g.timeframe:''),
+        created: dateKey(0),
+        completed: false,
+        milestones: generateMilestones(g.current||0, g.target),
+        history: g.current>0?[{date:dateKey(0),value:g.current,notes:'AI estimated starting point'}]:[]
+      };
+      goals.push(newGoal);
+    });
+    saveFitnessGoals(goals);
+    renderCategoryFilter();
+    renderFitnessGoals();
+    syncFitnessGoalsToGoalsTab();
+    statusEl.textContent='✓ '+result.goals.length+' goals created!';
+    document.getElementById('fitness-ai-input').value='';
+  } catch(e){
+    statusEl.textContent='Error: '+(e.message||'Try again');
+  }
+  btn.disabled=false;
+  btn.innerHTML='<span>🤖 Generate Goals & Milestones</span>';
+}
+
+// Sync fitness goals summary to Goals tab
+function syncFitnessGoalsToGoalsTab(){
+  var goals = loadFitnessGoals();
+  var el = document.getElementById('fitness-goals-summary');
+  if(!el) return;
+  if(!goals.length){
+    el.innerHTML='<div style="text-align:center;padding:12px;color:var(--muted);font-size:13px;">No fitness goals yet. Go to the Fitness tab to add goals.</div>';
+    return;
+  }
+  var active = goals.filter(function(g){return !g.completed;});
+  var completed = goals.filter(function(g){return g.completed;});
+  el.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:10px;">'+'<div style="flex:1;background:var(--bg4);border-radius:8px;padding:10px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:var(--accent2);">'+active.length+'</div><div style="font-size:10px;color:var(--muted);">Active</div></div>'+'<div style="flex:1;background:var(--bg4);border-radius:8px;padding:10px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:var(--fiber);">'+completed.length+'</div><div style="font-size:10px;color:var(--muted);">Achieved</div></div>'+'</div>'+
+  active.slice(0,3).map(function(g){
+    var pct=Math.min(100,(g.current/g.target)*100);
+    var color=CATEGORY_COLORS[g.category]||'var(--accent)';
+    return '<div style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;"><span style="font-weight:600;">'+g.name+'</span><span style="color:'+color+';">'+g.current+'/'+g.target+' '+g.unit+'</span></div><div style="height:6px;background:var(--bg4);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:99px;"></div></div></div>';
+  }).join('')+
+  (active.length>3?'<div style="font-size:12px;color:var(--muted);text-align:center;">+'+( active.length-3)+' more goals</div>':'');
 }
 
 </script>
