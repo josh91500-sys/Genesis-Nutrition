@@ -3381,6 +3381,7 @@ function saveFitnessGoal(){
   var category = document.getElementById('fg-category').value;
   var current = parseFloat(document.getElementById('fg-current').value)||0;
   var target = parseFloat(document.getElementById('fg-target').value)||0;
+  if(!target){ alert('Please enter a target number'); return; }
   var unit = document.getElementById('fg-unit').value.trim();
   var notes = document.getElementById('fg-notes').value.trim();
   var targetDate = document.getElementById('fg-date').value;
@@ -3412,13 +3413,16 @@ function saveFitnessGoal(){
 
 function generateMilestones(current, target){
   var milestones = [];
-  var range = target - current;
+  var c = parseFloat(current)||0;
+  var t = parseFloat(target)||0;
+  if(!t) return milestones;
+  var range = t - c;
   var steps = [0.25, 0.5, 0.75, 1.0];
   steps.forEach(function(pct){
     milestones.push({
-      value: Math.round((current + range * pct) * 10) / 10,
+      value: Math.round((c + range * pct) * 10) / 10,
       pct: pct,
-      reached: false
+      reached: c >= (c + range * pct)
     });
   });
   return milestones;
@@ -3463,7 +3467,7 @@ function logFitnessProgress(){
   goal.milestones = newMilestones;
 
   // Check if completed
-  if(value >= goal.target && !goal.completed){
+  if(value >= parseFloat(goal.target) && !goal.completed){
     goal.completed = true;
     showToast('🏆 GOAL ACHIEVED: '+goal.name+'!', 5000);
   }
@@ -3538,7 +3542,10 @@ function renderFitnessGoals(){
     return;
   }
   el.innerHTML = goals.map(function(goal){
-    var pct = Math.min(100, (goal.current/goal.target)*100);
+    var cur = parseFloat(goal.current)||0;
+    var tgt = parseFloat(goal.target)||1;
+    var pct = tgt > 0 ? Math.min(100, (cur/tgt)*100) : 0;
+    goal.current = cur; goal.target = tgt;
     var color = CATEGORY_COLORS[goal.category]||'var(--accent)';
     var remaining = goal.target - goal.current;
     var reachedCount = (goal.milestones||[]).filter(function(m){return m.reached;}).length;
@@ -3622,7 +3629,7 @@ async function generateFitnessGoals(){
   btn.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
   statusEl.textContent='Creating your fitness goals...';
 
-  var prompt = 'A person wants to achieve: "'+input+'". Create specific measurable fitness goals with realistic milestones. Return ONLY JSON (no markdown):\n{\n"goals":[{\n"name":"Bench Press",\n"category":"Strength",\n"current":135,\n"target":315,\n"unit":"lbs",\n"notes":"Why this matters",\n"intermediate_goals":["Bench 185 lbs","Bench 225 lbs","Bench 275 lbs"],\n"weekly_plan":"What to do each week to achieve this",\n"timeframe":"Realistic timeframe like 18 months"\n}]\n}\nCreate 2-4 specific, measurable goals. For strength: include current estimated ability if not stated. For cardio/endurance: break down distance/time goals. For each goal give realistic intermediate milestones. Category options: Strength, Cardio, Endurance, Flexibility, Body, Sport, Other.';
+  var prompt = 'A person wants to achieve: "'+input+'". Create specific measurable fitness goals with realistic milestones. Return ONLY JSON (no markdown):\n{\n"goals":[{\n"name":"Bench Press",\n"category":"Strength",\n"current":135,\n"target":315,\n"unit":"lbs",\n"notes":"Why this matters",\n"intermediate_goals":["Bench 185 lbs","Bench 225 lbs","Bench 275 lbs"],\n"weekly_plan":"What to do each week to achieve this",\n"timeframe":"Realistic timeframe like 18 months"\n}]\n}\nCreate 2-4 specific, measurable goals. For strength: current MUST be a single number (e.g. 135 for bench, 0 for hiking miles). NEVER use strings, ranges or text for current or target - only plain numbers. If unknown, use 0 for current. For cardio/endurance: break down distance/time goals. For each goal give realistic intermediate milestones. Category options: Strength, Cardio, Endurance, Flexibility, Body, Sport, Other.';
 
   try {
     var res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:prompt}]});
@@ -3639,8 +3646,8 @@ async function generateFitnessGoals(){
         id: Date.now()+Math.random(),
         name: g.name,
         category: g.category||'Other',
-        current: g.current||0,
-        target: g.target,
+        current: parseFloat(g.current)||0,
+        target: parseFloat(g.target)||0,
         unit: g.unit,
         notes: (g.notes||'')+(g.weekly_plan?' | Plan: '+g.weekly_plan:'')+(g.timeframe?' | Timeframe: '+g.timeframe:''),
         created: dateKey(0),
