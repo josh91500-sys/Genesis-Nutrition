@@ -460,6 +460,21 @@ textarea:focus{border-color:var(--accent);}
 .cat-pill.active{background:var(--accent);color:#fff;border-color:var(--accent);}
 .streak-badge{display:flex;align-items:center;gap:6px;background:var(--bg4);border-radius:10px;
   padding:8px 12px;margin-bottom:8px;}
+
+/* SEARCH TABS */
+.ai-food-result{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);
+  padding:16px;margin:0 16px 10px;}
+.ai-food-name{font-size:16px;font-weight:700;margin-bottom:4px;}
+.ai-food-macros{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;}
+.ai-food-macro-chip{background:var(--bg4);border-radius:8px;padding:5px 10px;font-size:12px;}
+.serving-adjuster{display:flex;align-items:center;gap:8px;background:var(--bg4);
+  border-radius:10px;padding:8px 12px;margin:10px 0;}
+.serving-adjuster input{width:70px;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:8px;padding:6px;color:var(--text);font-family:'DM Sans',sans-serif;
+  font-size:14px;text-align:center;outline:none;}
+.serving-unit-label{font-size:13px;color:var(--muted);flex:1;}
+.ai-add-btn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:10px;
+  padding:11px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -606,171 +621,46 @@ textarea:focus{border-color:var(--accent);}
     <div class="page" id="page-search">
       <div class="hdr">
         <div class="hdr-row">
-          <div>
-            <div class="page-title">Food Search</div>
-            <div class="page-date">Best sources per calorie</div>
+          <div><div class="page-title">Food Search</div></div>
+          <div class="view-toggle">
+            <button class="view-toggle-btn active" onclick="setSearchTab('nutrient',this)" id="search-tab-nutrient">📊 Nutrients</button>
+            <button class="view-toggle-btn" onclick="setSearchTab('ai',this)" id="search-tab-ai">🤖 AI Search</button>
           </div>
         </div>
       </div>
 
-      <!-- Nutrient selector -->
-      <div style="padding:0 16px 12px;">
-        <div class="section-label" style="padding:0 0 8px;">RANK BY</div>
-        <div class="nutrient-pill-row" id="nutrient-pills"></div>
-      </div>
-
-      <!-- View mode tabs -->
-      <div style="padding:0 16px 12px;">
-        <div style="display:flex;gap:6px;">
-          <button class="mode-toggle-btn active" id="view-percal" onclick="setViewMode('percal',this)">Per 100 kcal</button>
-          <button class="mode-toggle-btn" id="view-serving" onclick="setViewMode('serving',this)">Per serving</button>
-          <button class="mode-toggle-btn" id="view-per100g" onclick="setViewMode('per100g',this)">Per 100g</button>
+      <!-- ── NUTRIENT DENSITY TAB ── -->
+      <div id="search-nutrient-tab">
+        <div style="padding:0 16px 12px;">
+          <div class="section-label" style="padding:0 0 8px;">RANK BY</div>
+          <div class="nutrient-pill-row" id="nutrient-pills"></div>
         </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:6px;" id="view-mode-desc">Nutrient density — how much you get per calorie eaten</div>
-      </div>
-
-      <!-- AI Search bar -->
-      <div style="padding:0 16px 12px;display:flex;gap:8px;">
-        <input type="text" id="food-search-input" placeholder="Search or describe any food..." style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:12px 16px;color:var(--text);font-family:DM Sans,sans-serif;font-size:14px;outline:none;">
-        <button onclick="aiSearchFood()" style="background:var(--accent);color:#fff;border:none;border-radius:12px;padding:12px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:DM Sans,sans-serif;">AI Search</button>
-      </div>
-
-      <div id="search-status" style="text-align:center;font-size:12px;color:var(--muted);padding:0 20px 8px;min-height:20px;"></div>
-
-      <!-- Results list -->
-      <div id="search-results"></div>
-
-    </div>
-
-    <!-- ══ GOALS PAGE ══ -->
-    <div class="page" id="page-goals">
-      <div class="hdr">
-        <div class="hdr-row">
-          <div>
-            <div class="page-title">Goals</div>
-            <div class="page-date">Daily targets</div>
+        <div style="padding:0 16px 12px;">
+          <div class="mode-toggle" style="display:flex;gap:6px;">
+            <button class="mode-toggle-btn active" onclick="setViewMode('percal',this)">Per 100 kcal</button>
+            <button class="mode-toggle-btn" onclick="setViewMode('serving',this)">Per serving</button>
+            <button class="mode-toggle-btn" onclick="setViewMode('per100g',this)">Per 100g</button>
           </div>
-          <button class="hdr-action" onclick="saveGoals()">Save</button>
+          <div id="view-mode-desc" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
         </div>
+        <div id="search-results"></div>
       </div>
-      <div class="card">
-        <div class="card-title">Calories & Macros</div>
-        <div id="goal-rows-macro"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Micronutrients</div>
-        <div id="goal-rows-micro"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">🏋️ Fitness Goals</div>
-        <div id="fitness-goals-summary"></div>
-        <button onclick="showPage('fitness',document.querySelector('.nav-btn:nth-child(5)'))" style="width:100%;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:10px;padding:10px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;margin-top:8px;">Go to Fitness Tab →</button>
+
+      <!-- ── AI FOOD SEARCH TAB ── -->
+      <div id="search-ai-tab" style="display:none;">
+        <div class="card">
+          <div class="card-title">🤖 AI Food Search</div>
+          <div class="ai-desc">Search any food, meal, or ingredient. AI returns accurate nutrition data. Customize the serving size before adding.</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px;">
+            <input type="text" id="food-search-input" placeholder="e.g. eggs, avocado toast, greek yogurt..." style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 14px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:14px;outline:none;">
+            <button onclick="aiSearchFood()" class="btn-primary" style="padding:12px 18px;border-radius:var(--r2);background:var(--accent);color:#fff;border:none;font-family:'DM Sans',sans-serif;font-weight:700;cursor:pointer;white-space:nowrap;">Search</button>
+          </div>
+          <div id="search-status" class="ai-status"></div>
+        </div>
+        <div id="ai-search-results"></div>
       </div>
     </div>
 
-
-
-
-    <!-- ══ FITNESS PAGE ══ -->
-    <div class="page" id="page-fitness">
-      <div class="hdr">
-        <div class="hdr-row">
-          <div><div class="page-title">Fitness</div><div class="page-date">Goal Tracking</div></div>
-          <button class="hdr-action" onclick="openFitnessGoalModal()">＋ Goal</button>
-        </div>
-      </div>
-
-      <!-- AI Goal Generator -->
-      <div class="card">
-        <div class="card-title">🤖 AI Goal Suggestions</div>
-        <div class="ai-desc">Tell AI what you want to achieve and it will create specific, measurable fitness goals with milestones.</div>
-        <div class="input-group">
-          <label class="input-label">What do you want to achieve?</label>
-          <textarea id="fitness-ai-input" rows="3" placeholder="e.g. I want to bench press 315 lbs eventually&#10;or: hike 9 miles without stopping&#10;or: run a 5K in under 25 minutes&#10;or: do 20 pull-ups"></textarea>
-        </div>
-        <button class="btn-ai" onclick="generateFitnessGoals()" id="fitness-ai-btn">
-          <span>🤖 Generate Goals & Milestones</span>
-        </button>
-        <div id="fitness-ai-status" class="ai-status"></div>
-      </div>
-
-      <!-- Category Filter -->
-      <div style="padding:0 16px;">
-        <div class="category-filter" id="fitness-category-filter"></div>
-      </div>
-
-      <!-- Goals List -->
-      <div id="fitness-goals-list"></div>
-
-      <!-- Recent Workout Log -->
-      <div class="card">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <div class="card-title" style="margin:0;">📋 Recent Workouts</div>
-        </div>
-        <div id="recent-workouts-list"></div>
-      </div>
-    </div>
-    <!-- ══ HEALTH PAGE ══ -->
-    <div class="page" id="page-health">
-      <div class="hdr">
-        <div class="hdr-row">
-          <div><div class="page-title">Health AI</div><div class="page-date">Personalized recommendations</div></div>
-        </div>
-      </div>
-
-      <!-- Profile Input -->
-      <div class="card">
-        <div class="card-title">🩺 Your Health Profile</div>
-        <div class="ai-desc">Tell us about yourself — your goals, medical conditions, medications, dietary restrictions, or anything relevant. AI will create personalized nutrition goals and explain why.</div>
-        <div class="input-group">
-          <label class="input-label">Your Health Info & Goals</label>
-          <textarea id="health-profile-input" rows="5" placeholder="Examples:&#10;• I have high blood pressure and Type 2 diabetes&#10;• I'm taking metformin and lisinopril&#10;• I want to lose 20 lbs and build muscle&#10;• I'm vegetarian and lactose intolerant&#10;• I have high cholesterol and low iron"></textarea>
-        </div>
-        <button class="btn-ai" onclick="generateHealthRecommendations()" id="health-btn">
-          <span>🤖 Analyze & Set My Goals</span>
-        </button>
-        <div id="health-status" class="ai-status"></div>
-      </div>
-
-      <!-- Saved Conditions -->
-      <div class="card" id="health-conditions-card" style="display:none;">
-        <div class="card-title">📋 Active Health Profile</div>
-        <div id="health-tags"></div>
-        <button onclick="clearHealthProfile()" style="margin-top:10px;background:none;border:1px solid #ff6b6b44;color:#ff9090;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;">Clear Profile</button>
-      </div>
-
-      <!-- AI Recommendations -->
-      <div id="health-recommendations"></div>
-
-      <!-- Workout Goals -->
-      <div class="card">
-        <div class="card-title">💪 Workout & Fitness Goals</div>
-        <div class="ai-desc">Tell us about your fitness goals, current activity level, any injuries or limitations. AI will set your calorie burn targets, protein needs, and exercise recommendations.</div>
-        <div class="input-group">
-          <label class="input-label">Your Fitness Info & Goals</label>
-          <textarea id="workout-profile-input" rows="5" placeholder="Examples:&#10;• I want to build muscle and lose fat&#10;• I work out 4x a week, mostly weight training&#10;• I have a bad knee so no running&#10;• I'm a beginner trying to get active&#10;• I'm training for a marathon&#10;• I'm 35, 180lbs, sedentary job"></textarea>
-        </div>
-        <button class="btn-ai" onclick="generateWorkoutRecommendations()" id="workout-btn">
-          <span>🏋️ Analyze & Set Fitness Goals</span>
-        </button>
-        <div id="workout-status" class="ai-status"></div>
-      </div>
-
-      <!-- Saved Workout Profile -->
-      <div class="card" id="workout-conditions-card" style="display:none;">
-        <div class="card-title">🏃 Active Fitness Profile</div>
-        <div id="workout-tags"></div>
-        <button onclick="clearWorkoutProfile()" style="margin-top:10px;background:none;border:1px solid #ff6b6b44;color:#ff9090;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;">Clear Profile</button>
-      </div>
-
-      <!-- Workout Recommendations -->
-      <div id="workout-recommendations"></div>
-
-      <!-- Disclaimer -->
-      <div style="margin:0 16px 20px;padding:12px;background:var(--bg3);border-radius:var(--r2);border-left:3px solid var(--sugar);">
-        <div style="font-size:11px;color:var(--muted);line-height:1.6;">⚠️ <strong style="color:var(--text);">Medical Disclaimer:</strong> These recommendations are for informational purposes only and are not medical advice. Always consult your healthcare provider before making changes to your diet, especially if you have medical conditions or take medications.</div>
-      </div>
-    </div>
     <!-- ══ PLANNER PAGE ══ -->
     <div class="page" id="page-planner">
       <div class="hdr">
@@ -2044,6 +1934,8 @@ function renderNutrientPills(){
 
 function selectNutrient(key){
   selectedNutrient = key;
+  aiSearchResults = []; // clear search when switching nutrient
+  document.getElementById('search-status').textContent = '';
   renderNutrientPills();
   renderSearchResults();
 }
@@ -3697,6 +3589,130 @@ function syncFitnessGoalsToGoalsTab(){
     return '<div style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;"><span style="font-weight:600;">'+g.name+'</span><span style="color:'+color+';">'+g.current+'/'+g.target+' '+g.unit+'</span></div><div style="height:6px;background:var(--bg4);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:99px;"></div></div></div>';
   }).join('')+
   (active.length>3?'<div style="font-size:12px;color:var(--muted);text-align:center;">+'+( active.length-3)+' more goals</div>':'');
+}
+
+</script>
+
+<script>
+
+// ══════════════════════════════════════
+// SEARCH TAB SWITCHING
+// ══════════════════════════════════════
+function setSearchTab(tab, btn){
+  document.querySelectorAll('.view-toggle-btn').forEach(function(b){
+    if(b.id && b.id.startsWith('search-tab')) b.classList.remove('active');
+  });
+  btn.classList.add('active');
+  document.getElementById('search-nutrient-tab').style.display = tab==='nutrient' ? 'block' : 'none';
+  document.getElementById('search-ai-tab').style.display = tab==='ai' ? 'block' : 'none';
+  if(tab==='nutrient') renderSearchResults();
+}
+
+// ══════════════════════════════════════
+// AI FOOD SEARCH (with serving adjuster)
+// ══════════════════════════════════════
+async function aiSearchFood(){
+  var query = document.getElementById('food-search-input').value.trim();
+  if(!query) return;
+
+  var statusEl = document.getElementById('search-status');
+  statusEl.textContent = 'Searching for "'+query+'"...';
+  document.getElementById('ai-search-results').innerHTML = '';
+
+  var prompt = 'The user searched for: "'+query+'". Return foods that ARE "'+query+'" or are directly related to "'+query+'". Do NOT return unrelated foods.\n\nReturn ONLY a JSON array of 5-8 foods matching "'+query+'" (no markdown):\n[{"name":"Whole Egg (large)","serving":50,"cal":72,"protein":6.3,"carbs":0.4,"fat":4.8,"fiber":0,"sugar":0.2,"sodium":71,"potassium":69,"vitc":0,"iron":0.9,"calcium":28,"vitd":1.1,"category":"eggs"}]\n\nRules:\n- ONLY return foods that are "'+query+'" or directly related to "'+query+'"\n- serving = typical serving size in grams (e.g. 1 egg = 50g, 1 slice bread = 28g)\n- All macro values are for that typical serving size\n- sodium/potassium/calcium in mg, vitc/iron in mg, vitd in mcg\n- Return ONLY the JSON array, no markdown';
+
+  try {
+    var res = await callClaude({
+      model:'claude-sonnet-4-20250514', max_tokens:1500,
+      messages:[{role:'user',content:prompt}]
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data = await res.json();
+    var text = (data.content&&data.content[0]&&data.content[0].text)||'';
+    var match = text.match(/\[[\s\S]*\]/);
+    if(!match) throw new Error('No results');
+    var foods = JSON.parse(match[0]);
+    statusEl.textContent = '✓ Found '+foods.length+' results for "'+query+'"';
+    renderAISearchResults(foods);
+  } catch(e){
+    statusEl.textContent = '✗ '+(e.message||'Search failed. Try again.');
+  }
+}
+
+// Store AI search foods globally for access by serving controls
+var aiSearchFoodsCache = [];
+
+function renderAISearchResults(foods){
+  var el = document.getElementById('ai-search-results');
+  if(!foods||!foods.length){ el.innerHTML='<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-text">No results found.</div></div>'; return; }
+  aiSearchFoodsCache = foods;
+  el.innerHTML = foods.map(function(f, idx){
+    return '<div class="ai-food-result">'+
+      '<div class="ai-food-name">'+f.name+'</div>'+
+      '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Typical serving: '+f.serving+'g</div>'+
+      '<div class="serving-adjuster">'+
+        '<span class="serving-unit-label">Serving size</span>'+
+        '<input type="number" data-idx="'+idx+'" value="'+f.serving+'" min="1" max="2000" oninput="updateAIFoodDisplay('+idx+',this.value)" style="width:70px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-family:DM Sans,sans-serif;font-size:14px;text-align:center;outline:none;">'+
+        '<span style="font-size:13px;color:var(--muted);">g</span>'+
+      '</div>'+
+      '<div class="ai-food-macros" id="aimacros_'+idx+'">'+renderAIFoodMacros(f, f.serving)+'</div>'+
+      '<button class="ai-add-btn" data-idx="'+idx+'" onclick="addAIFoodToLog('+idx+',this)">＋ Add to Today</button>'+
+    '</div>';
+  }).join('');
+}
+
+function renderAIFoodMacros(f, serving){
+  var ratio = serving / (f.serving||100);
+  var cal = Math.round(f.cal * ratio);
+  var p = (f.protein*ratio).toFixed(1);
+  var c = (f.carbs*ratio).toFixed(1);
+  var fat = (f.fat*ratio).toFixed(1);
+  var fi = (f.fiber*ratio).toFixed(1);
+  return '<div class="ai-food-macro-chip" style="color:#fff;background:var(--bg2);">'+cal+' kcal</div>'+
+    '<div class="ai-food-macro-chip" style="color:#ff6b9d;">P '+p+'g</div>'+
+    '<div class="ai-food-macro-chip" style="color:#ffb347;">C '+c+'g</div>'+
+    '<div class="ai-food-macro-chip" style="color:#4aa8ff;">F '+fat+'g</div>'+
+    (parseFloat(fi)>0?'<div class="ai-food-macro-chip" style="color:#2dd4a0;">Fi '+fi+'g</div>':'');
+}
+
+function updateAIFoodDisplay(idx, newServing){
+  var f = aiSearchFoodsCache[idx];
+  if(!f) return;
+  var s = parseFloat(newServing)||f.serving;
+  var el = document.getElementById('aimacros_'+idx);
+  if(el) el.innerHTML = renderAIFoodMacros(f, s);
+}
+
+function addAIFoodToLog(idx, btn){
+  var f = aiSearchFoodsCache[idx];
+  if(!f) return;
+  var card = btn.closest('.ai-food-result');
+  var servingInput = card ? card.querySelector('input[type=number]') : null;
+  var serving = servingInput ? parseFloat(servingInput.value)||f.serving : f.serving;
+  var ratio = serving / (f.serving||100);
+  var food = {
+    meal: 'Snack',
+    name: f.name+(serving!==f.serving?' ('+serving+'g)':''),
+    cal: Math.round(f.cal*ratio),
+    protein: parseFloat((f.protein*ratio).toFixed(1)),
+    carbs: parseFloat((f.carbs*ratio).toFixed(1)),
+    fat: parseFloat((f.fat*ratio).toFixed(1)),
+    fiber: parseFloat((f.fiber*ratio).toFixed(1)),
+    sugar: parseFloat(((f.sugar||0)*ratio).toFixed(1)),
+    sodium: Math.round((f.sodium||0)*ratio),
+    potassium: Math.round((f.potassium||0)*ratio),
+    vitc: parseFloat(((f.vitc||0)*ratio).toFixed(1)),
+    iron: parseFloat(((f.iron||0)*ratio).toFixed(1)),
+    calcium: Math.round((f.calcium||0)*ratio),
+    vitd: parseFloat(((f.vitd||0)*ratio).toFixed(1)),
+    serving: serving,
+    id: Date.now()
+  };
+  var log = getDayLog(0);
+  log.foods.push(food);
+  saveDayLog(log, 0);
+  showToast('✓ '+f.name+' added to today');
+  if(btn){ btn.textContent='✓ Added!'; btn.style.background='var(--fiber)'; btn.disabled=true; }
 }
 
 </script>
