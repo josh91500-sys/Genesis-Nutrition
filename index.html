@@ -2178,7 +2178,7 @@ async function aiSearchFood(){
   const nutrient = NUTRIENTS.find(n=>n.key===selectedNutrient);
 
   const prompt = `The user is looking for: "${query}"
-They want to rank foods by highest ${nutrient.label} ${perCalMode?'per 100 calories':'per 100g serving'}.
+They want to rank foods by highest ${nutrient.label} ${viewMode==='percal'?'per 100 calories':'per 100g serving'}.
 
 Return ONLY a JSON array of 5-8 relevant foods (no markdown, no explanation):
 [
@@ -3546,6 +3546,10 @@ function renderFitnessGoals(){
     var tgt = parseFloat(goal.target)||1;
     var pct = tgt > 0 ? Math.min(100, (cur/tgt)*100) : 0;
     goal.current = cur; goal.target = tgt;
+    // Fix broken milestones from old data
+    if(!goal.milestones||!goal.milestones.length||goal.milestones[0].value==null||isNaN(goal.milestones[0].value)){
+      goal.milestones = generateMilestones(cur, tgt);
+    }
     var color = CATEGORY_COLORS[goal.category]||'var(--accent)';
     var remaining = goal.target - goal.current;
     var reachedCount = (goal.milestones||[]).filter(function(m){return m.reached;}).length;
@@ -3580,7 +3584,7 @@ function renderFitnessGoals(){
         (remaining>0?'<span>'+remaining+' '+goal.unit+' to go</span>':'<span style="color:var(--fiber);">Goal achieved!</span>')+
       '</div>'+
       (goal.milestones&&goal.milestones.length?
-        '<div style="margin-top:8px;display:flex;flex-wrap:wrap;">'+(goal.milestones.map(function(m){
+        '<div style="margin-top:8px;display:flex;flex-wrap:wrap;">'+(goal.milestones.filter(function(m){return m.value!=null&&!isNaN(m.value);}).map(function(m){
           return '<span class="fg-milestone'+(m.reached?' reached':'')+'">'+
             (m.reached?'✓ ':'')+m.value+' '+goal.unit+' ('+Math.round(m.pct*100)+'%)'+
           '</span>';
