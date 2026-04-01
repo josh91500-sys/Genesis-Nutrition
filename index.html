@@ -2177,21 +2177,18 @@ async function aiSearchFood(){
 
   const nutrient = NUTRIENTS.find(n=>n.key===selectedNutrient);
 
-  const prompt = `The user is looking for: "${query}"
-They want to rank foods by highest ${nutrient.label} ${viewMode==='percal'?'per 100 calories':'per 100g serving'}.
+  const prompt = `The user searched for: "${query}". Return foods that ARE "${query}" or are directly related to "${query}". Do NOT return unrelated foods.
 
-Return ONLY a JSON array of 5-8 relevant foods (no markdown, no explanation):
+Return ONLY a JSON array of 5-8 foods matching "${query}" (no markdown):
 [
   {"name":"food name","serving":100,"cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"category":"category"},
   ...
 ]
 
 Rules:
-- serving = 100g always
-- All values per 100g
+- ONLY return foods that are "${query}" or directly contain "${query}" (e.g. search "egg" = whole egg, egg white, scrambled egg, boiled egg — NOT tuna or chicken)
+- serving = 100g, all values per 100g
 - sodium/potassium/calcium in mg, vitc/iron in mg, vitd in mcg
-- Include foods specifically relevant to "${query}"
-- Use accurate nutritional data
 - Return ONLY the JSON array`;
 
   try {
