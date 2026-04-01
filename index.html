@@ -660,6 +660,30 @@ textarea:focus{border-color:var(--accent);}
       <!-- AI Recommendations -->
       <div id="health-recommendations"></div>
 
+      <!-- Workout Goals -->
+      <div class="card">
+        <div class="card-title">💪 Workout & Fitness Goals</div>
+        <div class="ai-desc">Tell us about your fitness goals, current activity level, any injuries or limitations. AI will set your calorie burn targets, protein needs, and exercise recommendations.</div>
+        <div class="input-group">
+          <label class="input-label">Your Fitness Info & Goals</label>
+          <textarea id="workout-profile-input" rows="5" placeholder="Examples:&#10;• I want to build muscle and lose fat&#10;• I work out 4x a week, mostly weight training&#10;• I have a bad knee so no running&#10;• I'm a beginner trying to get active&#10;• I'm training for a marathon&#10;• I'm 35, 180lbs, sedentary job"></textarea>
+        </div>
+        <button class="btn-ai" onclick="generateWorkoutRecommendations()" id="workout-btn">
+          <span>🏋️ Analyze & Set Fitness Goals</span>
+        </button>
+        <div id="workout-status" class="ai-status"></div>
+      </div>
+
+      <!-- Saved Workout Profile -->
+      <div class="card" id="workout-conditions-card" style="display:none;">
+        <div class="card-title">🏃 Active Fitness Profile</div>
+        <div id="workout-tags"></div>
+        <button onclick="clearWorkoutProfile()" style="margin-top:10px;background:none;border:1px solid #ff6b6b44;color:#ff9090;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;">Clear Profile</button>
+      </div>
+
+      <!-- Workout Recommendations -->
+      <div id="workout-recommendations"></div>
+
       <!-- Disclaimer -->
       <div style="margin:0 16px 20px;padding:12px;background:var(--bg3);border-radius:var(--r2);border-left:3px solid var(--sugar);">
         <div style="font-size:11px;color:var(--muted);line-height:1.6;">⚠️ <strong style="color:var(--text);">Medical Disclaimer:</strong> These recommendations are for informational purposes only and are not medical advice. Always consult your healthcare provider before making changes to your diet, especially if you have medical conditions or take medications.</div>
@@ -1248,7 +1272,7 @@ function renderFoodLog(foods){
           <div class="food-color-bar" style="background:${MACRO_COLORS.protein}"></div>
           <div class="food-info">
             <div class="food-name">${f.name}</div>
-            <button class="food-study-btn" onclick="lookupFoodStudy('" + f.name + "',this)">📚 Studies</button>
+            <button class="food-study-btn" onclick="lookupFoodStudy('${f.name.replace(/'/g, '')}',this)">📚 Studies</button>
             <div class="food-macros">P ${f.protein?.toFixed(0)||0}g · C ${f.carbs?.toFixed(0)||0}g · F ${f.fat?.toFixed(0)||0}g${f.fiber>0?' · Fi '+f.fiber?.toFixed(0)+'g':''}${f.sugar>0?' · S '+f.sugar?.toFixed(0)+'g':''}</div>
           </div>
           <div class="food-cal">${Math.round(f.cal)}</div>
@@ -2612,5 +2636,568 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
+
+<script>
+// ══════════════════════════════════════
+// HEALTH AI & RECOMMENDATIONS
+// ══════════════════════════════════════
+function loadHealthProfile(){
+  try{ return JSON.parse(localStorage.getItem('vitl_health_profile')||'null'); }
+  catch(e){ return null; }
+}
+function saveHealthProfile(data){ localStorage.setItem('vitl_health_profile', JSON.stringify(data)); }
+
+function initHealthPage(){
+  initWorkoutProfile();
+  const profile = loadHealthProfile();
+  if(profile){
+    if(profile.rawText) document.getElementById('health-profile-input').value = profile.rawText;
+    renderHealthTags(profile);
+    if(profile.recommendations) renderHealthRecs(profile);
+  }
+}
+
+function clearHealthProfile(){
+  localStorage.removeItem('vitl_health_profile');
+  document.getElementById('health-tags').innerHTML='';
+  document.getElementById('health-conditions-card').style.display='none';
+  document.getElementById('health-recommendations').innerHTML='';
+  document.getElementById('health-profile-input').value='';
+  showToast('Health profile cleared');
+}
+
+function renderHealthTags(profile){
+  const el = document.getElementById('health-conditions-card');
+  const tagsEl = document.getElementById('health-tags');
+  if(!profile || !profile.conditions || !profile.conditions.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  tagsEl.innerHTML = profile.conditions.map(function(c){ return '<span class="health-tag">'+c+'</span>'; }).join('');
+}
+
+async function generateHealthRecommendations(){
+  const input = document.getElementById('health-profile-input').value.trim();
+  if(!input){ document.getElementById('health-profile-input').focus(); return; }
+
+  const btn = document.getElementById('health-btn');
+  const statusEl = document.getElementById('health-status');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  statusEl.textContent = 'Analyzing your health profile...';
+  document.getElementById('health-recommendations').innerHTML = '';
+
+  const prompt = 'You are a clinical nutritionist. A user says: "' + input + '". Create personalized nutrition recommendations. Return ONLY valid JSON (no markdown, no explanation):\n{\n"conditions":["condition1","condition2"],\n"summary":"2 sentence summary of their situation and approach",\n"recommendations":[{"nutrient":"Sodium","icon":"emoji","direction":"decrease","current_typical":3500,"recommended":1500,"unit":"mg","why":"Detailed clinical reason specific to their condition","study_title":"Real study title","study_url":"https://pubmed.ncbi.nlm.nih.gov/12345678","goal_key":"sodium"}],\n"suggested_goals":{"calories":2000,"protein":150,"carbs":200,"fat":65,"fiber":30,"sugar":25,"sodium":1500,"potassium":4700,"vitc":90,"iron":18,"calcium":1000,"vitd":20},\n"goals_reasoning":"Why these specific numbers fit their situation"\n}\nGive 4-7 recommendations. Use real conditions: high BP needs low sodium+high potassium; diabetes needs low sugar+high fiber; high cholesterol needs low fat+high fiber; anemia needs high iron+vitC. All suggested_goals must have realistic positive numbers.';
+
+  try {
+    const res = await callClaude({
+      model:'claude-sonnet-4-20250514',
+      max_tokens: 3000,
+      messages:[{role:'user', content:prompt}]
+    });
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err?.error?.message || 'HTTP '+res.status);
+    }
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if(!jsonMatch) throw new Error('No JSON in response');
+    const result = JSON.parse(jsonMatch[0]);
+    
+    // Save profile
+    saveHealthProfile({
+      rawText: input,
+      conditions: result.conditions,
+      recommendations: result.recommendations,
+      suggested_goals: result.suggested_goals,
+      goals_reasoning: result.goals_reasoning,
+      summary: result.summary
+    });
+
+    renderHealthTags({conditions: result.conditions});
+    renderHealthRecs(result);
+    statusEl.textContent = '';
+
+    // Auto-apply goals to the Goals tab
+    if(result.suggested_goals){
+      applyHealthGoals(result.suggested_goals);
+    }
+
+  } catch(e) {
+    console.error('Health AI error:', e);
+    statusEl.textContent = 'Error: ' + (e.message || 'Could not analyze. Try again.');
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<span>🤖 Analyze & Set My Goals</span>';
+}
+
+function renderHealthRecs(result){
+  const el = document.getElementById('health-recommendations');
+  let html = '';
+
+  if(result.summary){
+    html += '<div class="card" style="border-left:3px solid var(--accent);"><div class="card-title">📊 Your Analysis</div><div style="font-size:13px;line-height:1.6;">'+result.summary+'</div>'+(result.goals_reasoning?'<div style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;">'+result.goals_reasoning+'</div>':'')+'</div>';
+  }
+
+  if(result.suggested_goals){
+    const goalKeys = Object.entries(result.suggested_goals).filter(function(e){ return e[1]>0; });
+    const goalsHtml = goalKeys.map(function(e){
+      return '<div style="background:var(--bg4);border-radius:8px;padding:8px 10px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">'+e[0]+'</div><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:var(--accent2);">'+e[1]+'</div></div>';
+    }).join('');
+    html += '<div class="card"><div class="card-title">🎯 Your Personalized Goals</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">'+goalsHtml+'</div><div style="font-size:12px;color:var(--fiber);text-align:center;padding:8px;background:var(--bg4);border-radius:8px;">✓ Goals automatically updated in your Goals tab</div></div>';
+  }
+
+  if(result.recommendations && result.recommendations.length){
+    html += '<div style="margin:0 16px 8px;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;">WHY THESE RECOMMENDATIONS</div>';
+    result.recommendations.forEach(function(rec){
+      var dirColor = rec.direction==='increase' ? '#2dd4a0' : '#ff6b6b';
+      var dirWord = rec.direction==='increase' ? 'Increase' : 'Decrease';
+      html += '<div class="rec-card"><div class="rec-card-header"><span class="rec-card-icon">'+(rec.icon||'💊')+'</span><div><div class="rec-card-title">'+dirWord+' '+rec.nutrient+'</div><div style="font-size:11px;color:'+dirColor+';">Goal: '+rec.recommended+(rec.unit||'')+'</div></div></div><div class="rec-card-why">'+rec.why+'</div>'+(rec.study_title&&rec.study_url?'<a href="'+rec.study_url+'" target="_blank" class="study-link">📄 '+rec.study_title+' →</a>':'')+'</div>';
+    });
+  }
+
+  el.innerHTML = html;
+}
+
+function applyHealthGoals(goals){
+  const current = loadGoals();
+  const merged = Object.assign({}, current);
+  Object.keys(goals).forEach(function(k){ if(goals[k]>0) merged[k]=goals[k]; });
+  saveGoalsData(merged);
+  showToast('✓ Goals updated from your health profile!');
+}
+
+async function lookupFoodStudy(foodName, btn){
+  btn.textContent = '🔍...';
+  btn.disabled = true;
+  try {
+    const res = await callClaude({
+      model:'claude-sonnet-4-20250514', max_tokens:400,
+      messages:[{role:'user',content:'For the food "'+foodName+'", give 1-2 real PubMed studies about its health benefits. Return ONLY JSON: {"studies":[{"title":"study title","url":"https://pubmed.ncbi.nlm.nih.gov/PMID","finding":"one sentence key finding"}]}'}]
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text||'';
+    const match = text.match(/\{[\s\S]*\}/);
+    if(!match) throw new Error('no json');
+    const result = JSON.parse(match[0]);
+    const container = btn.parentElement;
+    const existing = container.querySelector('.food-studies');
+    if(existing) existing.remove();
+    const div = document.createElement('div');
+    div.className = 'food-studies';
+    div.style.marginTop = '6px';
+    div.innerHTML = result.studies.map(function(s){
+      return '<a href="'+s.url+'" target="_blank" class="study-link" style="display:block;margin-bottom:4px;">📄 '+s.title+': <em style="color:var(--muted);">'+s.finding+'</em></a>';
+    }).join('');
+    container.appendChild(div);
+    btn.textContent = '📚 Studies';
+    btn.disabled = false;
+  } catch(e){
+    btn.textContent = '📚 Studies';
+    btn.disabled = false;
+  }
+}
+
+</script>
+</script>
 </body>
-</html>
+</html><script>
+
+// ══════════════════════════════════════
+// WORKOUT GOALS AI
+// ══════════════════════════════════════
+function loadWorkoutProfile(){
+  try{ return JSON.parse(localStorage.getItem('vitl_workout_profile')||'null'); }
+  catch(e){ return null; }
+}
+function saveWorkoutProfile(data){ localStorage.setItem('vitl_workout_profile', JSON.stringify(data)); }
+
+function initWorkoutProfile(){
+  const profile = loadWorkoutProfile();
+  if(profile){
+    if(profile.rawText) document.getElementById('workout-profile-input').value = profile.rawText;
+    renderWorkoutTags(profile);
+    if(profile.recommendations) renderWorkoutRecs(profile);
+  }
+}
+
+function clearWorkoutProfile(){
+  localStorage.removeItem('vitl_workout_profile');
+  document.getElementById('workout-tags').innerHTML='';
+  document.getElementById('workout-conditions-card').style.display='none';
+  document.getElementById('workout-recommendations').innerHTML='';
+  document.getElementById('workout-profile-input').value='';
+  showToast('Fitness profile cleared');
+}
+
+function renderWorkoutTags(profile){
+  const el = document.getElementById('workout-conditions-card');
+  const tagsEl = document.getElementById('workout-tags');
+  if(!profile || !profile.tags || !profile.tags.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  tagsEl.innerHTML = profile.tags.map(function(t){ return '<span class="health-tag">'+t+'</span>'; }).join('');
+}
+
+async function generateWorkoutRecommendations(){
+  const input = document.getElementById('workout-profile-input').value.trim();
+  if(!input){ document.getElementById('workout-profile-input').focus(); return; }
+
+  const btn = document.getElementById('workout-btn');
+  const statusEl = document.getElementById('workout-status');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  statusEl.textContent = 'Analyzing your fitness profile...';
+  document.getElementById('workout-recommendations').innerHTML = '';
+
+  const currentGoals = loadGoals();
+
+  const prompt = 'You are a certified personal trainer and sports nutritionist. A user says: "' + input + '". Their current nutrition goals: calories='+currentGoals.calories+', protein='+currentGoals.protein+'g. Create personalized fitness and nutrition recommendations. Return ONLY valid JSON (no markdown):\n{\n"tags":["goal1","activity level","any limitations"],\n"summary":"2 sentence summary of their fitness situation and strategy",\n"workout_plan":[{"day":"Monday","focus":"Chest & Triceps","exercises":[{"name":"Bench Press","sets":4,"reps":"8-10","notes":"Focus on form"}]},{"day":"Tuesday","focus":"Rest or Cardio"}],\n"recommendations":[{"category":"Nutrition","icon":"emoji","title":"recommendation title","why":"detailed explanation with science","action":"specific actionable advice","study_title":"real study title","study_url":"https://pubmed.ncbi.nlm.nih.gov/PMID"}],\n"suggested_goals":{"calories":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0},\n"goals_reasoning":"why these macros fit their fitness goals",\n"weekly_calorie_burn":0,\n"tdee":0\n}\nRules: For muscle building set protein to 0.7-1g per lb bodyweight. For fat loss create 300-500 cal deficit. For endurance increase carbs. Give a realistic 5-7 day workout plan. Give 3-5 specific recommendations. Use real PubMed studies.';
+
+  try {
+    const res = await callClaude({
+      model:'claude-sonnet-4-20250514',
+      max_tokens: 3000,
+      messages:[{role:'user', content:prompt}]
+    });
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err?.error?.message || 'HTTP '+res.status);
+    }
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if(!jsonMatch) throw new Error('No JSON in response');
+    const result = JSON.parse(jsonMatch[0]);
+
+    saveWorkoutProfile({
+      rawText: input,
+      tags: result.tags,
+      recommendations: result.recommendations,
+      suggested_goals: result.suggested_goals,
+      workout_plan: result.workout_plan,
+      goals_reasoning: result.goals_reasoning,
+      summary: result.summary,
+      tdee: result.tdee,
+      weekly_calorie_burn: result.weekly_calorie_burn
+    });
+
+    renderWorkoutTags({tags: result.tags});
+    renderWorkoutRecs(result);
+    statusEl.textContent = '';
+
+    // Auto-apply goals
+    if(result.suggested_goals){
+      applyHealthGoals(result.suggested_goals);
+    }
+
+  } catch(e) {
+    console.error('Workout AI error:', e);
+    statusEl.textContent = 'Error: ' + (e.message || 'Could not analyze. Try again.');
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<span>🏋️ Analyze & Set Fitness Goals</span>';
+}
+
+function renderWorkoutRecs(result){
+  const el = document.getElementById('workout-recommendations');
+  let html = '';
+
+  // Summary
+  if(result.summary){
+    html += '<div class="card" style="border-left:3px solid #ff6b9d;"><div class="card-title">💪 Your Fitness Analysis</div><div style="font-size:13px;line-height:1.6;">'+result.summary+'</div>';
+    if(result.tdee) html += '<div style="display:flex;gap:12px;margin-top:10px;"><div style="background:var(--bg4);border-radius:8px;padding:8px 12px;flex:1;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:var(--accent2);">'+result.tdee+'</div><div style="font-size:10px;color:var(--muted);">TDEE (daily burn)</div></div>'+(result.weekly_calorie_burn?'<div style="background:var(--bg4);border-radius:8px;padding:8px 12px;flex:1;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:#ff6b9d;">'+result.weekly_calorie_burn+'</div><div style="font-size:10px;color:var(--muted);">Weekly workout burn</div></div>':'')+'</div>';
+    html += '</div>';
+  }
+
+  // Updated Goals
+  if(result.suggested_goals){
+    const goalKeys = Object.entries(result.suggested_goals).filter(function(e){ return e[1]>0; });
+    const goalsHtml = goalKeys.map(function(e){
+      return '<div style="background:var(--bg4);border-radius:8px;padding:8px 10px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">'+e[0]+'</div><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:#ff6b9d;">'+e[1]+'</div></div>';
+    }).join('');
+    html += '<div class="card"><div class="card-title">🎯 Fitness-Optimized Goals</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">'+goalsHtml+'</div>'+(result.goals_reasoning?'<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px;">'+result.goals_reasoning+'</div>':'')+'<div style="font-size:12px;color:var(--fiber);text-align:center;padding:8px;background:var(--bg4);border-radius:8px;">✓ Goals automatically updated in your Goals tab</div></div>';
+  }
+
+  // Workout Plan
+  if(result.workout_plan && result.workout_plan.length){
+    html += '<div class="card"><div class="card-title">📅 Your Weekly Workout Plan</div>';
+    result.workout_plan.forEach(function(day){
+      html += '<div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border);"><div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:6px;">'+day.day+' — '+day.focus+'</div>';
+      if(day.exercises && day.exercises.length){
+        day.exercises.forEach(function(ex){
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;"><span>'+ex.name+'</span><span style="color:var(--muted);">'+ex.sets+' sets × '+ex.reps+'</span></div>';
+          if(ex.notes) html += '<div style="font-size:11px;color:var(--muted);padding-bottom:4px;">'+ex.notes+'</div>';
+        });
+      } else {
+        html += '<div style="font-size:12px;color:var(--muted);">Active recovery / rest</div>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  // Recommendations with studies
+  if(result.recommendations && result.recommendations.length){
+    html += '<div style="margin:0 16px 8px;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;">FITNESS RECOMMENDATIONS</div>';
+    result.recommendations.forEach(function(rec){
+      html += '<div class="rec-card"><div class="rec-card-header"><span class="rec-card-icon">'+(rec.icon||'💪')+'</span><div><div class="rec-card-title">'+rec.title+'</div><div style="font-size:11px;color:var(--muted);">'+rec.category+'</div></div></div><div class="rec-card-why">'+rec.why+'</div><div style="font-size:12px;color:var(--accent2);margin-bottom:6px;">'+rec.action+'</div>'+(rec.study_title&&rec.study_url?'<a href="'+rec.study_url+'" target="_blank" class="study-link">📄 '+rec.study_title+' →</a>':'')+'</div>';
+    });
+  }
+
+  el.innerHTML = html;
+}
+
+</script>
+
+<script>
+
+// ══════════════════════════════════════
+// CALENDAR FUNCTIONS
+// ══════════════════════════════════════
+var calView = 'month';
+var calMonthOffset = 0;
+var calWeekOffset = 0;
+var calDayOffset = 0;
+var selectedCalDate = null;
+
+function setCalView(view, btn){
+  calView = view;
+  document.querySelectorAll('.view-toggle-btn').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  var mv = document.getElementById('cal-month-view');
+  var wv = document.getElementById('cal-week-view');
+  var dv = document.getElementById('cal-day-view');
+  var hm = document.getElementById('history-macros');
+  if(mv) mv.style.display = view==='month' ? 'block' : 'none';
+  if(wv) wv.style.display = view==='week' ? 'block' : 'none';
+  if(dv) dv.style.display = view==='day' ? 'block' : 'none';
+  if(hm) hm.style.display = view==='week' ? 'none' : 'block';
+  if(view==='month') renderCalMonth();
+  if(view==='week') renderCalWeek();
+  if(view==='day') renderCalDay();
+}
+
+function changeCalMonth(dir){ calMonthOffset+=dir; renderCalMonth(); }
+function changeCalWeek(dir){ calWeekOffset+=dir; renderCalWeek(); }
+function changeCalDay(dir){ calDayOffset+=dir; renderCalDay(); }
+
+function getDateKey(date){ return date.toISOString().split('T')[0]; }
+
+function renderCalMonth(){
+  var now = new Date();
+  var d = new Date(now.getFullYear(), now.getMonth()+calMonthOffset, 1);
+  var year = d.getFullYear();
+  var month = d.getMonth();
+  var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var titleEl = document.getElementById('cal-month-title');
+  if(titleEl) titleEl.textContent = monthNames[month]+' '+year;
+
+  var data = loadData();
+  var today = getDateKey(now);
+  var daysInMonth = new Date(year, month+1, 0).getDate();
+  var firstDay = new Date(year, month, 1).getDay();
+
+  var headers = document.getElementById('cal-day-headers');
+  if(headers) headers.innerHTML = ['Su','Mo','Tu','We','Th','Fr','Sa'].map(function(d){return '<div class="cal-day-header">'+d+'</div>';}).join('');
+
+  var grid = document.getElementById('cal-grid');
+  if(!grid) return;
+  var cells = '';
+  for(var i=0;i<firstDay;i++) cells+='<div class="cal-day empty"></div>';
+  for(var day=1;day<=daysInMonth;day++){
+    var date = new Date(year,month,day);
+    var key = getDateKey(date);
+    var hasData = data[key]&&data[key].foods&&data[key].foods.length>0;
+    var isToday = key===today;
+    var isSelected = key===selectedCalDate;
+        cells+='<div class="cal-day '+(hasData?'has-data':'')+' '+(isToday?'today':'')+' '+(isSelected?'selected':'')+'" data-key="'+key+'" onclick="selectCalDay(this.dataset.key)"><div class="cal-day-num">'+day+'</div>'+(hasData?'<div class="cal-day-dot"></div>':'')+'</div>';
+  }
+  grid.innerHTML=cells;
+  if(selectedCalDate) showCalDayDetail(selectedCalDate);
+}
+
+function selectCalDay(key){
+  selectedCalDate=key;
+  renderCalMonth();
+  showCalDayDetail(key);
+}
+
+function showCalDayDetail(key){
+  var el=document.getElementById('cal-detail');
+  if(!el) return;
+  var data=loadData();
+  var goals=loadGoals();
+  el.style.display='block';
+  var d=new Date(key+'T12:00:00');
+  var months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var dateStr=days[d.getDay()]+', '+months[d.getMonth()]+' '+d.getDate();
+  var foods=(data[key]&&data[key].foods)||[];
+  if(!foods.length){
+    el.innerHTML='<div class="cal-detail-date">'+dateStr+'</div><div class="cal-detail-empty">No food logged this day.</div>';
+    return;
+  }
+  var t=getTotals(foods);
+  var meals=['Breakfast','Lunch','Dinner','Snack'];
+  var byMeal={};
+  meals.forEach(function(m){byMeal[m]=[];});
+  foods.forEach(function(f){if(!byMeal[f.meal])byMeal[f.meal]=[];byMeal[f.meal].push(f);});
+  var html='<div class="cal-detail-date">'+dateStr+'</div><div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">';
+  html+='<div style="text-align:center;"><div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;">'+Math.round(t.cal)+'</div><div style="font-size:10px;color:var(--muted);">kcal</div></div>';
+  html+='<div style="text-align:center;"><div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:#ff6b9d;">'+t.protein.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">protein</div></div>';
+  html+='<div style="text-align:center;"><div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:#ffb347;">'+t.carbs.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">carbs</div></div>';
+  html+='<div style="text-align:center;"><div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:#4aa8ff;">'+t.fat.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">fat</div></div></div>';
+  meals.filter(function(m){return byMeal[m].length>0;}).forEach(function(meal){
+    html+='<div style="margin-bottom:8px;"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">'+meal+'</div>';
+    byMeal[meal].forEach(function(f){
+      html+='<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>'+f.name+'</span><span style="color:var(--muted);">'+Math.round(f.cal)+' kcal</span></div>';
+    });
+    html+='</div>';
+  });
+  el.innerHTML=html;
+}
+
+function renderCalWeek(){
+  var now=new Date();
+  var startOfWeek=new Date(now);
+  startOfWeek.setDate(now.getDate()-now.getDay()+calWeekOffset*7);
+  var data=loadData();
+  var goals=loadGoals();
+  var dayNames=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var monthNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var endOfWeek=new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate()+6);
+  var titleEl=document.getElementById('cal-week-title');
+  if(titleEl) titleEl.textContent=monthNames[startOfWeek.getMonth()]+' '+startOfWeek.getDate()+' – '+monthNames[endOfWeek.getMonth()]+' '+endOfWeek.getDate();
+  var today=getDateKey(now);
+  var weekHtml='';
+  var weekDays=[];
+  for(var i=0;i<7;i++){
+    var d=new Date(startOfWeek); d.setDate(startOfWeek.getDate()+i);
+    var key=getDateKey(d);
+    weekDays.push({key:key,d:d});
+    var foods=(data[key]&&data[key].foods)||[];
+    var cal=foods.length?Math.round(getTotals(foods).cal):0;
+    var isToday=key===today;
+    var isSel=key===selectedCalDate;
+    weekHtml+='<div class="week-col '+(isToday?'today-col':'')+' '+(isSel?'selected':'')+'" onclick="selectWeekDay(\"'+key+'\")">';
+  }
+  var weekRow=document.getElementById('week-row');
+  if(weekRow) weekRow.innerHTML=weekHtml;
+  var loggedDays=weekDays.filter(function(x){return data[x.key]&&data[x.key].foods&&data[x.key].foods.length>0;});
+  var n=loggedDays.length||1;
+  var avgMacros={};
+  ['protein','carbs','fat','fiber','sugar'].forEach(function(m){
+    avgMacros[m]=loggedDays.reduce(function(a,x){return a+getTotals(data[x.key].foods)[m];},0)/n;
+  });
+  var avgEl=document.getElementById('avg-macro-bars-week');
+  if(avgEl) avgEl.innerHTML=['protein','carbs','fat','fiber','sugar'].map(function(m){
+    var info=MACRO_INFO[m];
+    var pct=Math.min(100,(avgMacros[m]/(goals[m]||1))*100);
+    var cals=avgMacros[m]*MACRO_CAL[m];
+    return '<div class="macro-bar-row"><div class="macro-bar-header"><span class="macro-name">'+info.icon+' '+info.name+'</span><span style="font-size:12px;color:var(--muted)">'+avgMacros[m].toFixed(1)+'g avg · <span style="color:'+MACRO_COLORS[m]+';font-weight:700">'+Math.round(cals)+' kcal</span></span></div><div class="macro-bar-bg"><div class="macro-bar-fill" style="width:'+pct+'%;background:'+MACRO_COLORS[m]+'"></div></div></div>';
+  }).join('');
+  if(selectedCalDate) showWeekDayDetail(selectedCalDate);
+}
+
+function selectWeekDay(key){selectedCalDate=key;renderCalWeek();showWeekDayDetail(key);}
+
+function showWeekDayDetail(key){
+  var el=document.getElementById('week-detail');
+  if(!el) return;
+  var data=loadData();
+  el.style.display='block';
+  var foods=(data[key]&&data[key].foods)||[];
+  var d=new Date(key+'T12:00:00');
+  var months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var daysN=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var html='<div class="cal-detail-date">'+daysN[d.getDay()]+', '+months[d.getMonth()]+' '+d.getDate()+'</div>';
+  if(!foods.length){el.innerHTML=html+'<div class="cal-detail-empty">No food logged.</div>';return;}
+  var t=getTotals(foods);
+  html+='<div style="display:flex;gap:12px;flex-wrap:wrap;">';
+  html+='<div style="text-align:center;"><div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;">'+Math.round(t.cal)+'</div><div style="font-size:10px;color:var(--muted);">kcal</div></div>';
+  html+='<div style="text-align:center;"><div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:#ff6b9d;">'+t.protein.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">protein</div></div>';
+  html+='<div style="text-align:center;"><div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:#ffb347;">'+t.carbs.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">carbs</div></div>';
+  html+='<div style="text-align:center;"><div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:#4aa8ff;">'+t.fat.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">fat</div></div></div>';
+  html+='<div style="margin-top:10px;">';
+  foods.forEach(function(f){html+='<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>'+f.name+'</span><span style="color:var(--muted);">'+Math.round(f.cal)+' kcal</span></div>';});
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+function renderCalDay(){
+  var now=new Date();
+  var d=new Date(now); d.setDate(now.getDate()+calDayOffset);
+  var key=getDateKey(d);
+  var months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var daysN=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var titleEl=document.getElementById('cal-day-title');
+  if(titleEl) titleEl.textContent=calDayOffset===0?'Today':calDayOffset===-1?'Yesterday':daysN[d.getDay()]+', '+months[d.getMonth()]+' '+d.getDate();
+  var data=loadData();
+  var foods=(data[key]&&data[key].foods)||[];
+  var el=document.getElementById('day-detail-content');
+  if(!el) return;
+  if(!foods.length){el.innerHTML='<div class="cal-detail-empty">No food logged this day.</div>';return;}
+  var t=getTotals(foods);
+  var goals=loadGoals();
+  var meals=['Breakfast','Lunch','Dinner','Snack'];
+  var byMeal={};
+  meals.forEach(function(m){byMeal[m]=[];});
+  foods.forEach(function(f){if(!byMeal[f.meal])byMeal[f.meal]=[];byMeal[f.meal].push(f);});
+  var html='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border);">';
+  html+='<div style="text-align:center;flex:1;"><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;">'+Math.round(t.cal)+'</div><div style="font-size:10px;color:var(--muted);">kcal</div></div>';
+  html+='<div style="text-align:center;flex:1;"><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:#ff6b9d;">'+t.protein.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">protein</div></div>';
+  html+='<div style="text-align:center;flex:1;"><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:#ffb347;">'+t.carbs.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">carbs</div></div>';
+  html+='<div style="text-align:center;flex:1;"><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:#4aa8ff;">'+t.fat.toFixed(0)+'g</div><div style="font-size:10px;color:var(--muted);">fat</div></div></div>';
+  meals.filter(function(m){return byMeal[m].length>0;}).forEach(function(meal){
+    var mealCal=byMeal[meal].reduce(function(a,f){return a+f.cal;},0);
+    html+='<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">'+meal+' · '+Math.round(mealCal)+' kcal</div>';
+    byMeal[meal].forEach(function(f){
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);"><div><div style="font-size:13px;font-weight:500;">'+f.name+'</div><div style="font-size:11px;color:var(--muted);">P '+(f.protein||0).toFixed(0)+'g · C '+(f.carbs||0).toFixed(0)+'g · F '+(f.fat||0).toFixed(0)+'g</div></div><div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;">'+Math.round(f.cal)+'</div></div>';
+    });
+    html+='</div>';
+  });
+  el.innerHTML=html;
+}
+
+// Update renderHistory to use calendar
+var _origRenderHistory = renderHistory;
+function renderHistory(){
+  // Run streak calc from original
+  var data=loadData();
+  var streak=0;
+  for(var i=0;i>=-365;i--){
+    var key=dateKey(i);
+    if(data[key]&&data[key].foods&&data[key].foods.length>0) streak++;
+    else if(i<0) break;
+  }
+  var sn=document.getElementById('streak-num');
+  if(sn) sn.textContent=streak;
+  
+  // 7-day avg
+  var days=[];
+  for(var j=-6;j<=0;j++){
+    var k=dateKey(j);
+    var foods2=(data[k]&&data[k].foods)||[];
+    days.push({totals:getTotals(foods2),hasData:foods2.length>0});
+  }
+  var loggedDays=days.filter(function(d){return d.hasData;});
+  var n=loggedDays.length||1;
+  var avgMacros={};
+  ['protein','carbs','fat','fiber','sugar'].forEach(function(m){
+    avgMacros[m]=loggedDays.reduce(function(a,d){return a+d.totals[m];},0)/n;
+  });
+  var goals=loadGoals();
+  var avgEl=document.getElementById('avg-macro-bars');
+  if(avgEl) avgEl.innerHTML=['protein','carbs','fat','fiber','sugar'].map(function(m){
+    var info=MACRO_INFO[m];
+    var pct=Math.min(100,(avgMacros[m]/(goals[m]||1))*100);
+    var cals=avgMacros[m]*MACRO_CAL[m];
+    return '<div class="macro-bar-row"><div class="macro-bar-header"><span class="macro-name">'+info.icon+' '+info.name+'</span><span style="font-size:12px;color:var(--muted)">'+avgMacros[m].toFixed(1)+'g avg · <span style="color:'+MACRO_COLORS[m]+';font-weight:700">'+Math.round(cals)+' kcal</span></span></div><div class="macro-bar-bg"><div class="macro-bar-fill" style="width:'+pct+'%;background:'+MACRO_COLORS[m]+'"></div></div></div>';
+  }).join('');
+
+  // Init calendar in month view
+  renderCalMonth();
+}
+
+</script>
+
+
