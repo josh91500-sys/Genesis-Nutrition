@@ -2268,9 +2268,22 @@ async function generateMealPlan(){
   document.getElementById('meal-plan-result').innerHTML='';
 
   const goals = loadGoals();
-  const prompt = `Create a full day meal plan for someone with these goals: "${query}". Their daily targets: ${goals.calories}kcal, ${goals.protein}g protein, ${goals.carbs}g carbs, ${goals.fat}g fat.
+  const goalCal = parseInt(query.match(/(\d+)\s*cal/i)?.[1]) || goals.calories;
+  const goalProtein = parseInt(query.match(/(\d+)\s*g?\s*protein/i)?.[1]) || goals.protein;
+  
+  const prompt = `Create a STRICT full day meal plan. You MUST hit these EXACT targets within 5%:
+- Total calories: ${goalCal} kcal (HARD LIMIT — do not exceed)
+- Total protein: ${goalProtein}g
+- User preferences: "${query}"
 
-Return ONLY a JSON object (no markdown):
+CRITICAL RULES:
+1. The sum of ALL food calories MUST equal approximately ${goalCal} kcal total
+2. Do NOT exceed ${goalCal} calories under any circumstances
+3. Calculate each food item carefully — small portions if needed
+4. Include Breakfast, Lunch, Dinner, Snack
+5. Distribute calories: Breakfast 25%, Lunch 30%, Dinner 35%, Snack 10%
+
+Return ONLY a JSON object (no markdown, no explanation):
 {
   "meals": [
     {
@@ -2280,11 +2293,11 @@ Return ONLY a JSON object (no markdown):
       ]
     }
   ],
-  "totals": {"cal":0,"protein":0,"carbs":0,"fat":0},
-  "note": "brief note about the plan"
+  "totals": {"cal":${goalCal},"protein":${goalProtein},"carbs":0,"fat":0},
+  "note": "brief note"
 }
 
-Include Breakfast, Lunch, Dinner, and Snack. Make realistic, delicious meals.`;
+Double-check: all meal calories must add up to exactly ${goalCal} kcal.`;
 
   try {
     const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:prompt}]});
