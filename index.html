@@ -2017,6 +2017,12 @@ let selectedNutrient = 'protein';
 let viewMode = 'percal'; // 'percal' | 'serving' | 'per100g'
 let aiSearchResults = [];
 
+function clearAISearch(){
+  aiSearchResults = [];
+  document.getElementById('search-status').textContent = '';
+  renderSearchResults();
+}
+
 function initSearchPage(){
   renderNutrientPills();
   // Reset view mode UI
@@ -2060,8 +2066,10 @@ function renderSearchResults(extraFoods=[]){
   const nutrient = NUTRIENTS.find(n=>n.key===selectedNutrient);
   if(!nutrient){ el.innerHTML=''; return; }
 
-  // Combine DB + any AI results
-  const allFoods = [...FOOD_DB, ...aiSearchResults, ...extraFoods];
+  // If AI search results exist, show ONLY those — not the full DB
+  const allFoods = aiSearchResults.length > 0 
+    ? [...aiSearchResults, ...extraFoods]
+    : [...FOOD_DB, ...extraFoods];
 
   // Score and sort based on view mode
   const scored = allFoods.map(f => {
@@ -2210,7 +2218,7 @@ Rules:
     if(!arrMatch) throw new Error('No results');
 
     const foods = JSON.parse(arrMatch[0]);
-    aiSearchResults = [...aiSearchResults, ...foods];
+    aiSearchResults = foods; // Replace, don't append
 
     statusEl.textContent = `✓ Found ${foods.length} foods for "${query}"`;
     document.getElementById('food-search-input').value='';
