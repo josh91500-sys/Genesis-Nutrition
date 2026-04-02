@@ -3647,19 +3647,45 @@ function renderAISearchResults(foods){
   if(!foods||!foods.length){ el.innerHTML='<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-text">No results found.</div></div>'; return; }
   aiSearchFoodsCache = foods;
   el.innerHTML = foods.map(function(f, idx){
+    var label = f.serving_label || '1 serving';
     return '<div class="ai-food-result">'+
       '<div class="ai-food-name">'+f.name+'</div>'+
-      '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Per '+(f.serving_label||f.serving+'g')+'</div>'+
-      '<div class="serving-adjuster">'+
-        '<span class="serving-unit-label">Serving size</span>'+
-        '<span style="font-size:13px;color:var(--muted);margin-right:4px;">'+(f.serving_label||'1 serving')+' =</span>'+
-        '<input type="number" data-idx="'+idx+'" value="'+f.serving+'" min="1" max="2000" oninput="updateAIFoodDisplay('+idx+',this.value)" style="width:65px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-family:DM Sans,sans-serif;font-size:14px;text-align:center;outline:none;">'+
+      // Toggle row
+      '<div style="display:flex;gap:6px;margin-bottom:10px;">'+
+        '<button class="cat-pill active" id="toggle_serving_'+idx+'" onclick="setServingMode('+idx+',\'serving\')">'+label+'</button>'+
+        '<button class="cat-pill" id="toggle_grams_'+idx+'" onclick="setServingMode('+idx+',\'grams\')">Custom g</button>'+
+      '</div>'+
+      // Serving count row
+      '<div id="row_serving_'+idx+'" class="serving-adjuster">'+
+        '<span class="serving-unit-label">How many?</span>'+
+        '<input type="number" id="count_'+idx+'" value="1" min="0.25" max="50" step="0.25" oninput="updateAIFoodDisplay('+idx+',null)" style="width:65px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-family:DM Sans,sans-serif;font-size:14px;text-align:center;outline:none;">'+
+        '<span style="font-size:13px;color:var(--muted);">× '+label+'</span>'+
+      '</div>'+
+      // Custom grams row
+      '<div id="row_grams_'+idx+'" class="serving-adjuster" style="display:none;">'+
+        '<span class="serving-unit-label">Weight</span>'+
+        '<input type="number" id="grams_'+idx+'" value="'+f.serving+'" min="1" max="5000" oninput="updateAIFoodDisplay('+idx+',null)" style="width:65px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-family:DM Sans,sans-serif;font-size:14px;text-align:center;outline:none;">'+
         '<span style="font-size:13px;color:var(--muted);">g</span>'+
       '</div>'+
       '<div class="ai-food-macros" id="aimacros_'+idx+'">'+renderAIFoodMacros(f, f.serving)+'</div>'+
       '<button class="ai-add-btn" data-idx="'+idx+'" onclick="addAIFoodToLog('+idx+',this)">＋ Add to Today</button>'+
     '</div>';
   }).join('');
+}
+
+function setServingMode(idx, mode){
+  var servRow = document.getElementById('row_serving_'+idx);
+  var gramRow = document.getElementById('row_grams_'+idx);
+  var servBtn = document.getElementById('toggle_serving_'+idx);
+  var gramBtn = document.getElementById('toggle_grams_'+idx);
+  if(mode==='serving'){
+    servRow.style.display='flex'; gramRow.style.display='none';
+    servBtn.classList.add('active'); gramBtn.classList.remove('active');
+  } else {
+    servRow.style.display='none'; gramRow.style.display='flex';
+    servBtn.classList.remove('active'); gramBtn.classList.add('active');
+  }
+  updateAIFoodDisplay(idx, null);
 }
 
 function renderAIFoodMacros(f, serving){
@@ -3676,10 +3702,17 @@ function renderAIFoodMacros(f, serving){
     (parseFloat(fi)>0?'<div class="ai-food-macro-chip" style="color:#2dd4a0;">Fi '+fi+'g</div>':'');
 }
 
-function updateAIFoodDisplay(idx, newServing){
+function updateAIFoodDisplay(idx, unused){
   var f = aiSearchFoodsCache[idx];
   if(!f) return;
-  var s = parseFloat(newServing)||f.serving;
+  var servRow = document.getElementById('row_serving_'+idx);
+  var s;
+  if(servRow && servRow.style.display!=='none'){
+    var count = parseFloat(document.getElementById('count_'+idx).value)||1;
+    s = count * f.serving;
+  } else {
+    s = parseFloat(document.getElementById('grams_'+idx).value)||f.serving;
+  }
   var el = document.getElementById('aimacros_'+idx);
   if(el) el.innerHTML = renderAIFoodMacros(f, s);
 }
@@ -3687,13 +3720,21 @@ function updateAIFoodDisplay(idx, newServing){
 function addAIFoodToLog(idx, btn){
   var f = aiSearchFoodsCache[idx];
   if(!f) return;
-  var card = btn.closest('.ai-food-result');
-  var servingInput = card ? card.querySelector('input[type=number]') : null;
-  var serving = servingInput ? parseFloat(servingInput.value)||f.serving : f.serving;
+  var servRow = document.getElementById('row_serving_'+idx);
+  var serving;
+  var nameLabel = f.name;
+  if(servRow && servRow.style.display!=='none'){
+    var count = parseFloat(document.getElementById('count_'+idx).value)||1;
+    serving = count * f.serving;
+    if(count!==1) nameLabel = f.name+' (×'+count+')';
+  } else {
+    serving = parseFloat(document.getElementById('grams_'+idx).value)||f.serving;
+    nameLabel = f.name+' ('+serving+'g)';
+  }
   var ratio = serving / (f.serving||100);
   var food = {
     meal: 'Snack',
-    name: f.name+(serving!==f.serving?' ('+serving+'g)':''),
+    name: nameLabel,
     cal: Math.round(f.cal*ratio),
     protein: parseFloat((f.protein*ratio).toFixed(1)),
     carbs: parseFloat((f.carbs*ratio).toFixed(1)),
