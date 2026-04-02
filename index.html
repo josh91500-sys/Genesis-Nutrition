@@ -3619,7 +3619,7 @@ async function aiSearchFood(){
   statusEl.textContent = 'Searching for "'+query+'"...';
   document.getElementById('ai-search-results').innerHTML = '';
 
-  var prompt = 'The user searched for: "'+query+'". Return foods that ARE "'+query+'" or are directly related to "'+query+'". Do NOT return unrelated foods.\n\nReturn ONLY a JSON array of 5-8 foods matching "'+query+'" (no markdown):\n[{"name":"Whole Egg (large)","serving":50,"cal":72,"protein":6.3,"carbs":0.4,"fat":4.8,"fiber":0,"sugar":0.2,"sodium":71,"potassium":69,"vitc":0,"iron":0.9,"calcium":28,"vitd":1.1,"category":"eggs"}]\n\nRules:\n- ONLY return foods that are "'+query+'" or directly related to "'+query+'"\n- serving = typical serving size in grams (e.g. 1 egg = 50g, 1 slice bread = 28g)\n- All macro values are for that typical serving size\n- sodium/potassium/calcium in mg, vitc/iron in mg, vitd in mcg\n- Return ONLY the JSON array, no markdown';
+  var prompt = 'The user searched for: "'+query+'". Return foods that ARE "'+query+'" or directly related to "'+query+'". Do NOT return unrelated foods.\n\nReturn ONLY a JSON array of 5-8 foods (no markdown):\n[{"name":"Whole Egg, Large","serving_label":"1 egg","serving":50,"cal":72,"protein":6.3,"carbs":0.4,"fat":4.8,"fiber":0,"sugar":0.2,"sodium":71,"potassium":69,"vitc":0,"iron":0.9,"calcium":28,"vitd":1.1,"category":"eggs"}]\n\nCRITICAL RULES:\n- ONLY return foods matching "'+query+'" — no unrelated foods\n- serving_label = common sense label like "1 egg", "1 cup", "1 slice", "1 tbsp", "1 oz", "1 medium", "1 filet"\n- serving = grams for that serving_label\n- ALL macro/micro values must be for that exact serving size (not per 100g)\n- sodium/potassium/calcium in mg, vitc/iron in mg, vitd in mcg\n- Use real accurate nutritional data\n- Return ONLY the JSON array';
 
   try {
     var res = await callClaude({
@@ -3649,10 +3649,11 @@ function renderAISearchResults(foods){
   el.innerHTML = foods.map(function(f, idx){
     return '<div class="ai-food-result">'+
       '<div class="ai-food-name">'+f.name+'</div>'+
-      '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Typical serving: '+f.serving+'g</div>'+
+      '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Per '+(f.serving_label||f.serving+'g')+'</div>'+
       '<div class="serving-adjuster">'+
         '<span class="serving-unit-label">Serving size</span>'+
-        '<input type="number" data-idx="'+idx+'" value="'+f.serving+'" min="1" max="2000" oninput="updateAIFoodDisplay('+idx+',this.value)" style="width:70px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-family:DM Sans,sans-serif;font-size:14px;text-align:center;outline:none;">'+
+        '<span style="font-size:13px;color:var(--muted);margin-right:4px;">'+(f.serving_label||'1 serving')+' =</span>'+
+        '<input type="number" data-idx="'+idx+'" value="'+f.serving+'" min="1" max="2000" oninput="updateAIFoodDisplay('+idx+',this.value)" style="width:65px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-family:DM Sans,sans-serif;font-size:14px;text-align:center;outline:none;">'+
         '<span style="font-size:13px;color:var(--muted);">g</span>'+
       '</div>'+
       '<div class="ai-food-macros" id="aimacros_'+idx+'">'+renderAIFoodMacros(f, f.serving)+'</div>'+
