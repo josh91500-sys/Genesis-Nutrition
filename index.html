@@ -34,6 +34,9 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-fam
   border:none;background:none;color:var(--muted);cursor:pointer;font-family:'DM Sans',sans-serif;transition:.2s;
   flex-shrink:0;}
 .nav-btn.active{color:var(--accent2);}
+.nav-btn.active svg{stroke:var(--accent2);}
+.nav-btn.active span{color:var(--accent2);font-weight:700;}
+.nav-btn.active::after{content:'';display:block;width:20px;height:3px;background:var(--accent2);border-radius:99px;margin:2px auto 0;}
 .nav-btn svg{width:22px;height:22px;}
 .nav-btn span{font-size:10px;font-weight:600;letter-spacing:.04em;}
 
@@ -743,6 +746,109 @@ textarea:focus{border-color:var(--accent);}
           <button onclick="openRecipeModal()" class="hdr-action" style="font-size:12px;padding:6px 12px;">＋ New</button>
         </div>
         <div id="recipe-list"></div>
+      </div>
+    </div>
+
+    <!-- ══ FITNESS PAGE ══ -->
+    <div class="page" id="page-fitness">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div><div class="page-title">Fitness</div><div class="page-date">Goal Tracking</div></div>
+          <button class="hdr-action" onclick="openFitnessGoalModal()">＋ Goal</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">🤖 AI Goal Suggestions</div>
+        <div class="ai-desc">Tell AI what you want to achieve and it will create specific, measurable fitness goals with milestones.</div>
+        <div class="input-group">
+          <label class="input-label">What do you want to achieve?</label>
+          <textarea id="fitness-ai-input" rows="3" placeholder="e.g. I want to bench press 315 lbs&#10;or: hike 9 miles without stopping&#10;or: run a 5K in under 25 minutes&#10;or: do 20 pull-ups"></textarea>
+        </div>
+        <button class="btn-ai" onclick="generateFitnessGoals()" id="fitness-ai-btn">
+          <span>🤖 Generate Goals & Milestones</span>
+        </button>
+        <div id="fitness-ai-status" class="ai-status"></div>
+      </div>
+      <div style="padding:0 16px;">
+        <div class="category-filter" id="fitness-category-filter"></div>
+      </div>
+      <div id="fitness-goals-list"></div>
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div class="card-title" style="margin:0;">📋 Recent Workouts</div>
+        </div>
+        <div id="recent-workouts-list"></div>
+      </div>
+    </div>
+
+    <!-- ══ HEALTH PAGE ══ -->
+    <div class="page" id="page-health">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div><div class="page-title">Health AI</div><div class="page-date">Personalized recommendations</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">🩺 Your Health Profile</div>
+        <div class="ai-desc">Tell us about your goals, medical conditions, medications, or dietary restrictions. AI will create personalized nutrition goals and explain why with study links.</div>
+        <div class="input-group">
+          <label class="input-label">Your Health Info & Goals</label>
+          <textarea id="health-profile-input" rows="5" placeholder="Examples:&#10;• I have high blood pressure and Type 2 diabetes&#10;• I'm taking metformin and lisinopril&#10;• I want to lose 20 lbs and build muscle&#10;• I'm vegetarian and lactose intolerant&#10;• I have high cholesterol and low iron"></textarea>
+        </div>
+        <button class="btn-ai" onclick="generateHealthRecommendations()" id="health-btn">
+          <span>🤖 Analyze & Set My Goals</span>
+        </button>
+        <div id="health-status" class="ai-status"></div>
+      </div>
+      <div class="card" id="health-conditions-card" style="display:none;">
+        <div class="card-title">📋 Active Health Profile</div>
+        <div id="health-tags"></div>
+        <button onclick="clearHealthProfile()" style="margin-top:10px;background:none;border:1px solid #ff6b6b44;color:#ff9090;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;">Clear Profile</button>
+      </div>
+      <div id="health-recommendations"></div>
+      <div class="card">
+        <div class="card-title">💪 Workout & Fitness Goals</div>
+        <div class="ai-desc">Tell us about your fitness goals, current activity level, any injuries or limitations. AI will set your calorie targets, protein needs, and give you a workout plan.</div>
+        <div class="input-group">
+          <label class="input-label">Your Fitness Info & Goals</label>
+          <textarea id="workout-profile-input" rows="5" placeholder="Examples:&#10;• I want to build muscle and lose fat&#10;• I work out 4x a week, mostly weight training&#10;• I have a bad knee so no running&#10;• I'm a beginner trying to get active&#10;• I'm training for a marathon&#10;• I'm 35, 180lbs, sedentary job"></textarea>
+        </div>
+        <button class="btn-ai" onclick="generateWorkoutRecommendations()" id="workout-btn">
+          <span>🏋️ Analyze & Set Fitness Goals</span>
+        </button>
+        <div id="workout-status" class="ai-status"></div>
+      </div>
+      <div class="card" id="workout-conditions-card" style="display:none;">
+        <div class="card-title">🏃 Active Fitness Profile</div>
+        <div id="workout-tags"></div>
+        <button onclick="clearWorkoutProfile()" style="margin-top:10px;background:none;border:1px solid #ff6b6b44;color:#ff9090;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;">Clear Profile</button>
+      </div>
+      <div id="workout-recommendations"></div>
+      <div style="margin:0 16px 20px;padding:12px;background:var(--bg3);border-radius:var(--r2);border-left:3px solid var(--sugar);">
+        <div style="font-size:11px;color:var(--muted);line-height:1.6;">⚠️ <strong style="color:var(--text);">Medical Disclaimer:</strong> These recommendations are for informational purposes only and are not medical advice. Always consult your healthcare provider before making changes to your diet, especially if you have medical conditions or take medications.</div>
+      </div>
+    </div>
+
+    <!-- ══ GOALS PAGE ══ -->
+    <div class="page" id="page-goals">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div><div class="page-title">Goals</div><div class="page-date">Daily targets</div></div>
+          <button class="hdr-action" onclick="saveGoals()">Save</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Macronutrients</div>
+        <div id="goal-rows-macro"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Micronutrients</div>
+        <div id="goal-rows-micro"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">🏋️ Fitness Goals</div>
+        <div id="fitness-goals-summary"></div>
+        <button onclick="showPage('fitness',document.querySelector('.nav-btn:nth-child(5)'))" style="width:100%;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:10px;padding:10px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;margin-top:8px;">Go to Fitness Tab →</button>
       </div>
     </div>
   </div><!-- /screen -->
