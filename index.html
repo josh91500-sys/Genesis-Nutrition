@@ -867,20 +867,24 @@ function showFoodPreview(food, containerId){
 
 function addPreviewFood(food){
   if(!food) food = window._previewFood;
-  if(!food) return;
-  const meal = document.getElementById('food-meal').value;
+  if(!food){ showToast('Error: no food data'); return; }
+  // Read meal before closing modal
+  const mealEl = document.getElementById('food-meal');
+  const meal = mealEl ? mealEl.value : 'Snacks';
+  // Save to log
   const log = loadDayLog(dayOffset);
   log.foods.push({
-    meal, name:food.name, cal:food.cal, protein:food.protein||0,
-    carbs:food.carbs||0, fat:food.fat||0, fiber:food.fiber||0,
-    sugar:food.sugar||0, sodium:food.sodium||0, potassium:food.potassium||0,
-    vitc:food.vitc||0, iron:food.iron||0, calcium:food.calcium||0, vitd:food.vitd||0,
-    serving:food.serving_g||100,
-    verified: food.source&&food.source.toLowerCase().includes('usda'),
+    meal, name:food.name, cal:parseFloat(food.cal)||0, protein:parseFloat(food.protein)||0,
+    carbs:parseFloat(food.carbs)||0, fat:parseFloat(food.fat)||0, fiber:parseFloat(food.fiber)||0,
+    sugar:parseFloat(food.sugar)||0, sodium:parseFloat(food.sodium)||0, potassium:parseFloat(food.potassium)||0,
+    vitc:parseFloat(food.vitc)||0, iron:parseFloat(food.iron)||0, calcium:parseFloat(food.calcium)||0, vitd:parseFloat(food.vitd)||0,
+    serving:parseFloat(food.serving_g)||100,
+    verified: !!(food.source&&food.source.toLowerCase().includes('usda')),
     ai_sourced: !food.source||!food.source.toLowerCase().includes('usda'),
     id:Date.now()
   });
   saveDayLog(log, dayOffset);
+  window._previewFood = null;
   closeAddFood();
   renderNutrition();
   showToast('✓ '+food.name+' added');
