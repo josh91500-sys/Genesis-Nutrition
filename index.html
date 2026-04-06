@@ -843,26 +843,29 @@ All values for the described serving. sodium/potassium/calcium in mg. vitc/iron 
 }
 
 function showFoodPreview(food, containerId){
+  window._pf = food;
   const el = document.getElementById(containerId);
-  const isUSDA = food.source&&food.source.toLowerCase().includes('usda');
-  el.innerHTML = `
-    <div class="ai-preview" style="margin-top:12px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div class="ai-preview-name">${food.name}</div>
-        <span class="${isUSDA?'verified-badge':'ai-badge'}">${isUSDA?'✓ USDA':'🤖 AI Est.'}</span>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">${food.serving_desc||food.serving_g+'g serving'}</div>
-      <div class="preview-grid">
-        <div class="preview-item"><div class="preview-val">${Math.round(food.cal)}</div><div class="preview-key">kcal</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--protein)">${(food.protein||0).toFixed(1)}g</div><div class="preview-key">protein</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--carbs)">${(food.carbs||0).toFixed(1)}g</div><div class="preview-key">carbs</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--fat)">${(food.fat||0).toFixed(1)}g</div><div class="preview-key">fat</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--fiber)">${(food.fiber||0).toFixed(1)}g</div><div class="preview-key">fiber</div></div>
-        <div class="preview-item"><div class="preview-val">${Math.round(food.sodium||0)}mg</div><div class="preview-key">sodium</div></div>
-      </div>
-      ${!isUSDA?'<div style="font-size:11px;color:var(--sugar);margin-top:10px;">⚠️ AI estimate — verify with food label for accuracy</div>':''}
-      <button class="btn-primary" style="margin-top:12px;" onclick="addPreviewFood(${JSON.stringify(food).replace(/'/g,"&#39;")})">＋ Add to Log</button>
-    </div>`;
+  const isUSDA = !!(food.source && food.source.toLowerCase().includes('usda'));
+  const badge = isUSDA ? '<span class="verified-badge">✓ USDA</span>' : '<span class="ai-badge">🤖 AI Est.</span>';
+  const warning = isUSDA ? '' : '<div style="font-size:11px;color:var(--sugar);margin-top:10px;">⚠️ AI estimate — verify with food label for accuracy</div>';
+  el.innerHTML = '<div class="ai-preview" style="margin-top:12px;">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
+    + '<div class="ai-preview-name">' + food.name + '</div>' + badge
+    + '</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">' + (food.serving_desc || (food.serving_g + 'g serving')) + '</div>'
+    + '<div class="preview-grid">'
+    + '<div class="preview-item"><div class="preview-val">' + Math.round(food.cal||0) + '</div><div class="preview-key">kcal</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--protein)">' + parseFloat(food.protein||0).toFixed(1) + 'g</div><div class="preview-key">protein</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--carbs)">' + parseFloat(food.carbs||0).toFixed(1) + 'g</div><div class="preview-key">carbs</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--fat)">' + parseFloat(food.fat||0).toFixed(1) + 'g</div><div class="preview-key">fat</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--fiber)">' + parseFloat(food.fiber||0).toFixed(1) + 'g</div><div class="preview-key">fiber</div></div>'
+    + '<div class="preview-item"><div class="preview-val">' + Math.round(food.sodium||0) + 'mg</div><div class="preview-key">sodium</div></div>'
+    + '</div>' + warning
+    + '<button class="btn-primary" style="margin-top:12px;" id="add-preview-btn">＋ Add to Log</button>'
+    + '</div>';
+  document.getElementById('add-preview-btn').addEventListener('click', function(){
+    addPreviewFood(window._pf);
+  });
 }
 
 function addPreviewFood(food){
