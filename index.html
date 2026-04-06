@@ -478,6 +478,20 @@ textarea:focus{border-color:var(--accent);}
 .serving-unit-label{font-size:13px;color:var(--muted);flex:1;}
 .ai-add-btn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:10px;
   padding:11px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;cursor:pointer;}
+
+/* BRAND SEARCH */
+.brand-result{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);
+  overflow:hidden;margin:0 16px 10px;}
+.brand-result-top{display:flex;gap:12px;padding:14px;align-items:center;}
+.brand-result-img{width:64px;height:64px;object-fit:contain;border-radius:8px;background:var(--bg4);flex-shrink:0;}
+.brand-result-img-placeholder{width:64px;height:64px;border-radius:8px;background:var(--bg4);
+  display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;}
+.brand-result-info{flex:1;}
+.brand-result-name{font-size:14px;font-weight:700;margin-bottom:2px;}
+.brand-result-brand{font-size:12px;color:var(--muted);}
+.brand-result-serving{font-size:12px;color:var(--accent2);margin-top:4px;}
+.brand-nutrition{display:flex;gap:6px;padding:0 14px 10px;flex-wrap:wrap;}
+.brand-nut-chip{background:var(--bg4);border-radius:8px;padding:5px 10px;font-size:12px;}
 </style>
 </head>
 <body>
@@ -651,16 +665,39 @@ textarea:focus{border-color:var(--accent);}
 
       <!-- ── AI FOOD SEARCH TAB ── -->
       <div id="search-ai-tab" style="display:none;">
-        <div class="card">
-          <div class="card-title">🤖 AI Food Search</div>
-          <div class="ai-desc">Search any food, meal, or ingredient. AI returns accurate nutrition data. Customize the serving size before adding.</div>
-          <div style="display:flex;gap:8px;margin-bottom:10px;">
-            <input type="text" id="food-search-input" placeholder="e.g. eggs, avocado toast, greek yogurt..." style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 14px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:14px;outline:none;">
-            <button onclick="aiSearchFood()" class="btn-primary" style="padding:12px 18px;border-radius:var(--r2);background:var(--accent);color:#fff;border:none;font-family:'DM Sans',sans-serif;font-weight:700;cursor:pointer;white-space:nowrap;">Search</button>
-          </div>
-          <div id="search-status" class="ai-status"></div>
+        <!-- Sub-tab toggle -->
+        <div style="display:flex;gap:6px;padding:0 16px 12px;">
+          <button class="cat-pill active" id="subtab-ai-btn" onclick="setAISubTab('ai')">🤖 AI Search</button>
+          <button class="cat-pill" id="subtab-brand-btn" onclick="setAISubTab('brand')">🏪 Brand Search</button>
         </div>
-        <div id="ai-search-results"></div>
+
+        <!-- AI Search -->
+        <div id="subtab-ai">
+          <div class="card">
+            <div class="card-title">🤖 AI Food Search</div>
+            <div class="ai-desc">Describe any food or meal and AI returns accurate nutrition data with adjustable serving sizes.</div>
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
+              <input type="text" id="food-search-input" placeholder="e.g. eggs, avocado toast, greek yogurt..." style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 14px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:14px;outline:none;">
+              <button onclick="aiSearchFood()" style="padding:12px 18px;border-radius:var(--r2);background:var(--accent);color:#fff;border:none;font-family:'DM Sans',sans-serif;font-weight:700;cursor:pointer;white-space:nowrap;">Search</button>
+            </div>
+            <div id="search-status" class="ai-status"></div>
+          </div>
+          <div id="ai-search-results"></div>
+        </div>
+
+        <!-- Brand Search -->
+        <div id="subtab-brand" style="display:none;">
+          <div class="card">
+            <div class="card-title">🏪 Brand & Product Search</div>
+            <div class="ai-desc">Search by brand name or product. We look up the real nutrition label from our food database — no guessing.</div>
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
+              <input type="text" id="brand-search-input" placeholder="e.g. Munchies Snack Mix, Oreo, Kind Bar..." style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 14px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:14px;outline:none;" onkeydown="if(event.key==='Enter')brandSearchFood()">
+              <button onclick="brandSearchFood()" style="padding:12px 18px;border-radius:var(--r2);background:var(--accent);color:#fff;border:none;font-family:'DM Sans',sans-serif;font-weight:700;cursor:pointer;white-space:nowrap;">Search</button>
+            </div>
+            <div id="brand-search-status" class="ai-status"></div>
+          </div>
+          <div id="brand-search-results"></div>
+        </div>
       </div>
     </div>
 
@@ -3902,6 +3939,140 @@ function goToPage(name){
   closeMoreMenu();
   // Find the matching nav btn or just call showPage with a dummy btn
   showPage(name, {classList:{add:function(){},remove:function(){}}});
+}
+
+</script>
+
+<script>
+
+// ══════════════════════════════════════
+// BRAND SEARCH (Open Food Facts)
+// ══════════════════════════════════════
+function setAISubTab(tab){
+  document.getElementById('subtab-ai').style.display = tab==='ai' ? 'block' : 'none';
+  document.getElementById('subtab-brand').style.display = tab==='brand' ? 'block' : 'none';
+  document.getElementById('subtab-ai-btn').classList.toggle('active', tab==='ai');
+  document.getElementById('subtab-brand-btn').classList.toggle('active', tab==='brand');
+}
+
+async function brandSearchFood(){
+  var query = document.getElementById('brand-search-input').value.trim();
+  if(!query) return;
+  var statusEl = document.getElementById('brand-search-status');
+  var resultsEl = document.getElementById('brand-search-results');
+  statusEl.textContent = 'Searching for "'+query+'"...';
+  resultsEl.innerHTML = '';
+
+  try {
+    // Search Open Food Facts
+    var url = 'https://world.openfoodfacts.org/cgi/search.pl?search_terms='+encodeURIComponent(query)+'&search_simple=1&action=process&json=1&page_size=10&fields=product_name,brands,image_front_small_url,serving_size,nutriments,quantity,categories_tags';
+    var res = await fetch(url);
+    if(!res.ok) throw new Error('Search failed');
+    var data = await res.json();
+    var products = (data.products||[]).filter(function(p){
+      return p.product_name && p.nutriments && p.nutriments['energy-kcal_serving'];
+    });
+
+    if(!products.length){
+      statusEl.textContent = 'No results found. Try a different search term.';
+      return;
+    }
+
+    statusEl.textContent = '✓ Found '+products.length+' products';
+    renderBrandResults(products);
+  } catch(e){
+    statusEl.textContent = '✗ Search failed: '+(e.message||'Check your connection');
+  }
+}
+
+function renderBrandResults(products){
+  var el = document.getElementById('brand-search-results');
+  window.brandResultsCache = products;
+  el.innerHTML = products.map(function(p, idx){
+    var n = p.nutriments;
+    var servingSize = p.serving_size || '100g';
+    var cal = Math.round(n['energy-kcal_serving'] || n['energy-kcal_100g'] || 0);
+    var protein = parseFloat((n['proteins_serving'] || n['proteins_100g'] || 0).toFixed(1));
+    var carbs = parseFloat((n['carbohydrates_serving'] || n['carbohydrates_100g'] || 0).toFixed(1));
+    var fat = parseFloat((n['fat_serving'] || n['fat_100g'] || 0).toFixed(1));
+    var fiber = parseFloat((n['fiber_serving'] || n['fiber_100g'] || 0).toFixed(1));
+    var sodium = Math.round((n['sodium_serving'] || n['sodium_100g'] || 0) * 1000);
+    var imgUrl = p.image_front_small_url || '';
+    var name = (p.product_name || 'Unknown Product').replace(/'/g,'&#39;');
+    var brand = p.brands || '';
+    var servingG = 100;
+    var gm = servingSize.match(/([\d.]+)\s*g/i);
+    if(gm) servingG = parseFloat(gm[1]);
+
+    // Store in cache
+    window.brandResultsCache[idx]._parsed = {cal:cal,protein:protein,carbs:carbs,fat:fat,fiber:fiber,sodium:sodium,servingG:servingG,servingSize:servingSize,name:name};
+
+    return '<div class="brand-result">'+
+      '<div class="brand-result-top">'+
+        (imgUrl ? '<img src="'+imgUrl+'" class="brand-result-img">' : '<div class="brand-result-img-placeholder">🏪</div>')+
+        '<div class="brand-result-info">'+
+          '<div class="brand-result-name">'+name+'</div>'+
+          (brand?'<div class="brand-result-brand">'+brand+'</div>':'')+
+          '<div class="brand-result-serving">Per '+servingSize+' · '+cal+' kcal</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="brand-nutrition">'+
+        '<div class="brand-nut-chip" style="color:#fff;background:var(--bg2);">'+cal+' kcal</div>'+
+        '<div class="brand-nut-chip" style="color:#ff6b9d;">P '+protein+'g</div>'+
+        '<div class="brand-nut-chip" style="color:#ffb347;">C '+carbs+'g</div>'+
+        '<div class="brand-nut-chip" style="color:#4aa8ff;">F '+fat+'g</div>'+
+        (fiber>0?'<div class="brand-nut-chip" style="color:#2dd4a0;">Fi '+fiber+'g</div>':'')+
+        (sodium>0?'<div class="brand-nut-chip" style="color:var(--muted);">Na '+sodium+'mg</div>':'')+
+      '</div>'+
+      '<div style="padding:0 14px 14px;">'+
+        '<div class="serving-adjuster" style="margin-bottom:8px;">'+
+          '<span class="serving-unit-label">Servings</span>'+
+          '<input type="number" id="brandcount_'+idx+'" value="1" min="0.25" max="20" step="0.25" oninput="updateBrandDisplay('+idx+',this.value)" style="width:65px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-family:DM Sans,sans-serif;font-size:14px;text-align:center;outline:none;">'+
+          '<span style="font-size:13px;color:var(--muted);">× '+servingSize+'</span>'+
+        '</div>'+
+        '<div id="brandmacros_'+idx+'" style="font-size:12px;color:var(--muted);margin-bottom:8px;">'+
+          'Total: '+cal+' kcal · P '+protein+'g · C '+carbs+'g · F '+fat+'g'+
+        '</div>'+
+        '<button data-idx="'+idx+'" onclick="addBrandFoodToLog('+idx+')" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:11px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:600;cursor:pointer;">＋ Add to Today</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+function updateBrandDisplay(idx, count){
+  if(!window.brandResultsCache||!window.brandResultsCache[idx]) return;
+  var data = window.brandResultsCache[idx]._parsed;
+  if(!data) return;
+  var n = parseFloat(count)||1;
+  var el = document.getElementById('brandmacros_'+idx);
+  if(el) el.textContent = 'Total: '+Math.round(data.cal*n)+' kcal · P '+(data.protein*n).toFixed(1)+'g · C '+(data.carbs*n).toFixed(1)+'g · F '+(data.fat*n).toFixed(1)+'g';
+}
+
+function addBrandFoodToLog(idx){
+  if(!window.brandResultsCache||!window.brandResultsCache[idx]) return;
+  var data = window.brandResultsCache[idx]._parsed;
+  if(!data) return;
+  var countEl = document.getElementById('brandcount_'+idx);
+  var count = countEl ? parseFloat(countEl.value)||1 : 1;
+  var name = data.name;
+  var food = {
+    meal: 'Snack',
+    name: name + (count!==1 ? ' (×'+count+')' : ''),
+    cal: Math.round(data.cal * count),
+    protein: parseFloat((data.protein*count).toFixed(1)),
+    carbs: parseFloat((data.carbs*count).toFixed(1)),
+    fat: parseFloat((data.fat*count).toFixed(1)),
+    fiber: parseFloat((data.fiber*count).toFixed(1)),
+    sugar: 0,
+    sodium: Math.round(data.sodium*count),
+    potassium: 0, vitc: 0, iron: 0, calcium: 0, vitd: 0,
+    serving: Math.round(data.servingG*count),
+    id: Date.now()
+  };
+  var log = getDayLog(0);
+  log.foods.push(food);
+  saveDayLog(log, 0);
+  showToast('✓ '+name+' added!');
 }
 
 </script>
