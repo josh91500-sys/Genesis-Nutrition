@@ -866,6 +866,8 @@ function showFoodPreview(food, containerId){
 }
 
 function addPreviewFood(food){
+  if(!food) food = window._previewFood;
+  if(!food) return;
   const meal = document.getElementById('food-meal').value;
   const log = loadDayLog(dayOffset);
   log.foods.push({
