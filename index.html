@@ -262,6 +262,29 @@ select option{background:var(--bg2);}
 .empty-state{text-align:center;padding:32px 16px;color:var(--muted);}
 .empty-icon{font-size:40px;margin-bottom:10px;}
 .empty-text{font-size:14px;line-height:1.5;}
+
+/* NUTRITION DETAIL PAGE */
+.nutrient-section{margin:10px 16px 0;}
+.nutrient-section-title{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.1em;margin-bottom:8px;padding:0 4px;}
+.nutrient-row{display:flex;align-items:center;gap:10px;padding:12px 14px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:12px;margin-bottom:6px;}
+.nutrient-row-left{flex:1;}
+.nutrient-row-name{font-size:13px;font-weight:600;margin-bottom:2px;}
+.nutrient-row-val{font-size:12px;color:var(--muted);}
+.nutrient-bar-wrap{width:80px;}
+.nutrient-bar-bg{height:5px;background:var(--bg5);border-radius:99px;overflow:hidden;margin-bottom:3px;}
+.nutrient-bar-fill{height:100%;border-radius:99px;}
+.nutrient-pct{font-size:10px;color:var(--muted);text-align:right;}
+.nutrient-info-btn{background:none;border:1px solid var(--border2);color:var(--accent2);
+  border-radius:8px;padding:5px 8px;font-size:11px;font-weight:700;cursor:pointer;
+  white-space:nowrap;flex-shrink:0;}
+.info-panel{background:var(--bg4);border-radius:10px;padding:12px;margin-top:6px;
+  font-size:12px;color:var(--muted);line-height:1.6;display:none;}
+.info-panel.open{display:block;}
+.info-panel a{color:var(--accent2);text-decoration:none;}
+.cal-tap-hint{font-size:11px;color:var(--accent2);text-align:center;margin-top:6px;
+  display:flex;align-items:center;justify-content:center;gap:4px;}
 </style>
 </head>
 <body>
@@ -412,6 +435,19 @@ select option{background:var(--bg2);}
     <div id="sub-page-content" style="margin-top:10px;padding-bottom:20px;"></div>
   </div>
 
+
+  <!-- ══ NUTRITION DETAIL PAGE ══ -->
+  <div class="page" id="page-nutrition-detail">
+    <div class="hdr">
+      <div class="hdr-row">
+        <button onclick="showPage('nutrition',document.querySelector('.nav-btn.active'))" 
+          style="background:none;border:none;color:var(--accent2);font-size:15px;font-weight:700;cursor:pointer;padding:4px 0;">‹ Back</button>
+        <div style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;" id="detail-day-label">Today</div>
+        <div style="width:50px;"></div>
+      </div>
+    </div>
+    <div id="nutrition-detail-content" style="padding-bottom:30px;"></div>
+  </div>
 </div><!-- /screen -->
 
 <!-- ══ NAV BAR ══ -->
@@ -593,7 +629,10 @@ function saveDayLog(data, offset=0){
 }
 
 function getTotals(foods){
-  const t = {cal:0,protein:0,carbs:0,fat:0,fiber:0,sugar:0,sodium:0,potassium:0};
+  const t = {cal:0,protein:0,carbs:0,fat:0,fiber:0,sugar:0,sodium:0,potassium:0,
+    vitc:0,vitd:0,iron:0,calcium:0,magnesium:0,zinc:0,phosphorus:0,selenium:0,
+    vita:0,vite:0,vitk:0,vitb12:0,vitb6:0,folate:0,thiamine:0,riboflavin:0,
+    niacin:0,pantothenic:0,biotin:0,choline:0};
   foods.forEach(f=>{
     Object.keys(t).forEach(k=>{ t[k]+=(parseFloat(f[k])||0); });
   });
@@ -659,10 +698,10 @@ function renderNutrition(){
   ];
 
   document.getElementById('cal-summary').innerHTML = `
-    <div class="cal-main" onclick="toggleMacroDetail()" style="cursor:pointer;">
+    <div class="cal-main" onclick="showNutritionDetail()" style="cursor:pointer;position:relative;">
       <div>
-        <div class="cal-number">${Math.round(t.cal)}</div>
-        <div class="cal-label">calories eaten · tap for details</div>
+        <div class="cal-number" style="text-decoration:underline;text-decoration-color:var(--accent2);text-decoration-style:dotted;">${Math.round(t.cal)}</div>
+        <div class="cal-label" style="color:var(--accent2);">📊 tap for full breakdown →</div>
       </div>
       <div class="cal-goal-info">
         <div class="cal-remaining ${over?'over':'ok'}">${over?'+'+Math.round(t.cal-goals.calories):Math.round(remaining)}</div>
@@ -1804,6 +1843,249 @@ function toggleMacroDetail(){
   const isOpen = el.style.display !== 'none';
   el.style.display = isOpen ? 'none' : 'block';
 }
+
+
+// ══════════════════════════════════════
+// FULL NUTRIENT INFO DATABASE
+// ══════════════════════════════════════
+const NUTRIENT_INFO = {
+  // MACROS
+  calories: {name:'Calories',unit:'kcal',color:'#f0f0f8',category:'Macros',
+    role:'Primary energy source for all bodily functions.',
+    detail:'Calories fuel everything from breathing to exercise. Balance intake with expenditure for weight management.',
+    link:'https://www.hsph.harvard.edu/nutritionsource/carbohydrates/carbohydrates-and-blood-sugar/'},
+  protein: {name:'Protein',unit:'g',color:'var(--protein)',category:'Macros',
+    role:'Builds and repairs muscles, organs, skin, and hair. Essential for immune function.',
+    detail:'Made of amino acids. Complete proteins (meat, eggs, dairy) contain all 9 essential amino acids. Aim for 0.7-1g per pound of body weight if active.',
+    link:'https://www.hsph.harvard.edu/nutritionsource/what-should-you-eat/protein/'},
+  carbs: {name:'Carbohydrates',unit:'g',color:'var(--carbs)',category:'Macros',
+    role:'Primary fuel for brain and muscles during exercise.',
+    detail:'Choose complex carbs (whole grains, vegetables) over simple sugars. Fiber-rich carbs help blood sugar control.',
+    link:'https://www.hsph.harvard.edu/nutritionsource/carbohydrates/'},
+  fat: {name:'Total Fat',unit:'g',color:'var(--fat)',category:'Macros',
+    role:'Supports cell growth, hormone production, and absorption of vitamins A, D, E, K.',
+    detail:'Focus on unsaturated fats (olive oil, nuts, avocado). Limit saturated fat and avoid trans fats.',
+    link:'https://www.hsph.harvard.edu/nutritionsource/what-should-you-eat/fats-and-cholesterol/'},
+  fiber: {name:'Fiber',unit:'g',color:'var(--fiber)',category:'Macros',
+    role:'Supports digestive health, lowers cholesterol, stabilizes blood sugar.',
+    detail:'Soluble fiber (oats, beans) lowers LDL cholesterol. Insoluble fiber (vegetables, whole grains) aids digestion. Most Americans get only half the recommended amount.',
+    link:'https://www.hsph.harvard.edu/nutritionsource/carbohydrates/fiber/'},
+  sugar: {name:'Sugar',unit:'g',color:'var(--sugar)',category:'Macros',
+    role:'Quick energy source. Excess sugar linked to obesity, diabetes, and heart disease.',
+    detail:'WHO recommends less than 25g of added sugar per day. Natural sugars in fruit and dairy are less concerning than added sugars.',
+    link:'https://www.hsph.harvard.edu/nutritionsource/carbohydrates/added-sugar-in-the-diet/'},
+
+  // MINERALS
+  sodium: {name:'Sodium',unit:'mg',color:'#94a3b8',category:'Minerals',
+    role:'Regulates fluid balance, blood pressure, and nerve/muscle function.',
+    detail:'High sodium raises blood pressure. Most Americans consume 2-3x the recommended amount. Found heavily in processed foods.',
+    link:'https://www.heart.org/en/healthy-living/healthy-eating/eat-smart/sodium/how-much-sodium-should-i-eat-per-day'},
+  potassium: {name:'Potassium',unit:'mg',color:'#34d399',category:'Minerals',
+    role:'Counteracts sodium, lowers blood pressure, supports heart and muscle function.',
+    detail:'Most people are deficient. Bananas, sweet potatoes, avocados, and beans are excellent sources. Critical for heart rhythm.',
+    link:'https://ods.od.nih.gov/factsheets/Potassium-HealthProfessional/'},
+  calcium: {name:'Calcium',unit:'mg',color:'#a78bfa',category:'Minerals',
+    role:'Builds and maintains bones and teeth. Essential for muscle contraction and nerve signals.',
+    detail:'Requires Vitamin D for absorption. Beyond dairy: leafy greens, fortified foods, sardines. Peak bone mass built before age 30.',
+    link:'https://ods.od.nih.gov/factsheets/Calcium-HealthProfessional/'},
+  iron: {name:'Iron',unit:'mg',color:'#f59e0b',category:'Minerals',
+    role:'Carries oxygen in red blood cells. Essential for energy production.',
+    detail:'Heme iron (meat) absorbs better than non-heme iron (plants). Pair plant iron with Vitamin C to boost absorption. Deficiency causes fatigue and anemia.',
+    link:'https://ods.od.nih.gov/factsheets/Iron-HealthProfessional/'},
+  magnesium: {name:'Magnesium',unit:'mg',color:'#6ee7b7',category:'Minerals',
+    role:'Involved in 300+ enzyme reactions. Supports muscle, nerve, blood sugar, and bone health.',
+    detail:'About 50% of Americans are deficient. Found in nuts, seeds, leafy greens, and whole grains. Supports sleep quality.',
+    link:'https://ods.od.nih.gov/factsheets/Magnesium-HealthProfessional/'},
+  zinc: {name:'Zinc',unit:'mg',color:'#fbbf24',category:'Minerals',
+    role:'Immune function, wound healing, DNA synthesis, and sense of taste/smell.',
+    detail:'Oysters are the richest source. Also in meat, legumes, nuts, and seeds. Deficiency impairs immune response.',
+    link:'https://ods.od.nih.gov/factsheets/Zinc-HealthProfessional/'},
+  phosphorus: {name:'Phosphorus',unit:'mg',color:'#f472b6',category:'Minerals',
+    role:'Builds bones and teeth alongside calcium. Part of ATP (cellular energy).',
+    detail:'Found in most protein-rich foods. Rarely deficient in people who eat enough protein. Works with calcium for bone density.',
+    link:'https://ods.od.nih.gov/factsheets/Phosphorus-HealthProfessional/'},
+  selenium: {name:'Selenium',unit:'mcg',color:'#38bdf8',category:'Minerals',
+    role:'Antioxidant protection, thyroid function, immune support.',
+    detail:'Brazil nuts are extremely rich — just 1-2 per day meets daily needs. Also in seafood and meat.',
+    link:'https://ods.od.nih.gov/factsheets/Selenium-HealthProfessional/'},
+
+  // VITAMINS
+  vitc: {name:'Vitamin C',unit:'mg',color:'#fb923c',category:'Vitamins',
+    role:'Antioxidant, immune support, collagen production, iron absorption.',
+    detail:'Water-soluble — not stored in body, need daily intake. Citrus, bell peppers, strawberries are top sources. Helps fight colds and heal wounds.',
+    link:'https://ods.od.nih.gov/factsheets/VitaminC-HealthProfessional/'},
+  vitd: {name:'Vitamin D',unit:'mcg',color:'#facc15',category:'Vitamins',
+    role:'Calcium absorption, bone health, immune function, mood regulation.',
+    detail:'The "sunshine vitamin" — skin makes it from UV exposure. Over 1 billion people worldwide are deficient. Essential for immune health and depression prevention.',
+    link:'https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/'},
+  vita: {name:'Vitamin A',unit:'mcg',color:'#f97316',category:'Vitamins',
+    role:'Vision (especially night vision), immune function, skin health, cell growth.',
+    detail:'Found as retinol in animal foods and beta-carotene in colorful vegetables. Sweet potato, carrots, and leafy greens are top sources.',
+    link:'https://ods.od.nih.gov/factsheets/VitaminA-HealthProfessional/'},
+  vite: {name:'Vitamin E',unit:'mg',color:'#84cc16',category:'Vitamins',
+    role:'Antioxidant that protects cells. Supports immune function and skin health.',
+    detail:'Nuts and seeds are the best sources, especially sunflower seeds and almonds. Fat-soluble — stored in body fat.',
+    link:'https://ods.od.nih.gov/factsheets/VitaminE-HealthProfessional/'},
+  vitk: {name:'Vitamin K',unit:'mcg',color:'#4ade80',category:'Vitamins',
+    role:'Blood clotting and bone metabolism. Two forms: K1 (plants) and K2 (fermented foods).',
+    detail:'Leafy greens like kale and spinach are richest in K1. K2 found in natto, cheese, eggs. People on blood thinners need consistent intake.',
+    link:'https://ods.od.nih.gov/factsheets/VitaminK-HealthProfessional/'},
+  vitb12: {name:'Vitamin B12',unit:'mcg',color:'#e879f9',category:'Vitamins',
+    role:'Nerve function, red blood cell formation, DNA synthesis.',
+    detail:'Found almost exclusively in animal products. Vegans must supplement. Deficiency causes nerve damage, fatigue, and megaloblastic anemia.',
+    link:'https://ods.od.nih.gov/factsheets/VitaminB12-HealthProfessional/'},
+  vitb6: {name:'Vitamin B6',unit:'mg',color:'#c084fc',category:'Vitamins',
+    role:'Protein metabolism, neurotransmitter production (serotonin, dopamine), immune function.',
+    detail:'Found in poultry, fish, potatoes, and bananas. Important for mood regulation and brain health.',
+    link:'https://ods.od.nih.gov/factsheets/VitaminB6-HealthProfessional/'},
+  folate: {name:'Folate (B9)',unit:'mcg',color:'#f0abfc',category:'Vitamins',
+    role:'DNA synthesis, cell division, prevention of neural tube defects during pregnancy.',
+    detail:'Critical before and during pregnancy. Leafy greens, legumes, and fortified foods are top sources. Folic acid is the synthetic form in supplements.',
+    link:'https://ods.od.nih.gov/factsheets/Folate-HealthProfessional/'},
+  thiamine: {name:'Thiamine (B1)',unit:'mg',color:'#fde68a',category:'Vitamins',
+    role:'Energy metabolism from carbohydrates. Essential for nerve and heart function.',
+    detail:'Found in whole grains, legumes, and pork. Deficiency causes beriberi and Wernicke encephalopathy (common with heavy alcohol use).',
+    link:'https://ods.od.nih.gov/factsheets/Thiamin-HealthProfessional/'},
+  riboflavin: {name:'Riboflavin (B2)',unit:'mg',color:'#fcd34d',category:'Vitamins',
+    role:'Energy production, cell growth, fat metabolism, antioxidant activity.',
+    detail:'Milk and dairy are top sources. Excess is excreted in urine (turns it bright yellow). Helps prevent migraines.',
+    link:'https://ods.od.nih.gov/factsheets/Riboflavin-HealthProfessional/'},
+  niacin: {name:'Niacin (B3)',unit:'mg',color:'#fdba74',category:'Vitamins',
+    role:'Energy metabolism, DNA repair, skin health.',
+    detail:'High doses lower LDL cholesterol. Meat, poultry, and fish are top sources. Deficiency causes pellagra (dermatitis, diarrhea, dementia).',
+    link:'https://ods.od.nih.gov/factsheets/Niacin-HealthProfessional/'},
+  pantothenic: {name:'Pantothenic Acid (B5)',unit:'mg',color:'#fef08a',category:'Vitamins',
+    role:'Converts food to energy. Required for hormone and cholesterol synthesis.',
+    detail:'Widely distributed in food — "pantothenic" means "from everywhere." Deficiency is rare.',
+    link:'https://ods.od.nih.gov/factsheets/PantothenicAcid-HealthProfessional/'},
+  biotin: {name:'Biotin (B7)',unit:'mcg',color:'#d9f99d',category:'Vitamins',
+    role:'Fat, carbohydrate, and protein metabolism. Supports hair, skin, and nail health.',
+    detail:'Eggs (cooked), nuts, seeds, and liver are top sources. Popular supplement for hair growth, though evidence is mainly for people with deficiency.',
+    link:'https://ods.od.nih.gov/factsheets/Biotin-HealthProfessional/'},
+  choline: {name:'Choline',unit:'mg',color:'#99f6e4',category:'Vitamins',
+    role:'Brain development, nerve function, fat metabolism, liver health.',
+    detail:'Eggs are the richest source — one egg provides ~150mg. Essential during pregnancy for fetal brain development. Most people do not get enough.',
+    link:'https://ods.od.nih.gov/factsheets/Choline-HealthProfessional/'},
+};
+
+// Default daily values for display
+const DAILY_VALUES = {
+  calories:2000, protein:50, carbs:275, fat:78, fiber:28, sugar:50,
+  sodium:2300, potassium:4700, calcium:1300, iron:18, magnesium:420,
+  zinc:11, phosphorus:1250, selenium:55,
+  vitc:90, vitd:20, vita:900, vite:15, vitk:120, vitb12:2.4,
+  vitb6:1.7, folate:400, thiamine:1.2, riboflavin:1.3, niacin:16,
+  pantothenic:5, biotin:30, choline:550
+};
+
+function showNutritionDetail(){
+  const log = loadDayLog(dayOffset);
+  const t = getTotals(log.foods||[]);
+  const goals = loadGoals();
+
+  // Update day label
+  const dayEl = document.getElementById('detail-day-label');
+  if(dayEl) dayEl.textContent = dayOffset===0?'Today':dayOffset===-1?'Yesterday':
+    new Date(dateKey(dayOffset)+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+
+  // Build totals including all nutrients
+  const totals = {};
+  (log.foods||[]).forEach(f=>{
+    Object.keys(NUTRIENT_INFO).forEach(k=>{
+      totals[k] = (totals[k]||0) + (parseFloat(f[k])||0);
+    });
+    totals.calories = (totals.calories||0) + (parseFloat(f.cal)||0);
+  });
+
+  const el = document.getElementById('nutrition-detail-content');
+  const categories = ['Macros','Minerals','Vitamins'];
+  const goalMap = {...DAILY_VALUES, ...goals, calories:goals.calories||2000};
+
+  let html = '';
+
+  // Calorie hero at top
+  const calPct = Math.min(100,(totals.calories/(goalMap.calories||2000))*100);
+  const calOver = totals.calories > goalMap.calories;
+  html += '<div style="margin:12px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:16px;text-align:center;">'
+    + '<div style="font-family:Syne,sans-serif;font-size:56px;font-weight:800;line-height:1;">' + Math.round(totals.calories||0) + '</div>'
+    + '<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">calories eaten today</div>'
+    + '<div style="height:8px;background:var(--bg5);border-radius:99px;overflow:hidden;margin-bottom:6px;">'
+    + '<div style="height:100%;width:'+calPct+'%;background:'+(calOver?'#ff6b6b':'var(--accent)')+';border-radius:99px;"></div></div>'
+    + '<div style="font-size:13px;color:'+(calOver?'#ff6b6b':'var(--fiber)')+';">'
+    + (calOver ? '+'+Math.round(totals.calories-goalMap.calories)+' over goal' : Math.round(goalMap.calories-totals.calories)+' remaining of '+goalMap.calories+' goal')
+    + '</div></div>';
+
+  categories.forEach(cat=>{
+    const items = Object.entries(NUTRIENT_INFO).filter(([k,v])=>v.category===cat);
+    html += '<div class="nutrient-section"><div class="nutrient-section-title">' + cat + '</div>';
+    items.forEach(([key, info])=>{
+      const val = key==='calories' ? (totals.calories||0) : (totals[key]||0);
+      const goal = goalMap[key]||DAILY_VALUES[key]||1;
+      const pct = Math.min(100,(val/goal)*100);
+      const isLow = pct < 50;
+      const isGood = pct >= 80 && pct <= 110;
+      const isHigh = pct > 110;
+      const statusColor = isHigh ? '#ff6b6b' : isGood ? 'var(--fiber)' : info.color;
+
+      html += '<div class="nutrient-row">'
+        + '<div class="nutrient-row-left">'
+        + '<div class="nutrient-row-name">' + info.name + '</div>'
+        + '<div class="nutrient-row-val" style="color:'+statusColor+';">' + (val>100?Math.round(val):val.toFixed(1)) + info.unit
+        + ' <span style="color:var(--muted);">/ ' + (goal>100?Math.round(goal):goal) + info.unit + '</span></div>'
+        + '</div>'
+        + '<div class="nutrient-bar-wrap">'
+        + '<div class="nutrient-bar-bg"><div class="nutrient-bar-fill" style="width:'+pct+'%;background:'+statusColor+';"></div></div>'
+        + '<div class="nutrient-pct">' + Math.round(pct) + '%</div>'
+        + '</div>'
+        + '<button class="nutrient-info-btn" data-key="'+key+'" onclick="toggleNutrientInfo(this)">ℹ️ Why</button>'
+        + '</div>'
+        + '<div class="info-panel" id="info-'+key+'">'
+        + '<strong style="color:var(--text);">Role: </strong>' + info.role + '<br><br>'
+        + '<strong style="color:var(--text);">Details: </strong>' + info.detail
+        + '<br><br><a href="'+info.link+'" target="_blank" style="color:var(--accent2);">📚 Read research →</a>'
+        + '</div>';
+    });
+    html += '</div>';
+  });
+
+  // Sources breakdown
+  html += '<div class="nutrient-section"><div class="nutrient-section-title">Foods Logged Today</div>';
+  const foods = log.foods||[];
+  if(!foods.length){
+    html += '<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px;">No foods logged yet.</div>';
+  } else {
+    foods.forEach(f=>{
+      html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">'
+        + '<div><div style="font-size:13px;font-weight:600;">' + f.name + '</div>'
+        + '<div style="font-size:11px;color:var(--muted);">' + f.meal + ' · P '+(f.protein||0).toFixed(0)+'g · C '+(f.carbs||0).toFixed(0)+'g · F '+(f.fat||0).toFixed(0)+'g</div></div>'
+        + '<div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;">' + Math.round(f.cal||0) + '</div>'
+        + '</div>';
+    });
+  }
+  html += '</div>';
+
+  el.innerHTML = html;
+
+  // Navigate to detail page
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-nutrition-detail').classList.add('active');
+}
+
+function toggleNutrientInfo(btn){
+  const key = btn.dataset.key;
+  const panel = document.getElementById('info-'+key);
+  if(!panel) return;
+  const isOpen = panel.classList.contains('open');
+  // Close all others
+  document.querySelectorAll('.info-panel.open').forEach(p=>p.classList.remove('open'));
+  document.querySelectorAll('.nutrient-info-btn').forEach(b=>b.textContent='ℹ️ Why');
+  if(!isOpen){
+    panel.classList.add('open');
+    btn.textContent = '✕ Close';
+    panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+}
+
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('/sw.js')
