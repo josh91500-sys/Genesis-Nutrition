@@ -646,11 +646,23 @@ function renderNutrition(){
   const pct = Math.min(100,(t.cal/goals.calories)*100);
   const remaining = goals.calories - t.cal;
   const over = t.cal > goals.calories;
+
+  // Build micro rows for expanded view
+  const micros = [
+    {key:'sugar',label:'Sugar',unit:'g',color:'var(--sugar)'},
+    {key:'sodium',label:'Sodium',unit:'mg',color:'#94a3b8'},
+    {key:'potassium',label:'Potassium',unit:'mg',color:'#34d399'},
+    {key:'vitc',label:'Vitamin C',unit:'mg',color:'#fb923c'},
+    {key:'iron',label:'Iron',unit:'mg',color:'#f59e0b'},
+    {key:'calcium',label:'Calcium',unit:'mg',color:'#a78bfa'},
+    {key:'vitd',label:'Vitamin D',unit:'mcg',color:'#facc15'},
+  ];
+
   document.getElementById('cal-summary').innerHTML = `
-    <div class="cal-main">
+    <div class="cal-main" onclick="toggleMacroDetail()" style="cursor:pointer;">
       <div>
         <div class="cal-number">${Math.round(t.cal)}</div>
-        <div class="cal-label">calories eaten</div>
+        <div class="cal-label">calories eaten · tap for details</div>
       </div>
       <div class="cal-goal-info">
         <div class="cal-remaining ${over?'over':'ok'}">${over?'+'+Math.round(t.cal-goals.calories):Math.round(remaining)}</div>
@@ -668,12 +680,51 @@ function renderNutrition(){
         const val = t[m.key]||0;
         const goal = goals[m.key]||1;
         const p = Math.min(100,(val/goal)*100);
-        return `<div class="macro-chip">
-          <div class="macro-chip-val" style="color:${m.color}">${val.toFixed(0)}<span style="font-size:11px;font-weight:500;color:var(--muted)">g</span></div>
-          <div class="macro-chip-label">${m.label}</div>
-          <div class="macro-chip-bar"><div class="macro-chip-fill" style="width:${p}%;background:${m.color}"></div></div>
-        </div>`;
+        return '<div class="macro-chip">'
+          + '<div class="macro-chip-val" style="color:'+m.color+'">'+val.toFixed(0)+'<span style="font-size:11px;font-weight:500;color:var(--muted)">g</span></div>'
+          + '<div class="macro-chip-label">'+m.label+'</div>'
+          + '<div class="macro-chip-bar"><div class="macro-chip-fill" style="width:'+p+'%;background:'+m.color+'"></div></div>'
+          + '</div>';
       }).join('')}
+    </div>
+    <div id="macro-detail" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;">Full Breakdown</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+        ${[
+          {key:'protein',label:'Protein',unit:'g',color:'var(--protein)'},
+          {key:'carbs',label:'Carbs',unit:'g',color:'var(--carbs)'},
+          {key:'fat',label:'Fat',unit:'g',color:'var(--fat)'},
+          {key:'fiber',label:'Fiber',unit:'g',color:'var(--fiber)'},
+        ].map(m=>{
+          const val = t[m.key]||0;
+          const goal = goals[m.key]||1;
+          const pct2 = Math.min(100,(val/goal)*100);
+          const cal_from = val * (m.key==='protein'?4:m.key==='carbs'?4:m.key==='fat'?9:0);
+          return '<div style="background:var(--bg4);border-radius:10px;padding:10px;">'
+            + '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+            + '<span style="font-size:12px;font-weight:600;">'+m.label+'</span>'
+            + '<span style="font-size:12px;color:'+m.color+';font-weight:700;">'+val.toFixed(1)+''+m.unit+'</span>'
+            + '</div>'
+            + '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;">'+Math.round(cal_from)+' kcal · '+Math.round(pct2)+'% of goal</div>'
+            + '<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;">'
+            + '<div style="height:100%;width:'+pct2+'%;background:'+m.color+';border-radius:99px;"></div></div>'
+            + '</div>';
+        }).join('')}
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Micronutrients</div>
+      ${micros.map(m=>{
+        const val = t[m.key]||0;
+        const goal = goals[m.key]||1;
+        const pct2 = Math.min(100,(val/goal)*100);
+        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">'
+          + '<span style="font-size:12px;font-weight:500;flex:1;">'+m.label+'</span>'
+          + '<span style="font-size:12px;color:'+m.color+';font-weight:700;min-width:60px;text-align:right;">'+val.toFixed(m.key==='vitd'?1:0)+m.unit+'</span>'
+          + '<div style="width:60px;height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;">'
+          + '<div style="height:100%;width:'+pct2+'%;background:'+m.color+';border-radius:99px;"></div></div>'
+          + '<span style="font-size:10px;color:var(--muted);min-width:28px;text-align:right;">'+Math.round(pct2)+'%</span>'
+          + '</div>';
+      }).join('')}
+      <div style="font-size:10px;color:var(--muted);margin-top:8px;text-align:center;">% of daily goal</div>
     </div>`;
 
   // Quick re-add
@@ -1746,6 +1797,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
 </script>
 
 <script>
+
+function toggleMacroDetail(){
+  const el = document.getElementById('macro-detail');
+  if(!el) return;
+  const isOpen = el.style.display !== 'none';
+  el.style.display = isOpen ? 'none' : 'block';
+}
+
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('/sw.js')
     .then(reg=>console.log('SW registered:', reg.scope))
