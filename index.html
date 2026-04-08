@@ -1355,59 +1355,74 @@ async function doAISearch(){
   status.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
   results.innerHTML='';
 
+  const systemPrompt = 'You are a nutrition expert. The user typed: "'+query+'". ' +
+    'First figure out what they mean — be flexible with abbreviations, typos, and casual language. ' +
+    'bww = Buffalo Wild Wings, mcds/mcdonalds = McDonald\'s, chick fil a = Chick-fil-A, chipotle = Chipotle, etc. ' +
+    'If this looks like a restaurant item, use the official nutrition guide values from that restaurant. ' +
+    'If it\'s a general food, use USDA FoodData Central values. ' +
+    'Return 1-8 of the most relevant results. ' +
+    'Return ONLY a JSON array (no markdown): ' +
+    '[{"name":"descriptive name","serving_label":"natural serving e.g. 20 wings, 1 sandwich","serving_g":300,"cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"source":"Official Nutrition Guide or USDA or Estimated"}] ' +
+    'For restaurant items: if you have verified official data set source to Official Nutrition Guide, otherwise Estimate - verify at restaurant.';
+
   try {
-    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:1500,messages:[{role:'user',content:
-      `Search for foods matching: "${query}". Return ONLY foods that ARE "${query}" or directly related to it.
-Return ONLY a JSON array of 5-8 foods:
-[{"name":"Whole Egg (large)","serving_label":"1 egg","serving_g":50,"cal":72,"protein":6.3,"carbs":0.4,"fat":4.8,"fiber":0,"sugar":0.2,"sodium":71,"potassium":69,"vitc":0,"iron":0.9,"calcium":28,"vitd":1.1,"source":"USDA"}]
-Rules: serving_label = common sense label. All values for that serving. Use USDA data when possible. source = "USDA" or "Estimated".`
-    }]});
+    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:systemPrompt}]});
     const data = await res.json();
     const text = data.content?.[0]?.text||'';
     const match = text.match(/\[[\s\S]*\]/);
     if(!match) throw new Error('No results');
     const foods = JSON.parse(match[0]);
     aiSearchResults = foods;
-    status.textContent=`✓ Found ${foods.length} results`;
+    status.textContent='\u2713 Found '+foods.length+' result'+(foods.length!==1?'s':'');
     renderAIResults(foods);
   } catch(e){
-    status.textContent='✗ Search failed. Try again.';
+    status.textContent='\u2717 Search failed. Try again.';
   }
 }
 
 function renderAIResults(foods){
   const el = document.getElementById('ai-search-results');
   el.innerHTML = foods.map((f,idx)=>{
-    const isUSDA = f.source&&f.source.includes('USDA');
-    return `<div class="food-card">
-      <div class="food-card-top">
-        <div>
-          <div class="food-card-name">${f.name}</div>
-          <div style="margin-top:4px;"><span class="${isUSDA?'verified-badge':'ai-badge'}">${isUSDA?'✓ USDA':'🤖 AI Est.'}</span></div>
-        </div>
-        <div style="text-align:right;">
-          <div class="food-card-val">${Math.round(f.cal)}</div>
-          <div class="food-card-unit">kcal</div>
-        </div>
-      </div>
-      <div class="food-card-macros">
-        <span class="fmacro" style="color:var(--protein)">P ${(f.protein||0).toFixed(1)}g</span>
-        <span class="fmacro" style="color:var(--carbs)">C ${(f.carbs||0).toFixed(1)}g</span>
-        <span class="fmacro" style="color:var(--fat)">F ${(f.fat||0).toFixed(1)}g</span>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
-        <span style="font-size:12px;color:var(--muted);">${f.serving_label||f.serving_g+'g'} =</span>
-        <input type="number" id="aicount_${idx}" value="1" min="0.25" step="0.25" max="20"
-          oninput="updateAICount(${idx},this.value)"
-          style="width:55px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-size:13px;text-align:center;outline:none;">
-        <span style="font-size:12px;color:var(--muted);">× ${f.serving_label||f.serving_g+'g'}</span>
-        <span id="aical_${idx}" style="margin-left:auto;font-family:'Syne',sans-serif;font-size:16px;font-weight:800;">${Math.round(f.cal)} kcal</span>
-      </div>
-      ${!isUSDA?'<div style="font-size:11px;color:var(--sugar);margin-top:6px;">⚠️ AI estimate — may not be exact. Verify with label when possible.</div>':''}
-      <button class="food-card-add" style="margin-top:10px;" data-idx="${idx}" onclick="addAIFood(${idx})">＋ Add to Today</button>
-    </div>`;
+    const isUSDA = !!(f.source&&f.source.includes('USDA'));
+    const isOfficial = !!(f.source&&f.source.toLowerCase().includes('official'));
+    const badgeClass = isUSDA||isOfficial ? 'verified-badge' : 'ai-badge';
+    const badgeText = isUSDA ? '\u2713 USDA FoodData Central'
+      : isOfficial ? '\u2713 Official Restaurant Nutrition Menu'
+      : '\u26a0\ufe0f AI Estimate';
+    const sourceNote = isOfficial ? 'From official restaurant nutrition guide'
+      : isUSDA ? 'From USDA FoodData Central'
+      : 'AI estimate \u2014 verify with restaurant or food label';
+    return '<div class="food-card">'
+      + '<div class="food-card-top">'
+      + '<div style="flex:1;">'
+      + '<div class="food-card-name">'+f.name+'</div>'
+      + '<div style="margin-top:5px;display:flex;flex-direction:column;gap:2px;">'
+      + '<span class="'+badgeClass+'">'+badgeText+'</span>'
+      + '<span style="font-size:10px;color:var(--muted);">'+sourceNote+'</span>'
+      + '</div></div>'
+      + '<div style="text-align:right;flex-shrink:0;">'
+      + '<div class="food-card-val">'+Math.round(f.cal||0)+'</div>'
+      + '<div class="food-card-unit">kcal</div>'
+      + '</div></div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">'+(f.serving_label||f.serving_g+'g')+'</div>'
+      + '<div class="food-card-macros">'
+      + '<span class="fmacro" style="color:var(--protein)">P '+(f.protein||0).toFixed(1)+'g</span>'
+      + '<span class="fmacro" style="color:var(--carbs)">C '+(f.carbs||0).toFixed(1)+'g</span>'
+      + '<span class="fmacro" style="color:var(--fat)">F '+(f.fat||0).toFixed(1)+'g</span>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
+      + '<span style="font-size:12px;color:var(--muted);">'+(f.serving_label||f.serving_g+'g')+' =</span>'
+      + '<input type="number" id="aicount_'+idx+'" value="1" min="0.25" step="0.25" max="20"'
+      + ' oninput="updateAICount('+idx+',this.value)"'
+      + ' style="width:55px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-size:13px;text-align:center;outline:none;">'
+      + '<span style="font-size:12px;color:var(--muted);">x '+(f.serving_label||f.serving_g+'g')+'</span>'
+      + '<span id="aical_'+idx+'" style="margin-left:auto;font-family:Syne,sans-serif;font-size:16px;font-weight:800;">'+Math.round(f.cal)+' kcal</span>'
+      + '</div>'
+      + '<button class="food-card-add" style="margin-top:10px;" data-idx="'+idx+'" onclick="addAIFood('+idx+')">\uff0b Add to Today</button>'
+      + '</div>';
   }).join('');
 }
+
 
 function updateAICount(idx, count){
   const f = aiSearchResults[idx];
