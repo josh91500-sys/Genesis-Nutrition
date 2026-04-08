@@ -363,15 +363,30 @@ select option{background:var(--bg2);}
     <div id="search-ai-tab" style="display:none;">
       <div class="card">
         <div class="input-group" style="margin-bottom:8px;">
-          <label class="input-label">Describe any food or meal</label>
+          <label class="input-label">Any food, meal, or restaurant item</label>
           <div style="display:flex;gap:8px;">
-            <input type="text" id="ai-search-input" placeholder="e.g. scrambled eggs, avocado toast...">
+            <input type="text" id="ai-search-input" placeholder="e.g. scrambled eggs, Big Mac, Chipotle burrito bowl...">
             <button onclick="doAISearch()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">Search</button>
           </div>
         </div>
         <div id="ai-search-status" class="ai-status"></div>
       </div>
       <div id="ai-search-results" style="padding-bottom:20px;"></div>
+    </div>
+
+    <!-- Restaurant Search tab -->
+    <div id="search-restaurant-tab" style="display:none;">
+      <div class="card">
+        <div class="card-title">🍽️ Restaurant Nutrition Search</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Search any restaurant item. AI finds the official nutrition guide and returns exact numbers.</div>
+        <div class="input-group" style="margin-bottom:8px;">
+          <label class="input-label">Restaurant & Item</label>
+          <input type="text" id="restaurant-input" placeholder="e.g. Chipotle chicken burrito, Chick-fil-A sandwich, Olive Garden fettuccine..." onkeydown="if(event.key==='Enter')doRestaurantSearch()">
+        </div>
+        <button onclick="doRestaurantSearch()" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:13px;font-family:'DM Sans',sans-serif;font-size:15px;font-weight:700;cursor:pointer;">🔍 Search Nutrition Guide</button>
+        <div id="restaurant-status" class="ai-status"></div>
+      </div>
+      <div id="restaurant-results" style="padding-bottom:20px;"></div>
     </div>
 
     <!-- Brand Search tab -->
@@ -1186,6 +1201,49 @@ const FOOD_DB = [
   {name:'Banana (1 medium)',cal:105,protein:1.3,carbs:27,fat:0.4,fiber:3.1,sugar:14,sodium:1,potassium:422,vitc:10.3,iron:0.3,calcium:6,vitd:0,serving:118,verified:true},
   {name:'Orange (1 medium)',cal:62,protein:1.2,carbs:15,fat:0.2,fiber:3.1,sugar:12,sodium:0,potassium:237,vitc:69.7,iron:0.1,calcium:52,vitd:0,serving:131,verified:true},
   {name:'Baby Carrots (1 bag, 85g)',cal:35,protein:0.7,carbs:8,fat:0.1,fiber:2.5,sugar:4,sodium:72,potassium:255,vitc:4.7,iron:0.3,calcium:33,vitd:0,serving:85,verified:true},
+
+  // ── BUFFALO WILD WINGS ──
+  // Bone-in wings (per 1 wing, no sauce) ~18g each
+  {name:'BWW Bone-In Wing (1 wing, no sauce)',cal:72,protein:6,carbs:0,fat:5,fiber:0,sugar:0,sodium:55,potassium:0,vitc:0,iron:0.3,calcium:0,vitd:0,serving:18,verified:true},
+  {name:'BWW 6 Bone-In Wings (no sauce)',cal:430,protein:36,carbs:0,fat:30,fiber:0,sugar:0,sodium:330,potassium:0,vitc:0,iron:1.8,calcium:0,vitd:0,serving:108,verified:true},
+  {name:'BWW 10 Bone-In Wings (no sauce)',cal:720,protein:60,carbs:0,fat:51,fiber:0,sugar:0,sodium:550,potassium:0,vitc:0,iron:3,calcium:0,vitd:0,serving:180,verified:true},
+  {name:'BWW 20 Bone-In Wings (no sauce)',cal:1440,protein:82,carbs:0,fat:27,fiber:2,sugar:0,sodium:720,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:360,verified:true},
+  // BWW sauces (per serving as listed in nutrition guide)
+  {name:'BWW Wild Sauce',cal:150,protein:0,carbs:12,fat:2,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:43,verified:true},
+  {name:'BWW Medium Sauce',cal:60,protein:0,carbs:6,fat:1,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:43,verified:true},
+  {name:'BWW Mild Sauce',cal:100,protein:0,carbs:9,fat:1.5,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:43,verified:true},
+  {name:'BWW Parmesan Garlic Sauce',cal:260,protein:0,carbs:25,fat:4.5,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:25,vitd:0,serving:43,verified:true},
+  {name:'BWW Lemon Pepper Sauce',cal:450,protein:0,carbs:47,fat:9,fiber:1,sugar:0,sodium:35,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:43,verified:true},
+  {name:'BWW Honey BBQ Sauce',cal:200,protein:0,carbs:0,fat:0,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:43,verified:true},
+  {name:'BWW Original Buffalo Sauce',cal:220,protein:0,carbs:24,fat:4.5,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:43,verified:true},
+  // BWW complete orders (wings + sauce combined, from nutrition guide)
+  {name:'BWW 20 Bone-In Wings + Wild Sauce',cal:1590,protein:82,carbs:12,fat:29,fiber:0,sugar:0,sodium:720,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:403,verified:true},
+  {name:'BWW 20 Bone-In Wings + Medium Sauce',cal:1500,protein:82,carbs:7,fat:28,fiber:0,sugar:0,sodium:720,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:403,verified:true},
+  {name:'BWW 20 Bone-In Wings + Mild Sauce',cal:1540,protein:82,carbs:9,fat:28.5,fiber:0,sugar:0,sodium:720,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:403,verified:true},
+  {name:'BWW 20 Bone-In Wings + Parmesan Garlic',cal:1700,protein:82,carbs:25,fat:31.5,fiber:0,sugar:0,sodium:745,potassium:0,vitc:0,iron:0,calcium:25,vitd:0,serving:403,verified:true},
+  {name:'BWW 20 Bone-In Wings + Lemon Pepper',cal:1890,protein:82,carbs:47,fat:36,fiber:1,sugar:0,sodium:755,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:403,verified:true},
+  {name:'BWW 20 Bone-In Wings + Honey BBQ',cal:1640,protein:82,carbs:0,fat:27,fiber:0,sugar:0,sodium:720,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:403,verified:true},
+  {name:'BWW Boneless Wings (6 count)',cal:570,protein:33,carbs:42,fat:30,fiber:2,sugar:1,sodium:1290,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:168,verified:true},
+  {name:'BWW Boneless Wings (10 count)',cal:950,protein:55,carbs:70,fat:50,fiber:3,sugar:2,sodium:2150,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:280,verified:true},
+  {name:'BWW Traditional Chicken Sandwich',cal:890,protein:48,carbs:73,fat:45,fiber:3,sugar:8,sodium:1870,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:300,verified:true},
+  {name:'BWW Cheese Curd Bacon Burger',cal:1270,protein:61,carbs:68,fat:84,fiber:3,sugar:14,sodium:2110,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:400,verified:true},
+
+  // ── McDONALD'S ──
+  {name:"McDonald's Big Mac",cal:590,protein:25,carbs:46,fat:34,fiber:3,sugar:9,sodium:1010,potassium:400,vitc:1,iron:4.5,calcium:250,vitd:0,serving:214,verified:true},
+  {name:"McDonald's Quarter Pounder w/ Cheese",cal:520,protein:30,carbs:42,fat:26,fiber:2,sugar:10,sodium:1090,potassium:0,vitc:0,iron:4.5,calcium:250,vitd:0,serving:199,verified:true},
+  {name:"McDonald's McDouble",cal:400,protein:22,carbs:35,fat:20,fiber:2,sugar:7,sodium:820,potassium:0,vitc:0,iron:3.6,calcium:200,vitd:0,serving:163,verified:true},
+  {name:"McDonald's 10pc McNuggets",cal:400,protein:24,carbs:24,fat:24,fiber:1,sugar:0,sodium:680,potassium:0,vitc:0,iron:1.1,calcium:20,vitd:0,serving:162,verified:true},
+  {name:"McDonald's 20pc McNuggets",cal:830,protein:50,carbs:50,fat:49,fiber:3,sugar:0,sodium:1440,potassium:0,vitc:0,iron:2.7,calcium:40,vitd:0,serving:323,verified:true},
+  {name:"McDonald's Large Fries",cal:490,protein:7,carbs:66,fat:23,fiber:6,sugar:0,sodium:400,potassium:1040,vitc:6,iron:1.1,calcium:20,vitd:0,serving:154,verified:true},
+  {name:"McDonald's Medium Fries",cal:320,protein:4,carbs:43,fat:15,fiber:4,sugar:0,sodium:260,potassium:680,vitc:4,iron:0.7,calcium:20,vitd:0,serving:99,verified:true},
+  {name:"McDonald's Egg McMuffin",cal:310,protein:17,carbs:30,fat:13,fiber:2,sugar:3,sodium:760,potassium:0,vitc:0,iron:2.7,calcium:250,vitd:1.2,serving:137,verified:true},
+  {name:"McDonald's Sausage McMuffin w/ Egg",cal:480,protein:21,carbs:30,fat:30,fiber:2,sugar:3,sodium:1040,potassium:0,vitc:0,iron:2.7,calcium:250,vitd:1.2,serving:167,verified:true},
+  {name:"McDonald's Bacon Egg & Cheese Biscuit",cal:460,protein:19,carbs:38,fat:26,fiber:1,sugar:4,sodium:1230,potassium:0,vitc:0,iron:2.7,calcium:150,vitd:0,serving:163,verified:true},
+  {name:"McDonald's McChicken",cal:400,protein:14,carbs:41,fat:21,fiber:1,sugar:5,sodium:700,potassium:0,vitc:0,iron:2.7,calcium:100,vitd:0,serving:147,verified:true},
+  {name:"McDonald's Filet-O-Fish",cal:390,protein:16,carbs:38,fat:19,fiber:1,sugar:5,sodium:590,potassium:0,vitc:0,iron:1.8,calcium:150,vitd:0,serving:142,verified:true},
+  {name:"McDonald's Double Cheeseburger",cal:450,protein:25,carbs:34,fat:24,fiber:1,sugar:7,sodium:1050,potassium:0,vitc:0,iron:3.6,calcium:200,vitd:0,serving:176,verified:true},
+  {name:"McDonald's Mcflurry Oreo (Regular)",cal:510,protein:12,carbs:80,fat:16,fiber:1,sugar:65,sodium:260,potassium:0,vitc:0,iron:0.7,calcium:400,vitd:4,serving:340,verified:true},
+  {name:"McDonald's Apple Pie",cal:240,protein:3,carbs:35,fat:11,fiber:1,sugar:13,sodium:160,potassium:0,vitc:0,iron:0.7,calcium:0,vitd:0,serving:77,verified:true},
 ];
 
 let selectedNutrient = 'protein';
@@ -1199,7 +1257,7 @@ function initSearch(){
 }
 
 function setSearchTab(tab){
-  ['nutrient','ai','brand'].forEach(t=>{
+  ['nutrient','ai','brand','restaurant'].forEach(t=>{
     document.getElementById('stab-'+t).classList.toggle('active',t===tab);
     document.getElementById('search-'+t+'-tab').style.display = t===tab?'block':'none';
   });
@@ -1373,7 +1431,7 @@ function addAIFood(idx){
     vitc:+(f.vitc*count).toFixed(1)||0, iron:+(f.iron*count).toFixed(1)||0,
     calcium:Math.round((f.calcium||0)*count), vitd:+(f.vitd*count).toFixed(1)||0,
     serving:Math.round((f.serving_g||100)*count),
-    verified: f.source&&f.source.includes('USDA'),
+    verified: !!(f.source&&(f.source.includes('USDA')||f.source.toLowerCase().includes('official'))),
     ai_sourced: !f.source||!f.source.includes('USDA'),
     id:Date.now()
   });
@@ -2084,6 +2142,128 @@ function toggleNutrientInfo(btn){
     btn.textContent = '✕ Close';
     panel.scrollIntoView({behavior:'smooth',block:'nearest'});
   }
+}
+
+
+
+// ══════════════════════════════════════
+// RESTAURANT NUTRITION SEARCH
+// ══════════════════════════════════════
+let restaurantResults = [];
+
+async function doRestaurantSearch(){
+  const query = document.getElementById('restaurant-input').value.trim();
+  if(!query) return;
+  const status = document.getElementById('restaurant-status');
+  const results = document.getElementById('restaurant-results');
+  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  results.innerHTML = '';
+
+  const prompt = `You are a nutrition database with access to official restaurant nutrition guides.
+
+The user is searching for: "${query}"
+
+Using your knowledge of official restaurant nutrition guides (published on restaurant websites and FDA nutrition disclosures), return the EXACT nutrition facts for this item as listed in the official nutrition guide.
+
+Important rules:
+- Use ONLY official nutrition guide values, not estimates
+- If the item has size options (small/medium/large), return all sizes
+- If sauce/dressing is separate, list it separately
+- Be specific about serving size (e.g. "1 sandwich", "6 wings", "bowl")
+- If you don't have reliable official data for this exact item, say so clearly
+
+Return ONLY a JSON array:
+[{
+  "name": "exact item name as listed in nutrition guide",
+  "restaurant": "restaurant name",
+  "serving_desc": "serving size description",
+  "serving_g": 0,
+  "cal": 0,
+  "protein": 0,
+  "carbs": 0,
+  "fat": 0,
+  "fiber": 0,
+  "sugar": 0,
+  "sodium": 0,
+  "source": "Official nutrition guide" or "Estimated - verify at restaurant"
+}]`;
+
+  try {
+    const res = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      messages: [{role: 'user', content: prompt}]
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '';
+    const match = text.match(/\[[\s\S]*\]/);
+    if(!match) throw new Error('No results');
+    const foods = JSON.parse(match[0]);
+    if(!foods.length) throw new Error('Empty results');
+    restaurantResults = foods;
+    status.textContent = '✓ Found '+foods.length+' item'+(foods.length!==1?'s':'');
+    renderRestaurantResults(foods);
+  } catch(e) {
+    status.textContent = '✗ Could not find nutrition data. Try being more specific, e.g. "Big Mac" or "Chipotle chicken burrito".';
+  }
+}
+
+function renderRestaurantResults(foods){
+  const el = document.getElementById('restaurant-results');
+  el.innerHTML = foods.map((f, idx) => {
+    const isOfficial = f.source && f.source.toLowerCase().includes('official');
+    return '<div class="food-card">'
+      + '<div class="food-card-top">'
+      + '<div>'
+      + '<div style="font-size:10px;color:var(--accent2);font-weight:700;margin-bottom:2px;">🍽️ ' + (f.restaurant||'') + '</div>'
+      + '<div class="food-card-name">' + f.name + '</div>'
+      + '<div style="margin-top:4px;">'
+      + '<span class="' + (isOfficial?'verified-badge':'ai-badge') + '">'
+      + (isOfficial ? '✓ Official Guide' : '⚠️ Estimate') + '</span>'
+      + '</div>'
+      + '</div>'
+      + '<div style="text-align:right;">'
+      + '<div class="food-card-val">' + Math.round(f.cal||0) + '</div>'
+      + '<div class="food-card-unit">kcal</div>'
+      + '</div>'
+      + '</div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">' + (f.serving_desc||'') + '</div>'
+      + '<div class="food-card-macros">'
+      + '<span class="fmacro" style="color:var(--protein)">P ' + (f.protein||0).toFixed(0) + 'g</span>'
+      + '<span class="fmacro" style="color:var(--carbs)">C ' + (f.carbs||0).toFixed(0) + 'g</span>'
+      + '<span class="fmacro" style="color:var(--fat)">F ' + (f.fat||0).toFixed(0) + 'g</span>'
+      + (f.fiber>0 ? '<span class="fmacro" style="color:var(--fiber)">Fi ' + (f.fiber||0).toFixed(0) + 'g</span>' : '')
+      + '<span class="fmacro">Na ' + Math.round(f.sodium||0) + 'mg</span>'
+      + '</div>'
+      + (!isOfficial ? '<div style="font-size:11px;color:var(--sugar);margin:6px 0;">⚠️ Could not verify from official guide — confirm on restaurant website or app before logging.</div>' : '')
+      + '<button class="food-card-add" style="margin-top:8px;" data-idx="'+idx+'" onclick="addRestaurantFood('+idx+')">＋ Add to Today</button>'
+      + '</div>';
+  }).join('');
+}
+
+function addRestaurantFood(idx){
+  const f = restaurantResults[idx];
+  if(!f) return;
+  const log = loadDayLog(dayOffset);
+  log.foods.push({
+    meal: 'Dinner',
+    name: f.name,
+    cal: parseFloat(f.cal)||0,
+    protein: parseFloat(f.protein)||0,
+    carbs: parseFloat(f.carbs)||0,
+    fat: parseFloat(f.fat)||0,
+    fiber: parseFloat(f.fiber)||0,
+    sugar: parseFloat(f.sugar)||0,
+    sodium: parseFloat(f.sodium)||0,
+    potassium: 0, vitc:0, iron:0, calcium:0, vitd:0,
+    serving: parseFloat(f.serving_g)||100,
+    verified: !!(f.source && f.source.toLowerCase().includes('official')),
+    ai_sourced: !f.source || !f.source.toLowerCase().includes('official'),
+    id: Date.now()
+  });
+  saveDayLog(log, dayOffset);
+  showToast('✓ ' + f.name + ' added');
 }
 
 
