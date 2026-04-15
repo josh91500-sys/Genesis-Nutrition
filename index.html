@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Genesis Nutrition</title>
 <link rel="manifest" href="/manifest.json">
+<script src="https://js.stripe.com/v3/"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
 :root{
   --bg1:#0a0a12;--bg2:#111118;--bg3:#18181f;--bg4:#1f1f28;--bg5:#2a2a35;
@@ -293,6 +295,7 @@ select option{background:var(--bg2);}
 .exercise-row{padding:12px 16px;border-bottom:1px solid var(--border);}
 .exercise-name{font-size:14px;font-weight:600;margin-bottom:8px;color:var(--accent2);}
 </style>
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 </head>
 <body>
 <div id="screen">
@@ -637,12 +640,21 @@ select option{background:var(--bg2);}
     <!-- Barcode mode -->
     <div id="mode-barcode-content" style="display:none;">
       <div style="text-align:center;padding:10px 0 14px;">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:14px;">Take a photo of the barcode on the package</div>
-        <input type="file" id="barcode-file" accept="image/*" capture="environment" style="display:none;" onchange="handleBarcode(this)">
-        <button class="btn-primary" onclick="document.getElementById('barcode-file').click()">📦 Scan Barcode</button>
-        <div style="margin:8px 0;font-size:12px;color:var(--muted2);">or</div>
-        <input type="file" id="barcode-gallery" accept="image/*" style="display:none;" onchange="handleBarcode(this)">
-        <button class="btn-secondary" onclick="document.getElementById('barcode-gallery').click()">🖼️ Choose from Gallery</button>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Point camera at barcode or type UPC number</div>
+        <div id="barcode-scanner-wrap" style="display:none;margin-bottom:12px;">
+          <div id="barcode-reader" style="width:100%;border-radius:12px;overflow:hidden;"></div>
+          <button onclick="stopBarcodeScanner()" style="margin-top:8px;background:var(--bg4);border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;width:100%;">Stop Scanner</button>
+        </div>
+        <button class="btn-primary" id="start-scanner-btn" onclick="startBarcodeScanner()">📷 Scan Barcode</button>
+        <div style="margin:10px 0;display:flex;align-items:center;gap:8px;">
+          <div style="flex:1;height:1px;background:var(--border);"></div>
+          <span style="font-size:12px;color:var(--muted2);">or enter manually</span>
+          <div style="flex:1;height:1px;background:var(--border);"></div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="upc-input" placeholder="Enter UPC/barcode number..." style="flex:1;" onkeydown="if(event.key==='Enter')lookupUPC()">
+          <button onclick="lookupUPC()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">Look Up</button>
+        </div>
       </div>
       <div id="barcode-status" class="ai-status"></div>
       <div id="barcode-preview"></div>
@@ -2611,66 +2623,111 @@ function addRestaurantFood(idx){
 
 
 // ═══════════════════════════════════════
-// BARCODE SCANNER
+// BARCODE SCANNER (html5-qrcode)
 // ═══════════════════════════════════════
-async function handleBarcode(input){
-  var file = input.files[0]; if(!file) return;
+var barcodeScanner = null;
+
+function startBarcodeScanner(){
+  var wrap = document.getElementById('barcode-scanner-wrap');
+  var btn = document.getElementById('start-scanner-btn');
+  if(wrap) wrap.style.display = 'block';
+  if(btn) btn.style.display = 'none';
+  document.getElementById('barcode-status').textContent = 'Point camera at barcode...';
+
+  try {
+    barcodeScanner = new Html5Qrcode('barcode-reader');
+    barcodeScanner.start(
+      {facingMode:'environment'},
+      {fps:10, qrbox:{width:250,height:150}},
+      function(decodedText){
+        stopBarcodeScanner();
+        document.getElementById('barcode-status').textContent = 'Found: '+decodedText+' — looking up...';
+        lookupUPCCode(decodedText.replace(/[^0-9]/g,''));
+      },
+      function(err){}
+    ).catch(function(e){
+      document.getElementById('barcode-status').textContent = 'Camera not available. Enter UPC manually below.';
+      if(wrap) wrap.style.display='none';
+      if(btn) btn.style.display='block';
+    });
+  } catch(e){
+    document.getElementById('barcode-status').textContent = 'Scanner not available. Enter UPC number manually below.';
+    if(wrap) wrap.style.display='none';
+    if(btn) btn.style.display='block';
+  }
+}
+
+function stopBarcodeScanner(){
+  if(barcodeScanner){
+    barcodeScanner.stop().catch(function(){});
+    barcodeScanner = null;
+  }
+  var wrap = document.getElementById('barcode-scanner-wrap');
+  var btn = document.getElementById('start-scanner-btn');
+  if(wrap) wrap.style.display='none';
+  if(btn) btn.style.display='block';
+}
+
+function lookupUPC(){
+  var upc = (document.getElementById('upc-input').value||'').trim().replace(/[^0-9]/g,'');
+  if(!upc){ showToast('Enter a UPC number'); return; }
+  lookupUPCCode(upc);
+}
+
+async function lookupUPCCode(upc){
   var status = document.getElementById('barcode-status');
   var preview = document.getElementById('barcode-preview');
-  status.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  preview.innerHTML='';
-  var reader = new FileReader();
-  reader.onload = async function(e){
-    var b64 = e.target.result.split(',')[1];
-    try {
-      // Read barcode number from image
-      var res1 = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:100,messages:[{role:'user',content:[
-        {type:'image',source:{type:'base64',media_type:file.type,data:b64}},
-        {type:'text',text:'Read the barcode/UPC number from this image. Return ONLY the number, nothing else.'}
-      ]}]});
-      var data1 = await res1.json();
-      var upc = (data1.content&&data1.content[0]&&data1.content[0].text||'').trim().replace(/[^0-9]/g,'');
-      if(!upc) throw new Error('no barcode');
-      status.textContent='Found barcode '+upc+' — looking up...';
+  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  preview.innerHTML = '';
 
-      // Look up in Open Food Facts
-      var r = await fetch('https://world.openfoodfacts.org/api/v0/product/'+upc+'.json');
-      var d = await r.json();
-      if(d.status===1 && d.product){
-        var p=d.product, n=p.nutriments||{};
-        var sgMatch=(p.serving_size||'').match(/([\d.]+)\s*g/i);
-        var sg = sgMatch ? parseFloat(sgMatch[1]) : 100;
-        var food={
-          name:p.product_name||'Unknown Product',
-          serving_desc:p.serving_size||'100g',
-          serving_g:sg,
-          cal:Math.round(n['energy-kcal_serving']||n['energy-kcal_100g']||0),
-          protein:parseFloat((n['proteins_serving']||n['proteins_100g']||0).toFixed(1)),
-          carbs:parseFloat((n['carbohydrates_serving']||n['carbohydrates_100g']||0).toFixed(1)),
-          fat:parseFloat((n['fat_serving']||n['fat_100g']||0).toFixed(1)),
-          fiber:parseFloat((n['fiber_serving']||n['fiber_100g']||0).toFixed(1)),
-          sugar:parseFloat((n['sugars_serving']||n['sugars_100g']||0).toFixed(1)),
-          sodium:Math.round((n['sodium_serving']||n['sodium_100g']||0)*1000),
-          potassium:Math.round((n['potassium_serving']||n['potassium_100g']||0)*1000),
-          vitc:0,iron:0,calcium:0,vitd:0,
-          source:'Food Label (Barcode '+upc+')'
-        };
-        status.textContent='';
-        showFoodPreview(food,'barcode-preview');
-      } else {
-        // AI fallback
-        var res2=await callClaude({model:'claude-sonnet-4-20250514',max_tokens:400,messages:[{role:'user',content:'What product has UPC '+upc+'? Give nutrition facts. Return ONLY JSON: {"name":"name","serving_desc":"serving","serving_g":100,"cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"source":"Barcode lookup"}'}]});
-        var data2=await res2.json();
-        var text=(data2.content&&data2.content[0]&&data2.content[0].text)||'';
-        var match=text.match(/\{[\s\S]*\}/);
-        if(!match) throw new Error();
-        status.textContent='';
-        showFoodPreview(JSON.parse(match[0]),'barcode-preview');
-      }
-    } catch(e2){ status.textContent='\u2717 Could not read barcode. Try Scan Label instead.'; }
-  };
-  reader.readAsDataURL(file);
+  try {
+    // Try Open Food Facts first
+    var r = await fetch('https://world.openfoodfacts.org/api/v0/product/'+upc+'.json');
+    var d = await r.json();
+    if(d.status===1 && d.product && d.product.product_name){
+      var p = d.product, n = p.nutriments||{};
+      var sgRaw = p.serving_size||'';
+      var sgMatch = sgRaw.match(/([\d.]+)\s*g/i);
+      var sg = sgMatch ? parseFloat(sgMatch[1]) : 100;
+      var food = {
+        name: p.product_name,
+        serving_desc: p.serving_size||'1 serving',
+        serving_g: sg,
+        cal: Math.round(n['energy-kcal_serving']||n['energy-kcal_100g']||0),
+        protein: parseFloat((n['proteins_serving']||n['proteins_100g']||0).toFixed(1)),
+        carbs: parseFloat((n['carbohydrates_serving']||n['carbohydrates_100g']||0).toFixed(1)),
+        fat: parseFloat((n['fat_serving']||n['fat_100g']||0).toFixed(1)),
+        fiber: parseFloat((n['fiber_serving']||n['fiber_100g']||0).toFixed(1)),
+        sugar: parseFloat((n['sugars_serving']||n['sugars_100g']||0).toFixed(1)),
+        sodium: Math.round((n['sodium_serving']||n['sodium_100g']||0)*1000),
+        potassium: Math.round((n['potassium_serving']||n['potassium_100g']||0)*1000),
+        vitc:0, iron:0, calcium:0, vitd:0,
+        source: 'Food Label (Barcode '+upc+')'
+      };
+      status.textContent = '';
+      showFoodPreview(food, 'barcode-preview');
+      return;
+    }
+    // Fallback to AI lookup
+    throw new Error('not found');
+  } catch(e){
+    // AI fallback
+    try {
+      status.textContent = 'Looking up in database...';
+      var res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:400,messages:[{role:'user',content:'What product has UPC/barcode '+upc+'? Return nutrition facts as ONLY JSON: {"name":"product name","serving_desc":"serving size","serving_g":100,"cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"source":"Barcode lookup"}. If you dont know this specific UPC, say so in the name field.'}]});
+      var data = await res.json();
+      var text = (data.content&&data.content[0]&&data.content[0].text)||'';
+      var match = text.match(/\{[\s\S]*\}/);
+      if(!match) throw new Error();
+      var food = JSON.parse(match[0]);
+      status.textContent = '';
+      showFoodPreview(food, 'barcode-preview');
+    } catch(e2){
+      status.textContent = '\u2717 Product not found. Try entering the UPC number manually or use Scan Label instead.';
+    }
+  }
 }
+
 
 // ═══════════════════════════════════════
 // COPY YESTERDAY
@@ -3076,7 +3133,26 @@ function showPaywall(feature){
 }
 
 async function startCheckout(){
-  showToast('Stripe checkout coming soon!');
+  try {
+    var stripe = Stripe('pk_test_51TMcCXPyeul5sqPHhqgOAQYmerKOuKYjUQYNFg3VkbVIeyhucf9HlG9yAbZKj97kR03T5jZqlhoPucH6Fz1FbdN200g3DxNjXS');
+    // Call Netlify function to create checkout session
+    var res = await fetch('/.netlify/functions/stripe-checkout', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({priceId: window.STRIPE_PRICE_ID || 'PRICE_ID_PENDING'})
+    });
+    if(!res.ok) throw new Error();
+    var data = await res.json();
+    if(data.sessionId){
+      stripe.redirectToCheckout({sessionId: data.sessionId});
+    } else if(data.url){
+      window.location.href = data.url;
+    } else {
+      throw new Error('No checkout URL');
+    }
+  } catch(e){
+    showToast('Checkout coming soon — add your Price ID to activate!');
+  }
 }
 
 
