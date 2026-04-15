@@ -1768,6 +1768,109 @@ function renderWaterHTML(){
 function loadWater(){ return parseInt(localStorage.getItem('gn_water_'+dateKey(0))||'0'); }
 function saveWater(n){ localStorage.setItem('gn_water_'+dateKey(0),n); }
 function initWater(){}
+
+// ═══════════════════════════════════════
+// SETTINGS
+// ═══════════════════════════════════════
+function openSettings(){
+  const g = getGoals();
+  ['calories','protein','carbs','fat','fiber','sugar','sodium','water'].forEach(k=>{
+    const el = document.getElementById('g-'+k);
+    if(el) el.value = g[k]||'';
+  });
+  document.getElementById('settings-modal').classList.add('open');
+}
+function closeSettings(){ document.getElementById('settings-modal').classList.remove('open'); }
+function saveGoals(){
+  const g = getGoals();
+  ['calories','protein','carbs','fat','fiber','sugar','sodium','water'].forEach(k=>{
+    const el = document.getElementById('g-'+k);
+    if(el && el.value) g[k] = parseFloat(el.value);
+  });
+  localStorage.setItem('gn_goals', JSON.stringify(g));
+  closeSettings();
+  renderNutrition();
+  showToast('\u2713 Goals saved!');
+}
+
+// ═══════════════════════════════════════
+// RECIPES
+// ═══════════════════════════════════════
+function renderRecipesSubPage(el){
+  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
+  el.innerHTML = '<div class="card"><div class="card-title">\ud83d\udc68\u200d\ud83c\udf73 My Recipes</div>'
+    +'<button class="btn-primary" style="margin-bottom:12px;" onclick="showCreateRecipe()">+ Create Recipe</button>'
+    +(recipes.length ? recipes.map((r,i)=>'<div style="padding:12px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">'
+      +'<div><div style="font-size:14px;font-weight:600;">'+r.name+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);">'+Math.round(r.cal)+' kcal · P '+r.protein+'g · C '+r.carbs+'g · F '+r.fat+'g</div></div>'
+      +'<div style="display:flex;gap:6px;">'
+      +'<button onclick="addRecipeToLog('+i+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Log</button>'
+      +'<button onclick="deleteRecipe('+i+')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">\xd7</button>'
+      +'</div></div>').join('')
+    : '<div style="font-size:13px;color:var(--muted);">No recipes yet.</div>')
+    +'</div><div id="recipe-create-form"></div>';
+}
+
+function showCreateRecipe(){
+  document.getElementById('recipe-create-form').innerHTML = '<div class="card">'
+    +'<div class="card-title">New Recipe</div>'
+    +'<div class="input-group"><label class="input-label">Recipe Name</label><input type="text" id="rc-name" placeholder="My Protein Bowl"></div>'
+    +'<div class="input-row">'
+    +'<div class="input-group"><label class="input-label">Calories</label><input type="number" id="rc-cal" placeholder="0"></div>'
+    +'<div class="input-group"><label class="input-label">Protein (g)</label><input type="number" id="rc-protein" placeholder="0"></div>'
+    +'</div>'
+    +'<div class="input-row">'
+    +'<div class="input-group"><label class="input-label">Carbs (g)</label><input type="number" id="rc-carbs" placeholder="0"></div>'
+    +'<div class="input-group"><label class="input-label">Fat (g)</label><input type="number" id="rc-fat" placeholder="0"></div>'
+    +'</div>'
+    +'<div class="input-row">'
+    +'<div class="input-group"><label class="input-label">Fiber (g)</label><input type="number" id="rc-fiber" placeholder="0"></div>'
+    +'<div class="input-group"><label class="input-label">Sodium (mg)</label><input type="number" id="rc-sodium" placeholder="0"></div>'
+    +'</div>'
+    +'<button class="btn-primary" onclick="saveRecipe()">Save Recipe</button>'
+    +'<button class="btn-secondary" style="margin-top:8px;" onclick="document.getElementById(\'recipe-create-form\').innerHTML=\'\'">Cancel</button>'
+    +'</div>';
+}
+
+function saveRecipe(){
+  const name = document.getElementById('rc-name')?.value.trim();
+  if(!name){ showToast('Enter a recipe name'); return; }
+  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
+  recipes.push({
+    name,
+    cal: parseFloat(document.getElementById('rc-cal')?.value)||0,
+    protein: parseFloat(document.getElementById('rc-protein')?.value)||0,
+    carbs: parseFloat(document.getElementById('rc-carbs')?.value)||0,
+    fat: parseFloat(document.getElementById('rc-fat')?.value)||0,
+    fiber: parseFloat(document.getElementById('rc-fiber')?.value)||0,
+    sodium: parseFloat(document.getElementById('rc-sodium')?.value)||0,
+  });
+  localStorage.setItem('gn_recipes', JSON.stringify(recipes));
+  showToast('\u2713 Recipe saved!');
+  renderRecipesSubPage(document.getElementById('sub-page-content'));
+}
+
+function addRecipeToLog(idx){
+  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
+  const r = recipes[idx]; if(!r) return;
+  const log = loadDayLog(dayOffset);
+  log.foods.push({
+    meal:'Snacks', name:r.name, cal:r.cal, protein:r.protein,
+    carbs:r.carbs, fat:r.fat, fiber:r.fiber||0, sugar:0,
+    sodium:r.sodium||0, potassium:0, vitc:0, iron:0, calcium:0, vitd:0,
+    serving:100, id:Date.now()
+  });
+  saveDayLog(log, dayOffset);
+  showToast('\u2713 '+r.name+' added');
+}
+
+function deleteRecipe(idx){
+  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
+  recipes.splice(idx,1);
+  localStorage.setItem('gn_recipes', JSON.stringify(recipes));
+  renderRecipesSubPage(document.getElementById('sub-page-content'));
+}
+
 function changeWater(d){
   const w = Math.max(0,Math.min(12,loadWater()+d));
   saveWater(w);
