@@ -7,26 +7,31 @@ exports.handler = async (event) => {
   }
 
   try {
-    const body = JSON.parse(event.body||'{}'); const {priceId} = body;
-    if(!priceId || priceId === 'PRICE_ID_PENDING'){
-      return {statusCode:400, body: JSON.stringify({error:'Price ID not configured'})};
-    }
+    const body = JSON.parse(event.body||'{}');
+    const priceId = body.priceId || 'price_1TMcrPL35VL5z6ikzMkMgzKg';
+    const successUrl = body.successUrl || 'https://genesisnutrition.netlify.app/?session_id={CHECKOUT_SESSION_ID}';
+    const cancelUrl = body.cancelUrl || 'https://genesisnutrition.netlify.app/?cancelled=1';
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{price: priceId, quantity: 1}],
       mode: 'subscription',
-      success_url: body.successUrl || process.env.URL+'/?session_id={CHECKOUT_SESSION_ID}',
-      cancel_url: body.cancelUrl || process.env.URL+'/?cancelled=1',
+      success_url: successUrl,
+      cancel_url: cancelUrl,
       allow_promotion_codes: true,
     });
 
     return {
       statusCode: 200,
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({sessionId: session.id, url: session.url})
+      headers: {'Content-Type':'application/json','Access-Control-Allow-Origin':'*'},
+      body: JSON.stringify({url: session.url})
     };
   } catch(e){
-    return {statusCode:500, body: JSON.stringify({error:e.message})};
+    console.log('Stripe error:', e.message);
+    return {
+      statusCode: 500,
+      headers: {'Content-Type':'application/json','Access-Control-Allow-Origin':'*'},
+      body: JSON.stringify({error: e.message})
+    };
   }
 };
