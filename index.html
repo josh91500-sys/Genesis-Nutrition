@@ -427,11 +427,7 @@ select option{background:var(--bg2);}
           <div class="more-label">Planner</div>
           <div class="more-sub">Meal plan & water</div>
         </div>
-        <div class="more-item" onclick="showSubPage('fitness')">
-          <div class="more-icon">💪</div>
-          <div class="more-label">Fitness Goals</div>
-          <div class="more-sub">Track workouts</div>
-        </div>
+
         <div class="more-item" onclick="showSubPage('health')">
           <div class="more-icon">🩺</div>
           <div class="more-label">Health AI</div>
@@ -774,10 +770,19 @@ function showPage(name, btn){
 }
 
 function showSubPage(name){
+  // Fitness goals now live in Workout tab
+  if(name==='fitness'){
+    document.querySelectorAll('.nav-btn').forEach(function(b){
+      if(b.textContent.trim().indexOf('Workout')>=0) showPage('workout',b);
+    });
+    setTimeout(function(){setWorkoutTab('goals');},150);
+    return;
+  }
   const el = document.getElementById('sub-page-content');
+  if(name==='weight'){ showWeightTracker(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
+  if(name==='health' && !isPro()){ showPaywall('Health AI'); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   const pages = {
     planner: renderPlannerSubPage,
-    fitness: renderFitnessSubPage,
     health: renderHealthSubPage,
     goals: renderGoalsSubPage,
     recipes: renderRecipesSubPage,
@@ -1882,21 +1887,23 @@ function deleteFitnessGoal(idx){
 }
 
 function renderHealthSubPage(el){
+  if(!isPro()){ showPaywall('Health AI'); return; }
   const profile = JSON.parse(localStorage.getItem('gn_health_profile')||'null');
-  el.innerHTML = `<div class="card">
-    <div class="card-title">🩺 Health AI</div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Enter your medical conditions, medications, or health goals. AI will create personalized nutrition goals with clinical reasoning and study links.</div>
-    <div class="input-group">
-      <label class="input-label">Your Health Info</label>
-      <textarea id="health-input" rows="4" placeholder="e.g. I have high blood pressure, Type 2 diabetes, taking metformin. I want to lose weight.">${profile?.rawText||''}</textarea>
-    </div>
-    <button class="btn-primary" onclick="generateHealthRecs()">🤖 Analyze & Set Goals</button>
-    <div id="health-status" class="ai-status"></div>
-    <div id="health-result"></div>
-    <div style="margin-top:12px;font-size:11px;color:var(--muted);line-height:1.6;">⚠️ Not medical advice. Always consult your healthcare provider.</div>
-  </div>`;
-  if(profile?.summary){
-    document.getElementById('health-result').innerHTML = `<div style="margin-top:10px;padding:12px;background:var(--bg4);border-radius:var(--r1);font-size:13px;line-height:1.6;">${profile.summary}</div>`;
+  el.innerHTML = '<div class="card">'
+    +'<div class="card-title">\ud83e\ude7a Health AI — Full Plan</div>'
+    +'<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Enter your medical conditions, medications, goals, and fitness level. AI will create a personalized <strong style="color:var(--text);">nutrition plan + workout plan</strong> based on your health profile.</div>'
+    +'<div class="input-group"><label class="input-label">Your Health Profile</label>'
+    +'<textarea id="health-input" rows="5" placeholder="Examples:&#10;• High blood pressure, taking lisinopril, want to lose weight&#10;• Type 2 diabetes, sedentary job, want to start exercising&#10;• High cholesterol, 45 years old, can do 3 days/week gym&#10;• Anxiety and stress, want to improve sleep and energy">'+(profile&&profile.rawText?profile.rawText:'')+'</textarea></div>'
+    +'<button class="btn-primary" onclick="generateHealthRecs()" id="health-btn">\ud83e\udd16 Generate Full Health Plan</button>'
+    +'<div id="health-status" class="ai-status"></div>'
+    +'<div id="health-result"></div>'
+    +'<div style="margin-top:12px;font-size:11px;color:var(--muted);line-height:1.6;">\u26a0\ufe0f Not medical advice. Always consult your healthcare provider before changing diet or exercise.</div>'
+    +'</div>';
+  if(profile && profile.summary){
+    setTimeout(function(){
+      var r = document.getElementById('health-result');
+      if(r && profile.renderedHTML) r.innerHTML = profile.renderedHTML;
+    }, 100);
   }
 }
 
@@ -1904,116 +1911,202 @@ async function generateHealthRecs(){
   const input = document.getElementById('health-input').value.trim();
   if(!input) return;
   const status = document.getElementById('health-status');
-  status.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  const btn = document.getElementById('health-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  status.textContent = 'Analyzing your health profile...';
+
+  const prompt = 'You are a clinical dietitian and certified personal trainer. The user has provided this health profile: "'+input+'".\n\n'
+    +'Based on this, create a comprehensive health plan. Return ONLY JSON:\n'
+    +'{\n'
+    +'"conditions": ["list of identified conditions/goals"],\n'
+    +'"summary": "2-3 sentence overview of their situation and approach",\n'
+    +'"nutrition_goals": {\n'
+    +'"calories": 1800, "protein": 120, "carbs": 180, "fat": 60, "fiber": 30, "sugar": 25, "sodium": 1500, "potassium": 4700\n'
+    +'},\n'
+    +'"nutrition_recommendations": [\n'
+    +'{"nutrient": "Sodium", "direction": "decrease", "target": 1500, "unit": "mg", "why": "Clinical reason specific to their conditions", "foods_to_eat": ["food1","food2","food3"], "foods_to_avoid": ["food1","food2"], "study_title": "Real study title", "study_url": "https://pubmed.ncbi.nlm.nih.gov/PMID"}\n'
+    +'],\n'
+    +'"meal_plan": {\n'
+    +'"overview": "Brief description of dietary approach e.g. DASH diet for hypertension",\n'
+    +'"breakfast": {"description": "meal description", "example": "e.g. Oatmeal with berries, walnuts, and low-fat milk", "cal": 400, "protein": 15, "carbs": 60, "fat": 10},\n'
+    +'"lunch": {"description": "meal description", "example": "e.g. Grilled salmon salad with olive oil dressing", "cal": 500, "protein": 35, "carbs": 40, "fat": 18},\n'
+    +'"dinner": {"description": "meal description", "example": "e.g. Chicken breast, roasted vegetables, brown rice", "cal": 600, "protein": 45, "carbs": 55, "fat": 15},\n'
+    +'"snacks": {"description": "snack guidance", "example": "e.g. Apple with almond butter, Greek yogurt", "cal": 300, "protein": 12, "carbs": 35, "fat": 10}\n'
+    +'},\n'
+    +'"workout_plan": {\n'
+    +'"overview": "Brief description e.g. Moderate-intensity cardio + resistance training for hypertension",\n'
+    +'"frequency": "e.g. 4-5 days per week",\n'
+    +'"cardio": {"type": "e.g. Brisk walking, swimming, cycling", "intensity": "e.g. Moderate — 50-70% max heart rate", "duration": "30-45 min", "frequency": "3-4x/week", "why": "Clinical reason — e.g. Aerobic exercise reduces systolic BP by 5-8 mmHg"},\n'
+    +'"strength": {"type": "e.g. Light-to-moderate resistance training", "sets_reps": "e.g. 2-3 sets of 12-15 reps", "frequency": "2-3x/week", "exercises": ["Squats","Bench Press","Rows","Shoulder Press","Lunges"], "why": "Clinical reason — e.g. Resistance training improves insulin sensitivity and body composition", "precautions": "e.g. Avoid heavy Valsalva maneuver, monitor BP"},\n'
+    +'"avoid": ["things to avoid e.g. Heavy powerlifting, breath-holding exercises"],\n'
+    +'"progression": "How to progress safely over time"\n'
+    +'},\n'
+    +'"lifestyle_tips": ["tip1 specific to their conditions", "tip2", "tip3"]\n'
+    +'}';
+
   try {
-    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:
-      `Clinical nutrition AI. User: "${input}". Return ONLY JSON:
-{"conditions":["list"],"summary":"2 sentence clinical summary","recommendations":[{"nutrient":"Sodium","direction":"decrease","recommended":1500,"unit":"mg","why":"Clinical explanation with mechanism","study_title":"Real study title","study_url":"https://pubmed.ncbi.nlm.nih.gov/PMID"}],"suggested_goals":{"calories":1800,"protein":120,"carbs":180,"fat":60,"fiber":30,"sugar":25,"sodium":1500,"potassium":4700,"vitc":90,"iron":18,"calcium":1000,"vitd":20}}`}]});
+    const res = await callClaude({model:'claude-sonnet-4-20250514', max_tokens:3000, messages:[{role:'user',content:prompt}]});
+    if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
-    const text = data.content?.[0]?.text||'';
+    const text = (data.content&&data.content[0]&&data.content[0].text)||'';
     const match = text.match(/\{[\s\S]*\}/);
-    if(!match) throw new Error();
+    if(!match) throw new Error('No JSON');
     const result = JSON.parse(match[0]);
-    localStorage.setItem('gn_health_profile',JSON.stringify({rawText:input,...result}));
-    if(result.suggested_goals){
-      const g = loadGoals();
-      Object.entries(result.suggested_goals).forEach(([k,v])=>{ if(v>0) g[k]=v; });
-      localStorage.setItem('gn_goals',JSON.stringify(g));
+
+    // Save nutrition goals
+    if(result.nutrition_goals){
+      const g = getGoals();
+      Object.entries(result.nutrition_goals).forEach(function(kv){ if(kv[1]>0) g[kv[0]]=kv[1]; });
+      localStorage.setItem('gn_goals', JSON.stringify(g));
     }
-    status.textContent='✓ Goals updated!';
-    const el = document.getElementById('health-result');
-    el.innerHTML = `<div style="margin-top:10px;padding:12px;background:var(--bg4);border-radius:var(--r1);">
-      <div style="font-size:13px;line-height:1.6;margin-bottom:10px;">${result.summary||''}</div>
-      ${(result.recommendations||[]).map(r=>`
-        <div style="padding:10px 0;border-top:1px solid var(--border);">
-          <div style="font-size:13px;font-weight:700;margin-bottom:4px;">${r.direction==='decrease'?'↓ Decrease':'↑ Increase'} ${r.nutrient} → ${r.recommended}${r.unit}</div>
-          <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px;">${r.why}</div>
-          ${r.study_url?`<a href="${r.study_url}" target="_blank" style="font-size:11px;color:var(--accent2);">📄 ${r.study_title} →</a>`:''}
-        </div>`).join('')}
-    </div>`;
-  } catch(e){ status.textContent='✗ Failed. Try again.'; }
+
+    // Build the rendered HTML
+    const html = buildHealthResultHTML(result);
+    localStorage.setItem('gn_health_profile', JSON.stringify({rawText:input, summary:result.summary, renderedHTML:html}));
+
+    status.textContent = '';
+    document.getElementById('health-result').innerHTML = html;
+    btn.disabled = false;
+    btn.innerHTML = '\ud83e\udd16 Generate Full Health Plan';
+    showToast('\u2713 Nutrition goals updated!');
+  } catch(e){
+    status.textContent = '\u2717 Failed. Try again.';
+    btn.disabled = false;
+    btn.innerHTML = '\ud83e\udd16 Generate Full Health Plan';
+  }
 }
 
-function renderRecipesSubPage(el){
-  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  el.innerHTML = `<div class="card">
-    <div class="card-title">👨‍🍳 My Recipes</div>
-    <button class="btn-primary" onclick="showCreateRecipe()">＋ Create Recipe</button>
-    ${recipes.length?recipes.map((r,i)=>`
-      <div style="padding:12px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-        <div><div style="font-size:14px;font-weight:600;">${r.name}</div><div style="font-size:11px;color:var(--muted);">${Math.round(r.cal)} kcal · ${r.ingredients?.length||0} ingredients</div></div>
-        <div style="display:flex;gap:6px;">
-          <button onclick="addRecipeToLog(${i})" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">＋ Log</button>
-          <button onclick="deleteRecipe(${i})" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">×</button>
-        </div>
-      </div>`).join(''):'<div style="font-size:13px;color:var(--muted);margin-top:10px;">No recipes yet.</div>'}
-  </div>
-  <div id="recipe-create-form"></div>`;
+function buildHealthResultHTML(r){
+  var html = '';
+
+  // Summary
+  html += '<div style="background:var(--bg4);border-radius:var(--r2);padding:14px;margin-top:12px;">'
+    +'<div style="font-size:13px;line-height:1.7;">'+r.summary+'</div>'
+    +(r.conditions&&r.conditions.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">'
+      +r.conditions.map(function(c){ return '<span style="background:rgba(99,87,255,.2);color:var(--accent2);border-radius:99px;padding:3px 10px;font-size:11px;font-weight:600;">'+c+'</span>'; }).join('')
+      +'</div>' : '')
+    +'</div>';
+
+  // Nutrition Goals set
+  if(r.nutrition_goals){
+    var g = r.nutrition_goals;
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83c\udfaf Nutrition Goals Updated</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+      +Object.entries(g).map(function(kv){
+        var labels = {calories:'Calories',protein:'Protein',carbs:'Carbs',fat:'Fat',fiber:'Fiber',sugar:'Sugar',sodium:'Sodium',potassium:'Potassium'};
+        var units = {calories:'kcal',protein:'g',carbs:'g',fat:'g',fiber:'g',sugar:'g',sodium:'mg',potassium:'mg'};
+        return '<div style="background:var(--bg4);border-radius:10px;padding:10px;text-align:center;">'
+          +'<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;">'+kv[1]+'</div>'
+          +'<div style="font-size:10px;color:var(--muted);">'+(labels[kv[0]]||kv[0])+' ('+(units[kv[0]]||'')+'/day)</div>'
+          +'</div>';
+      }).join('')
+      +'</div></div>';
+  }
+
+  // Meal Plan
+  if(r.meal_plan){
+    var mp = r.meal_plan;
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83c\udf7d\ufe0f Meal Plan — '+mp.overview+'</div>'
+      +['breakfast','lunch','dinner','snacks'].map(function(meal){
+        var m = mp[meal]; if(!m) return '';
+        var emojis = {breakfast:'\ud83c\udf05',lunch:'\u2600\ufe0f',dinner:'\ud83c\udf19',snacks:'\ud83c\udf4e'};
+        return '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
+          +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+          +'<div style="font-size:13px;font-weight:700;">'+(emojis[meal]||'')+' '+meal.charAt(0).toUpperCase()+meal.slice(1)+'</div>'
+          +'<div style="font-size:12px;color:var(--accent2);">'+m.cal+' kcal</div></div>'
+          +'<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">'+m.description+'</div>'
+          +'<div style="font-size:12px;color:var(--text);font-style:italic;">'+m.example+'</div>'
+          +'<div style="font-size:11px;color:var(--muted);margin-top:4px);">P '+m.protein+'g · C '+m.carbs+'g · F '+m.fat+'g</div>'
+          +'</div>';
+      }).join('')
+      +'</div>';
+  }
+
+  // Workout Plan
+  if(r.workout_plan){
+    var wp = r.workout_plan;
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83d\udcaa Workout Plan — '+wp.overview+'</div>'
+      +'<div style="font-size:12px;color:var(--accent2);margin-bottom:12px;">\ud83d\udcc5 '+wp.frequency+'</div>';
+
+    if(wp.cardio){
+      html += '<div style="background:var(--bg4);border-radius:12px;padding:14px;margin-bottom:10px;">'
+        +'<div style="font-size:13px;font-weight:700;color:var(--carbs);margin-bottom:6px;">\ud83c\udfc3 Cardio</div>'
+        +'<div style="font-size:13px;font-weight:600;margin-bottom:4px;">'+wp.cardio.type+'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">'
+        +wp.cardio.duration+' · '+wp.cardio.frequency+' · '+wp.cardio.intensity+'</div>'
+        +'<div style="font-size:12px;color:var(--text);line-height:1.5;">'+wp.cardio.why+'</div>'
+        +'</div>';
+    }
+
+    if(wp.strength){
+      html += '<div style="background:var(--bg4);border-radius:12px;padding:14px;margin-bottom:10px;">'
+        +'<div style="font-size:13px;font-weight:700;color:var(--protein);margin-bottom:6px;">\ud83c\udfcb\ufe0f Weight Training</div>'
+        +'<div style="font-size:13px;font-weight:600;margin-bottom:4px;">'+wp.strength.type+'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:6px;">'+wp.strength.sets_reps+' · '+wp.strength.frequency+'</div>'
+        +(wp.strength.exercises&&wp.strength.exercises.length
+          ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">'
+            +wp.strength.exercises.map(function(e){ return '<span style="background:rgba(255,107,157,.15);color:var(--protein);border-radius:6px;padding:3px 9px;font-size:11px;">'+e+'</span>'; }).join('')
+            +'</div>' : '')
+        +'<div style="font-size:12px;color:var(--text);line-height:1.5;margin-bottom:6px;">'+wp.strength.why+'</div>'
+        +(wp.strength.precautions ? '<div style="font-size:11px;color:var(--sugar);">\u26a0\ufe0f '+wp.strength.precautions+'</div>' : '')
+        +'</div>';
+    }
+
+    if(wp.avoid&&wp.avoid.length){
+      html += '<div style="background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.2);border-radius:12px;padding:12px;margin-bottom:10px;">'
+        +'<div style="font-size:12px;font-weight:700;color:#ff9090;margin-bottom:6px;">\ud83d\udeab Avoid</div>'
+        +wp.avoid.map(function(a){ return '<div style="font-size:12px;color:var(--muted);padding:3px 0;">\u2022 '+a+'</div>'; }).join('')
+        +'</div>';
+    }
+
+    if(wp.progression){
+      html += '<div style="font-size:12px;color:var(--muted);line-height:1.5;padding:4px 0;">'
+        +'\ud83d\udcc8 <strong style="color:var(--text);">Progression: </strong>'+wp.progression+'</div>';
+    }
+    html += '</div>';
+  }
+
+  // Nutrition recommendations
+  if(r.nutrition_recommendations&&r.nutrition_recommendations.length){
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83d\udcca Nutrition Details</div>'
+      +r.nutrition_recommendations.map(function(rec){
+        return '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
+          +'<div style="font-size:13px;font-weight:700;margin-bottom:4px;">'
+          +(rec.direction==='decrease'?'\u2193 Decrease ':'\u2191 Increase ')
+          +rec.nutrient+' \u2192 '+rec.target+(rec.unit?rec.unit:'')
+          +'</div>'
+          +'<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px;">'+rec.why+'</div>'
+          +(rec.foods_to_eat&&rec.foods_to_eat.length
+            ? '<div style="font-size:11px;color:var(--fiber);margin-bottom:4px;">\u2713 Eat: '+rec.foods_to_eat.join(', ')+'</div>' : '')
+          +(rec.foods_to_avoid&&rec.foods_to_avoid.length
+            ? '<div style="font-size:11px;color:#ff9090;margin-bottom:4px;">\u2715 Limit: '+rec.foods_to_avoid.join(', ')+'</div>' : '')
+          +(rec.study_url ? '<a href="'+rec.study_url+'" target="_blank" style="font-size:11px;color:var(--accent2);">\ud83d\udcd4 '+rec.study_title+' \u2192</a>' : '')
+          +'</div>';
+      }).join('')
+      +'</div>';
+  }
+
+  // Lifestyle tips
+  if(r.lifestyle_tips&&r.lifestyle_tips.length){
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83d\udca1 Lifestyle Tips</div>'
+      +r.lifestyle_tips.map(function(t){ return '<div style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">\u2022 '+t+'</div>'; }).join('')
+      +'</div>';
+  }
+
+  html += '<div style="margin:10px 0;padding:12px;background:var(--bg4);border-radius:10px;font-size:11px;color:var(--muted);line-height:1.6;">'
+    +'\u26a0\ufe0f This plan is for informational purposes only. Always consult your doctor, dietitian, or certified trainer before making changes to your diet or exercise routine, especially if you have medical conditions or take medications.'
+    +'</div>';
+
+  return html;
 }
 
-function showCreateRecipe(){
-  const el = document.getElementById('recipe-create-form');
-  el.innerHTML = `<div class="card">
-    <div class="card-title">New Recipe</div>
-    <div class="input-group"><label class="input-label">Recipe Name</label><input type="text" id="rc-name" placeholder="e.g. My Protein Bowl"></div>
-    <div class="input-row">
-      <div class="input-group"><label class="input-label">Calories</label><input type="number" id="rc-cal" placeholder="0"></div>
-      <div class="input-group"><label class="input-label">Protein (g)</label><input type="number" id="rc-protein" placeholder="0"></div>
-    </div>
-    <div class="input-row">
-      <div class="input-group"><label class="input-label">Carbs (g)</label><input type="number" id="rc-carbs" placeholder="0"></div>
-      <div class="input-group"><label class="input-label">Fat (g)</label><input type="number" id="rc-fat" placeholder="0"></div>
-    </div>
-    <button class="btn-primary" onclick="saveRecipe()">Save Recipe</button>
-  </div>`;
-}
 
-function saveRecipe(){
-  const name = document.getElementById('rc-name').value.trim();
-  if(!name) return;
-  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  recipes.push({name, cal:parseFloat(document.getElementById('rc-cal').value)||0,
-    protein:parseFloat(document.getElementById('rc-protein').value)||0,
-    carbs:parseFloat(document.getElementById('rc-carbs').value)||0,
-    fat:parseFloat(document.getElementById('rc-fat').value)||0});
-  localStorage.setItem('gn_recipes',JSON.stringify(recipes));
-  showToast('✓ Recipe saved!');
-  renderRecipesSubPage(document.getElementById('sub-page-content'));
-}
-
-function addRecipeToLog(idx){
-  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  const r = recipes[idx];
-  if(!r) return;
-  const log = loadDayLog(dayOffset);
-  log.foods.push({meal:'Snacks',name:r.name,cal:r.cal,protein:r.protein,carbs:r.carbs,fat:r.fat,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:100,id:Date.now()});
-  saveDayLog(log, dayOffset);
-  showToast('✓ '+r.name+' added');
-}
-
-function deleteRecipe(idx){
-  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  recipes.splice(idx,1);
-  localStorage.setItem('gn_recipes',JSON.stringify(recipes));
-  renderRecipesSubPage(document.getElementById('sub-page-content'));
-}
-
-// ══════════════════════════════════════════════════════
-// SETTINGS
-// ══════════════════════════════════════════════════════
-function openSettings(){
-  const g = loadGoals();
-  ['calories','protein','carbs','fat','fiber','sugar','sodium','potassium'].forEach(k=>{
-    const el = document.getElementById('g-'+k);
-    if(el) el.value = g[k]||'';
-  });
-  document.getElementById('settings-modal').classList.add('open');
-}
-function closeSettings(){ document.getElementById('settings-modal').classList.remove('open'); }
-
-// ══════════════════════════════════════════════════════
-// API
-// ══════════════════════════════════════════════════════
 async function callClaude(body){
   return fetch('/.netlify/functions/claude', {
     method:'POST', headers:{'Content-Type':'application/json'},
