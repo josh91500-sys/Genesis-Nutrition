@@ -3134,7 +3134,7 @@ function showPaywall(feature){
 
 async function startCheckout(){
   try {
-    var stripe = Stripe('pk_test_51TMcCXPyeul5sqPHhqgOAQYmerKOuKYjUQYNFg3VkbVIeyhucf9HlG9yAbZKj97kR03T5jZqlhoPucH6Fz1FbdN200g3DxNjXS');
+    var stripe = Stripe('pk_live_51TMcCKL35VL5z6ikwhDSktxxwuaV86KkA3Mbhugtt6uVgGc346Ym6qZeQciKRSVI4UKjN7XdRjpAVMUvAfJvAtgG00HWhEdnS5');
     // Call Netlify function to create checkout session
     var res = await fetch('/.netlify/functions/stripe-checkout', {
       method:'POST',
