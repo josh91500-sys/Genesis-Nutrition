@@ -7,7 +7,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const {priceId} = JSON.parse(event.body||'{}');
+    const body = JSON.parse(event.body||'{}'); const {priceId} = body;
     if(!priceId || priceId === 'PRICE_ID_PENDING'){
       return {statusCode:400, body: JSON.stringify({error:'Price ID not configured'})};
     }
@@ -16,8 +16,8 @@ exports.handler = async (event) => {
       payment_method_types: ['card'],
       line_items: [{price: priceId, quantity: 1}],
       mode: 'subscription',
-      success_url: process.env.URL+'/success?session_id={CHECKOUT_SESSION_ID}',
-      cancel_url: process.env.URL+'/',
+      success_url: body.successUrl || process.env.URL+'/?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: body.cancelUrl || process.env.URL+'/?cancelled=1',
       allow_promotion_codes: true,
     });
 
