@@ -849,99 +849,92 @@ function setMode(mode, el){
 async function doDescribeLookup(){
   const input = document.getElementById('describe-input').value.trim();
   if(!input) return;
+
+  // Detect fitness goal and redirect
+  const isFitnessGoal = /\b(bench|squat|deadlift|overhead press|curl|row|pull.?up|push.?up|lift|run|mile|5k|marathon|plank|reps|sets|lbs|pounds|kg|gym|muscle|cardio|hiit|sprint)\b/i.test(input);
+  if(isFitnessGoal){
+    closeAddFood();
+    showToast('That sounds like a fitness goal! Redirecting...');
+    setTimeout(function(){
+      document.querySelectorAll('.nav-btn').forEach(function(b){
+        if(b.textContent.trim().indexOf('Workout')>=0) showPage('workout',b);
+      });
+      setTimeout(function(){ setWorkoutTab('goals'); setTimeout(function(){ showAddGoalForm(); var el=document.getElementById('ng-name'); if(el) el.value=input; },200); },150);
+    },500);
+    return;
+  }
+
   const btn = document.getElementById('describe-btn');
   const status = document.getElementById('describe-status');
+  const preview = document.getElementById('describe-preview');
   btn.disabled=true;
   btn.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  status.textContent='Looking up nutrition data...';
-  document.getElementById('describe-preview').innerHTML='';
+  status.textContent='';
+  preview.innerHTML='';
 
-  const prompt = `Look up accurate nutrition data for: "${input}"
+  const isRestaurant = /bww|buffalo wild|mcdonald|burger king|wendy|chick.fil|chipotle|subway|taco bell|domino|pizza hut|olive garden|applebee|ihop|sonic|arby|kfc|popeye|five guys|panera|starbucks|dunkin|dairy queen|whataburger|wingstop|raising cane|zaxby|panda|cheesecake factory|texas roadhouse/i.test(input);
 
-Use USDA FoodData Central values when possible. Be precise and accurate - do not guess.
-
-Return ONLY a JSON object:
-{
-  "name": "descriptive food name",
-  "serving_desc": "natural serving description e.g. 2 large eggs, 1 cup",
-  "serving_g": 100,
-  "cal": 0,
-  "protein": 0,
-  "carbs": 0,
-  "fat": 0,
-  "fiber": 0,
-  "sugar": 0,
-  "sodium": 0,
-  "potassium": 0,
-  "vitc": 0,
-  "iron": 0,
-  "calcium": 0,
-  "vitd": 0,
-  "source": "USDA FoodData Central" or "Estimated"
-}
-
-All values for the described serving. sodium/potassium/calcium in mg. vitc/iron in mg. vitd in mcg.`;
+  const prompt = 'You are a nutrition expert. Look up accurate nutrition data for: "'+input+'".\n\n'
+    +'Return 3-5 different serving size options (e.g. 1 piece, 2 pieces, 100g, 1 cup) as a JSON array.\n'
+    +'Use USDA FoodData Central as primary source. For restaurant items use official nutrition menu.\n'
+    +'Each result MUST include a real source_url linking to where the data comes from.\n\n'
+    +'Return ONLY a JSON array:\n'
+    +'[{"name":"food name + serving description","serving_desc":"e.g. 1 piece (57g)","serving_g":57,"cal":168,"protein":5.4,"carbs":32.4,"fat":1.9,"fiber":1.4,"sugar":0,"sodium":322,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"source":"USDA FoodData Central","source_url":"https://fdc.nal.usda.gov/fdc-app.html#/?query=lavash+bread"}]';
 
   try {
-    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:500,messages:[{role:'user',content:prompt}]});
-    if(!res.ok) throw new Error('HTTP '+res.status);
+    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:prompt}]});
+    if(!res.ok) throw new Error('API error');
     const data = await res.json();
-    const text = data.content?.[0]?.text||'';
-    const match = text.match(/\{[\s\S]*\}/);
-    if(!match) throw new Error('No data');
-    const food = JSON.parse(match[0]);
-    status.textContent='';
-    showFoodPreview(food, 'describe-preview');
+    const text = (data.content&&data.content[0]&&data.content[0].text)||'';
+    const match = text.match(/\[[\s\S]*\]/);
+    if(!match) throw new Error('No results');
+    const results = JSON.parse(match[0]);
+    if(!results.length) throw new Error('Empty results');
+    status.textContent = '\u2713 Found '+results.length+' options — pick one:';
+    renderDescribeResults(results);
   } catch(e){
-    status.textContent='✗ Could not find data. Try being more specific.';
+    status.textContent = '\u2717 Could not find data. Try being more specific or use Manual entry.';
   }
   btn.disabled=false;
-  btn.innerHTML='🤖 Look Up Nutrition';
+  btn.innerHTML='\ud83e\udd16 Look Up Nutrition';
 }
 
-function showFoodPreview(food, containerId){
-  const el = document.getElementById(containerId);
-  const isUSDA = food.source&&food.source.toLowerCase().includes('usda');
-  el.innerHTML = `
-    <div class="ai-preview" style="margin-top:12px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div class="ai-preview-name">${food.name}</div>
-        <span class="${isUSDA?'verified-badge':'ai-badge'}">${isUSDA?'✓ USDA':'🤖 AI Est.'}</span>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">${food.serving_desc||food.serving_g+'g serving'}</div>
-      <div class="preview-grid">
-        <div class="preview-item"><div class="preview-val">${Math.round(food.cal)}</div><div class="preview-key">kcal</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--protein)">${(food.protein||0).toFixed(1)}g</div><div class="preview-key">protein</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--carbs)">${(food.carbs||0).toFixed(1)}g</div><div class="preview-key">carbs</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--fat)">${(food.fat||0).toFixed(1)}g</div><div class="preview-key">fat</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--fiber)">${(food.fiber||0).toFixed(1)}g</div><div class="preview-key">fiber</div></div>
-        <div class="preview-item"><div class="preview-val">${Math.round(food.sodium||0)}mg</div><div class="preview-key">sodium</div></div>
-      </div>
-      ${!isUSDA?'<div style="font-size:11px;color:var(--sugar);margin-top:10px;">⚠️ AI estimate — verify with food label for accuracy</div>':''}
-      <button class="btn-primary" style="margin-top:12px;" onclick="addPreviewFood(${JSON.stringify(food).replace(/'/g,"&#39;")})">＋ Add to Log</button>
-    </div>`;
+function renderDescribeResults(results){
+  const el = document.getElementById('describe-preview');
+  el.innerHTML = results.map(function(food, idx){
+    const isUSDA = !!(food.source&&food.source.includes('USDA'));
+    const isOfficial = !!(food.source&&food.source.toLowerCase().includes('official'));
+    const badgeClass = isUSDA||isOfficial ? 'verified-badge' : 'ai-badge';
+    const badgeText = isUSDA ? '\u2713 USDA' : isOfficial ? '\u2713 Official' : '\u26a0\ufe0f AI Estimate';
+    return '<div style="background:var(--bg4);border:2px solid var(--border2);border-radius:var(--r1);padding:14px;margin-top:10px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">'
+      +'<div style="flex:1;margin-right:8px;">'
+      +'<div style="font-size:14px;font-weight:700;">'+food.name+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+(food.serving_desc||food.serving_g+'g')+'</div>'
+      +'</div>'
+      +'<span class="'+badgeClass+'">'+badgeText+'</span>'
+      +'</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px;">'
+      +[{k:'cal',l:'kcal',c:'var(--text)'},{k:'protein',l:'protein',c:'var(--protein)'},{k:'carbs',l:'carbs',c:'var(--carbs)'},{k:'fat',l:'fat',c:'var(--fat)'},{k:'fiber',l:'fiber',c:'var(--fiber)'},{k:'sodium',l:'sodium mg',c:'#94a3b8'}].map(function(m){
+        return '<div style="background:var(--bg3);border-radius:8px;padding:7px;text-align:center;">'
+          +'<div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;color:'+m.c+'">'+(m.k==='cal'?Math.round(food.cal||0):(food[m.k]||0).toFixed(1))+'</div>'
+          +'<div style="font-size:9px;color:var(--muted);">'+m.l+'</div></div>';
+      }).join('')
+      +'</div>'
+      +(food.source_url ? '<a href="'+food.source_url+'" target="_blank" style="display:block;font-size:11px;color:var(--accent2);margin-bottom:10px;">\ud83d\udd17 Verify source: '+food.source+' \u2192</a>' : '<div style="font-size:11px;color:var(--muted);margin-bottom:10px);">\u2139\ufe0f Source: '+(food.source||'AI Estimate')+'</div>')
+      +'<button class="btn-primary" onclick="addDescribeResult('+idx+')">+ Add to Log</button>'
+      +'</div>';
+  }).join('');
+  window._describeResults = results;
 }
 
-function addPreviewFood(food){
-  const meal = document.getElementById('food-meal').value;
-  const log = loadDayLog(dayOffset);
-  log.foods.push({
-    meal, name:food.name, cal:food.cal, protein:food.protein||0,
-    carbs:food.carbs||0, fat:food.fat||0, fiber:food.fiber||0,
-    sugar:food.sugar||0, sodium:food.sodium||0, potassium:food.potassium||0,
-    vitc:food.vitc||0, iron:food.iron||0, calcium:food.calcium||0, vitd:food.vitd||0,
-    serving:food.serving_g||100,
-    verified: food.source&&food.source.toLowerCase().includes('usda'),
-    ai_sourced: !food.source||!food.source.toLowerCase().includes('usda'),
-    id:Date.now()
-  });
-  saveDayLog(log, dayOffset);
-  closeAddFood();
-  renderNutrition();
-  showToast('✓ '+food.name+' added');
+function addDescribeResult(idx){
+  const food = window._describeResults && window._describeResults[idx];
+  if(!food){ showToast('Error: no food data'); return; }
+  addPreviewFood(food);
 }
 
-// Scan mode
+
 async function handleScan(input){
   const file = input.files[0];
   if(!file) return;
