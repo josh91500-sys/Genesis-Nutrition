@@ -297,7 +297,7 @@ select option{background:var(--bg2);}
 
     <!-- Meal Plan Generator -->
     <div style="margin:10px 16px 0;">
-      <button onclick="showMealPlanModal()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:13px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;text-align:left;">
+      <button onclick="if(isPro())showMealPlanModal();else showMealPaywall()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:13px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;text-align:left;">
         <span style="font-size:22px;">🍽️</span>
         <div>
           <div style="font-size:14px;font-weight:700;color:var(--text);">Generate Today's Meal Plan</div>
@@ -325,7 +325,7 @@ select option{background:var(--bg2);}
         <div><div class="page-title">History</div></div>
         <div style="display:flex;gap:6px;">
           <button class="hdr-btn" id="hist-week-btn" onclick="setHistView('week',this)" style="background:var(--accent);color:#fff;border-color:var(--accent);">Week</button>
-          <button class="hdr-btn" id="hist-month-btn" onclick="setHistView('month',this)">Month</button>
+          <button class="hdr-btn" id="hist-month-btn" onclick="if(isPro())setHistView('month',this);else showHistoryPaywall()">Month ⭐</button>
         </div>
       </div>
     </div>
@@ -361,7 +361,7 @@ select option{background:var(--bg2);}
           <label class="input-label">Describe any food or meal</label>
           <div style="display:flex;gap:8px;">
             <input type="text" id="ai-search-input" placeholder="e.g. scrambled eggs, avocado toast...">
-            <button onclick="doAISearch()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">Search</button>
+            <button onclick="if(isPro())doAISearch();else showSearchPaywall()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">Search</button>
           </div>
         </div>
         <div id="ai-search-status" class="ai-status"></div>
@@ -550,7 +550,7 @@ select option{background:var(--bg2);}
         <label class="input-label">What did you eat?</label>
         <textarea id="describe-input" rows="2" placeholder="e.g. 2 scrambled eggs with cheese, large bowl of oatmeal with berries..."></textarea>
       </div>
-      <button class="btn-primary" onclick="doDescribeLookup()" id="describe-btn">🤖 Look Up Nutrition</button>
+      <button class="btn-primary" onclick="if(isPro())doDescribeLookup();else showDescribePaywall()" id="describe-btn">🤖 Look Up Nutrition</button>
       <div id="describe-status" class="ai-status"></div>
       <div id="describe-preview"></div>
     </div>
@@ -1513,13 +1513,13 @@ document.addEventListener('DOMContentLoaded', function(){
 // ═══════════════════════════════════
 // PRO / STRIPE
 // ═══════════════════════════════════
-function isPro(){ return localStorage.getItem('gn_pro')==='true'; }
+function isPro(){ return sessionStorage.getItem('gn_pro_session')==='true'; }
 
 function applyPromoCode(){
   var code = (document.getElementById('promo-input')&&document.getElementById('promo-input').value||'').trim().toUpperCase();
   var statusEl = document.getElementById('promo-status');
   if(code==='NEENER'){
-    localStorage.setItem('gn_pro','true');
+    sessionStorage.setItem('gn_pro_session','true');
     if(statusEl) statusEl.innerHTML='<span style="color:var(--fiber);">\u2713 Pro unlocked!</span>';
     setTimeout(function(){ showToast('\u2b50 Welcome to Genesis Pro!',3000); showSubPage('health'); },800);
   } else if(!code){
@@ -2678,6 +2678,82 @@ function addSinglePlanFood(meal, food){
   renderNutrition();
   showToast('✓ '+food.name+' added');
 }
+
+
+</script>
+
+<script>
+// ═══════════════════════════════════════
+// PAYWALL HELPERS
+// ═══════════════════════════════════════
+function showProPaywall(feature, onUnlock){
+  // Create inline paywall overlay
+  var overlay = document.getElementById('pro-paywall-overlay');
+  if(!overlay){
+    overlay = document.createElement('div');
+    overlay.id = 'pro-paywall-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(10px);z-index:600;display:flex;align-items:flex-end;justify-content:center;';
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = '<div style="background:var(--bg2);border-radius:24px 24px 0 0;border:1px solid var(--border2);width:100%;max-width:480px;padding:24px 20px 40px;max-height:90vh;overflow-y:auto;">'
+    +'<div style="text-align:center;margin-bottom:16px;">'
+    +'<div style="font-size:38px;margin-bottom:8px;">⭐</div>'
+    +'<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;margin-bottom:6px;">Genesis Pro</div>'
+    +'<div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:4px;"><strong style="color:var(--text);">'+feature+'</strong> is a Pro feature.</div>'
+    +'<div style="font-size:13px;color:var(--muted);">Upgrade for $4.99/month or enter your promo code.</div>'
+    +'</div>'
+    +'<div style="background:var(--bg4);border-radius:var(--r1);padding:14px;margin-bottom:14px;">'
+    +'<div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;">What you get with Pro</div>'
+    +['🤖 AI Food Search & Describe','🤖 AI Workout Coach','🩺 Health AI with full plan','📅 AI Meal Planner','📈 30-day history & trends'].map(function(f){
+      return '<div style="font-size:13px;padding:5px 0;border-bottom:1px solid var(--border);">'+f+'</div>';
+    }).join('')
+    +'</div>'
+    +'<button onclick="startCheckout()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;">Upgrade to Pro — $4.99/month</button>'
+    +'<div style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:14px;">Cancel anytime · Secure via Stripe</div>'
+    +'<div style="border-top:1px solid var(--border);padding-top:14px;">'
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Have a promo code?</div>'
+    +'<div style="display:flex;gap:8px;">'
+    +'<input type="text" id="overlay-promo-input" placeholder="Enter promo code" style="flex:1;text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()" onkeydown="if(event.key===\'Enter\')applyOverlayPromo()">'
+    +'<button onclick="applyOverlayPromo()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:10px 14px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;">Apply</button>'
+    +'</div>'
+    +'<div id="overlay-promo-status" style="font-size:12px;margin-top:6px;min-height:18px;"></div>'
+    +'</div>'
+    +'<button onclick="document.getElementById(\'pro-paywall-overlay\').style.display=\'none\'" style="width:100%;background:none;border:1px solid var(--border2);color:var(--muted);border-radius:var(--r1);padding:12px;font-family:DM Sans,sans-serif;font-size:14px;cursor:pointer;margin-top:8px;">Not now</button>'
+    +'</div>';
+  overlay.style.display = 'flex';
+  overlay._onUnlock = onUnlock;
+  setTimeout(function(){ var el=document.getElementById('overlay-promo-input'); if(el) el.focus(); }, 300);
+}
+
+function applyOverlayPromo(){
+  var code = (document.getElementById('overlay-promo-input').value||'').trim().toUpperCase();
+  var status = document.getElementById('overlay-promo-status');
+  // Promo codes - change NEENER to anything you want
+  var VALID_CODES = ['NEENER'];
+  if(VALID_CODES.includes(code)){
+    sessionStorage.setItem('gn_pro_session','true');
+    status.innerHTML = '<span style="color:var(--fiber);">✓ Pro unlocked for this session!</span>';
+    setTimeout(function(){
+      var overlay = document.getElementById('pro-paywall-overlay');
+      if(overlay){
+        overlay.style.display = 'none';
+        if(overlay._onUnlock) overlay._onUnlock();
+      }
+      showToast('⭐ Pro unlocked!', 3000);
+    }, 800);
+  } else if(!code){
+    if(status) status.innerHTML = '<span style="color:#ff9090;">Enter a promo code.</span>';
+  } else {
+    if(status) status.innerHTML = '<span style="color:#ff9090;">✗ Invalid code. Try again.</span>';
+  }
+}
+
+// Specific paywall triggers
+function showSearchPaywall(){ showProPaywall('AI Food Search', function(){ doAISearch(); }); }
+function showDescribePaywall(){ showProPaywall('AI Food Lookup', function(){ doDescribeLookup(); }); }
+function showWorkoutAIPaywall(){ showProPaywall('AI Workout Coach', function(){ generateAIWorkout(); }); }
+function showMealPaywall(){ showProPaywall('AI Meal Planner', function(){ showMealPlanModal(); }); }
+function showHistoryPaywall(){ showProPaywall('30-Day History', null); }
 
 
 </script>
