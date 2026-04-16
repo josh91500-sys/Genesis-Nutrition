@@ -854,7 +854,7 @@ async function doDescribeLookup(){
   const isFitnessGoal = /\b(bench|squat|deadlift|overhead press|curl|row|pull.?up|push.?up|lift|run|mile|5k|marathon|plank|reps|sets|gym|muscle|cardio|hiit|sprint)\b/i.test(input);
   if(isFitnessGoal){
     closeAddFood();
-    showToast('That sounds like a fitness goal! Redirecting...');
+    showToast('Sounds like a fitness goal — redirecting...');
     setTimeout(function(){
       document.querySelectorAll('.nav-btn').forEach(function(b){
         if(b.textContent.trim().indexOf('Workout')>=0) showPage('workout',b);
@@ -867,95 +867,65 @@ async function doDescribeLookup(){
   const btn = document.getElementById('describe-btn');
   const status = document.getElementById('describe-status');
   const preview = document.getElementById('describe-preview');
-  btn.disabled=true;
-  btn.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  status.textContent='Searching USDA database...';
-  preview.innerHTML='';
+  btn.disabled = true;
+  btn.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  status.textContent = 'Searching...';
+  preview.innerHTML = '';
+
+  const isRestaurant = /bww|buffalo wild|mcdonald|burger king|wendy|chick.fil|chipotle|subway|taco bell|domino|pizza hut|panera|starbucks|dunkin|dairy queen|whataburger|wingstop|raising cane|zaxby|panda express|cheesecake factory|texas roadhouse|applebee|olive garden|ihop|sonic|arby|kfc|popeyes|five guys/i.test(input);
+
+  const prompt = 'Search your knowledge for the most accurate, up-to-date nutrition facts for: "'+input+'".\n\n'
+    +'Act like you just Googled it. Find the REAL nutrition label data — the kind you would see on:\n'
+    +'- The brand\'s official website (e.g. traderjoes.com, missionfoods.com)\n'
+    +'- Cronometer, MyFitnessPal, Nutritionix, or Eat This Much\n'
+    +(isRestaurant ? '- The restaurant\'s official online nutrition PDF or page\n' : '')
+    +'\nReturn 4-6 options covering realistic serving sizes people actually eat.\n'
+    +'Be SPECIFIC — include brand name if it\'s a branded product.\n'
+    +'Use the REAL numbers from the label, not estimates.\n\n'
+    +'Return ONLY a JSON array, no other text:\n'
+    +'[{\n'
+    +'"name": "Mission Lavash Flatbread (1/2 flatbread)",\n'
+    +'"serving_desc": "1/2 flatbread (32g)",\n'
+    +'"serving_g": 32,\n'
+    +'"cal": 60,\n'
+    +'"protein": 6,\n'
+    +'"carbs": 8,\n'
+    +'"fat": 1.5,\n'
+    +'"fiber": 2,\n'
+    +'"sugar": 0,\n'
+    +'"sodium": 290,\n'
+    +'"potassium": 0,\n'
+    +'"vitc": 0, "iron": 0, "calcium": 0, "vitd": 0,\n'
+    +'"source": "Mission Foods",\n'
+    +'"source_url": "https://www.missionfoods.com/products/lavash-flatbread/"\n'
+    +'}]';
 
   try {
-    // Step 1: Search USDA FoodData Central API directly
-    const usdaKey = 'DEMO_KEY'; // works for low volume, no signup needed
-    const usdaUrl = 'https://api.nal.usda.gov/fdc/v1/foods/search?query='+encodeURIComponent(input)+'&pageSize=6&dataType=Survey%20(FNDDS),SR%20Legacy,Branded&api_key='+usdaKey;
-    const usdaRes = await fetch(usdaUrl);
-    const usdaData = await usdaRes.json();
-    const foods = usdaData.foods || [];
-
-    if(foods.length > 0){
-      status.textContent = '\u2713 Found '+foods.length+' results from USDA FoodData Central';
-      const results = foods.slice(0,5).map(function(f){
-        const nuts = {};
-        (f.foodNutrients||[]).forEach(function(n){
-          const name = (n.nutrientName||'').toLowerCase();
-          if(name.includes('energy') && name.includes('kcal')) nuts.cal = Math.round(n.value||0);
-          else if(name.includes('protein')) nuts.protein = parseFloat((n.value||0).toFixed(1));
-          else if(name.includes('carbohydrate')) nuts.carbs = parseFloat((n.value||0).toFixed(1));
-          else if(name.includes('total lipid') || name==='fat') nuts.fat = parseFloat((n.value||0).toFixed(1));
-          else if(name.includes('fiber')) nuts.fiber = parseFloat((n.value||0).toFixed(1));
-          else if(name.includes('sugars')) nuts.sugar = parseFloat((n.value||0).toFixed(1));
-          else if(name.includes('sodium')) nuts.sodium = Math.round(n.value||0);
-          else if(name.includes('potassium')) nuts.potassium = Math.round(n.value||0);
-          else if(name.includes('calcium')) nuts.calcium = Math.round(n.value||0);
-          else if(name.includes('iron')) nuts.iron = parseFloat((n.value||0).toFixed(1));
-          else if(name.includes('vitamin c')) nuts.vitc = parseFloat((n.value||0).toFixed(1));
-          else if(name.includes('vitamin d')) nuts.vitd = parseFloat((n.value||0).toFixed(1));
-        });
-        // USDA values are per 100g — note serving info
-        const servingSize = f.servingSize ? f.servingSize+' '+(f.servingSizeUnit||'g') : '100g';
-        const servingG = f.servingSize || 100;
-        const scale = servingG / 100;
-        return {
-          name: f.description + (f.brandName ? ' ('+f.brandName+')' : ''),
-          serving_desc: servingSize,
-          serving_g: servingG,
-          cal: Math.round((nuts.cal||0) * scale),
-          protein: parseFloat(((nuts.protein||0) * scale).toFixed(1)),
-          carbs: parseFloat(((nuts.carbs||0) * scale).toFixed(1)),
-          fat: parseFloat(((nuts.fat||0) * scale).toFixed(1)),
-          fiber: parseFloat(((nuts.fiber||0) * scale).toFixed(1)),
-          sugar: parseFloat(((nuts.sugar||0) * scale).toFixed(1)),
-          sodium: Math.round((nuts.sodium||0) * scale),
-          potassium: Math.round((nuts.potassium||0) * scale),
-          vitc: parseFloat(((nuts.vitc||0) * scale).toFixed(1)),
-          iron: parseFloat(((nuts.iron||0) * scale).toFixed(1)),
-          calcium: Math.round((nuts.calcium||0) * scale),
-          vitd: parseFloat(((nuts.vitd||0) * scale).toFixed(1)),
-          source: 'USDA FoodData Central',
-          source_url: 'https://fdc.nal.usda.gov/food-details/'+f.fdcId+'/nutrients',
-          fdcId: f.fdcId
-        };
-      });
-      renderDescribeResults(results);
-    } else {
-      // Step 2: AI fallback if USDA has nothing
-      status.textContent = 'Not in USDA database — trying AI lookup...';
-      await doAIDescribeFallback(input, status);
-    }
-  } catch(e){
-    status.textContent = 'USDA unavailable — trying AI lookup...';
-    await doAIDescribeFallback(input, status);
-  }
-  btn.disabled=false;
-  btn.innerHTML='\ud83e\udd16 Look Up Nutrition';
-}
-
-async function doAIDescribeFallback(input, status){
-  const isRestaurant = /bww|buffalo wild|mcdonald|burger king|wendy|chick.fil|chipotle|subway|taco bell|domino|pizza hut|panera|starbucks|dunkin|dairy queen|whataburger|wingstop|raising cane|zaxby/i.test(input);
-  const prompt = 'You are a nutrition expert. Look up accurate nutrition data for: "'+input+'".\n'
-    +(isRestaurant ? 'Use the official restaurant nutrition guide.\n' : 'Use USDA FoodData Central data where possible.\n')
-    +'Return 3-5 different serving size options as ONLY a JSON array:\n'
-    +'[{"name":"food name + brand if known","serving_desc":"e.g. 1 slice (28g)","serving_g":28,"cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"source":"source name","source_url":"https://actual-url-to-nutrition-data"}]';
-  try {
-    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:prompt}]});
+    const res = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2500,
+      messages: [{role:'user', content: prompt}]
+    });
+    if(!res.ok) throw new Error('API error '+res.status);
     const data = await res.json();
     const text = (data.content&&data.content[0]&&data.content[0].text)||'';
     const match = text.match(/\[[\s\S]*\]/);
-    if(!match) throw new Error();
+    if(!match) throw new Error('No JSON array found');
     const results = JSON.parse(match[0]);
-    status.textContent = '\u2713 Found '+results.length+' AI estimates — verify with label';
+    if(!results||!results.length) throw new Error('Empty');
+    status.textContent = '\u2713 '+results.length+' results — pick a serving size:';
     renderDescribeResults(results);
   } catch(e){
-    if(status) status.textContent = '\u2717 Not found. Try Brand Search tab or Manual entry.';
+    status.textContent = '\u2717 Not found. Try Brand Search tab or Manual entry.';
+    console.error('Describe lookup error:', e);
   }
+  btn.disabled = false;
+  btn.innerHTML = '\ud83e\udd16 Look Up Nutrition';
+}
+
+async function doAIDescribeFallback(input, status){
+  // kept for compatibility
+  await doDescribeLookup();
 }
 
 
