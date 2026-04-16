@@ -1643,48 +1643,23 @@ function deleteFitnessGoal(idx){
 }
 
 function renderHealthSubPage(el){
-  if(!isPro()){
-    el.innerHTML = '<div style="margin:10px 0;background:linear-gradient(135deg,rgba(99,87,255,.15),rgba(245,158,11,.1));border:1px solid var(--accent);border-radius:var(--r2);padding:24px;text-align:center;">'
-      +'<div style="font-size:42px;margin-bottom:12px;">\u2b50</div>'
-      +'<div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;margin-bottom:8px;">Genesis Pro</div>'
-      +'<div style="font-size:14px;color:var(--muted);margin-bottom:18px;line-height:1.6;">Upgrade to unlock Health AI and all Pro features for just $4.99/month.</div>'
-      +'<div style="text-align:left;margin-bottom:18px;">'
-      +['\ud83e\udd16 AI-powered food search','\ud83e\ude7a Health AI with full nutrition + workout plan','\ud83d\udcca Reasoning for every goal','\ud83c\udf7d\ufe0f Personalized meal plan + saved meals','\ud83d\udcaa Tailored workout plan'].map(function(f){
-        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;">'+f+'</div>';
-      }).join('')
-      +'</div>'
-      +'<button onclick="startCheckout()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;">Upgrade to Pro \u2014 $4.99/month</button>'
-      +'<div style="font-size:11px;color:var(--muted);margin-bottom:16px;">Cancel anytime \u00b7 Secure payment via Stripe</div>'
-      +'<div style="border-top:1px solid var(--border);padding-top:14px;">'
-      +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Have a promo code?</div>'
-      +'<div style="display:flex;gap:8px;">'
-      +'<input type="text" id="promo-input" placeholder="Enter promo code" style="flex:1;text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">'
-      +'<button onclick="applyPromoCode()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:10px 16px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;">Apply</button>'
-      +'</div>'
-      +'<div id="promo-status" style="font-size:12px;margin-top:6px;min-height:18px;"></div>'
-      +'</div>'
-      +'</div>';
-    return;
-  }
   const profile = JSON.parse(localStorage.getItem('gn_health_profile')||'null');
-  el.innerHTML = '<div class="card">'
-    +'<div class="card-title">\ud83e\ude7a Health AI \u2014 Full Plan</div>'
-    +'<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Describe your conditions, medications, height, weight, goals, and activity level. AI creates a personalized <strong style="color:var(--text);">nutrition plan + workout plan</strong> with reasoning for every goal.</div>'
-    +'<div class="input-group"><label class="input-label">Your Health Profile</label>'
-    +'<textarea id="health-input" rows="5" placeholder="e.g. High blood pressure, 5\'11, 210 lbs, workout occasionally, want to drop 20 lbs, targeting 1500 calories">'+(profile&&profile.rawText?profile.rawText:'')+'</textarea></div>'
-    +'<button class="btn-primary" onclick="generateHealthRecs()" id="health-btn">\ud83e\udd16 Generate Full Health Plan</button>'
-    +'<div id="health-status" class="ai-status"></div>'
-    +'<div id="health-result"></div>'
-    +'<div style="margin-top:12px;font-size:11px;color:var(--muted);line-height:1.6;">\u26a0\ufe0f Not medical advice. Always consult your healthcare provider.</div>'
-    +'</div>';
-  if(profile&&profile.renderedHTML){
-    setTimeout(function(){
-      var r = document.getElementById('health-result');
-      if(r) r.innerHTML = profile.renderedHTML;
-    },100);
+  el.innerHTML = `<div class="card">
+    <div class="card-title">\ud83e\ude7a Health AI</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Enter your medical conditions, medications, or health goals. AI will create personalized nutrition goals with clinical reasoning and study links.</div>
+    <div class="input-group">
+      <label class="input-label">Your Health Info</label>
+      <textarea id="health-input" rows="4" placeholder="e.g. I have high blood pressure, Type 2 diabetes, taking metformin. I want to lose weight.">${profile?.rawText||''}</textarea>
+    </div>
+    <button class="btn-primary" onclick="generateHealthRecs()">\ud83e\udd16 Analyze & Set Goals</button>
+    <div id="health-status" class="ai-status"></div>
+    <div id="health-result"></div>
+    <div style="margin-top:12px;font-size:11px;color:var(--muted);line-height:1.6;">\u26a0\ufe0f Not medical advice. Always consult your healthcare provider.</div>
+  </div>`;
+  if(profile?.summary){
+    document.getElementById('health-result').innerHTML = `<div style="margin-top:10px;padding:12px;background:var(--bg4);border-radius:var(--r1);font-size:13px;line-height:1.6;">${profile.summary}</div>`;
   }
 }
-
 
 async function generateHealthRecs(){
   const input = document.getElementById('health-input').value.trim();
@@ -1693,45 +1668,51 @@ async function generateHealthRecs(){
   const btn = document.getElementById('health-btn');
   btn.disabled = true;
   btn.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  status.textContent = 'Analyzing your health profile...';
+  status.textContent = 'Analyzing your health profile and building your full plan...';
 
-  const prompt = [
-    'You are a clinical dietitian and certified personal trainer. Health profile: "'+input+'".',
-    '',
-    'Create a full health plan. You MUST give a specific clinical reason for EVERY goal: calories, protein, carbs, fat, fiber, sugar, sodium, potassium.',
-    '',
-    'Return ONLY JSON:',
-    '{',
-    '"conditions":["list"],',
-    '"summary":"2-3 sentence overview",',
-    '"nutrition_goals":{',
-    '  "calories":{"value":1800,"unit":"kcal","why":"clinical reason specific to their conditions"},',
-    '  "protein":{"value":130,"unit":"g","why":"clinical reason e.g. 1.2g/kg to preserve lean mass"},',
-    '  "carbs":{"value":180,"unit":"g","why":"clinical reason e.g. moderate carbs to control blood glucose"},',
-    '  "fat":{"value":60,"unit":"g","why":"clinical reason e.g. unsaturated fats to improve cholesterol"},',
-    '  "fiber":{"value":35,"unit":"g","why":"clinical reason e.g. slows glucose, lowers LDL, improves satiety"},',
-    '  "sugar":{"value":25,"unit":"g","why":"clinical reason e.g. limits insulin spikes and triglycerides"},',
-    '  "sodium":{"value":1500,"unit":"mg","why":"clinical reason e.g. reduces systolic BP by 5-6 mmHg"},',
-    '  "potassium":{"value":4700,"unit":"mg","why":"clinical reason e.g. counteracts sodium, DASH diet target"}',
-    '},',
-    '"meal_plan":{',
-    '  "overview":"diet approach name",',
-    '  "breakfast":{"description":"what to eat","example":"specific meal","cal":400,"protein":20,"carbs":50,"fat":12},',
-    '  "lunch":{"description":"what to eat","example":"specific meal","cal":500,"protein":35,"carbs":45,"fat":16},',
-    '  "dinner":{"description":"what to eat","example":"specific meal","cal":550,"protein":40,"carbs":50,"fat":18},',
-    '  "snacks":{"description":"snack guidance","example":"specific snacks","cal":300,"protein":15,"carbs":35,"fat":10}',
-    '},',
-    '"workout_plan":{',
-    '  "overview":"training approach",',
-    '  "frequency":"X days/week",',
-    '  "cardio":{"type":"modalities","intensity":"% max HR","duration":"X min","frequency":"Xx/week","why":"clinical evidence e.g. reduces systolic BP 5-8 mmHg"},',
-    '  "strength":{"type":"style","sets_reps":"X x X","frequency":"Xx/week","exercises":["ex1","ex2","ex3","ex4","ex5"],"why":"clinical reason","precautions":"safety notes"},',
-    '  "avoid":["avoid item + reason"],',
-    '  "progression":"how to progress safely"',
-    '},',
-    '"lifestyle_tips":[{"tip":"actionable tip","why":"clinical reason"}]',
-    '}'
-  ].join('\n');
+  const prompt = 'You are a clinical dietitian and certified personal trainer. User profile: "'+input+'".\n\n'
+    +'Create a COMPREHENSIVE health plan. Every single nutrition goal must have a clinical reason.\n\n'
+    +'Return ONLY JSON (no other text):\n'
+    +'{\n'
+    +'"conditions": ["list all identified conditions, goals, and relevant factors"],\n'
+    +'"summary": "3-4 sentence overview of their situation, key risks, and overall strategy",\n'
+    +'"nutrition_goals": {\n'
+    +'  "calories": {"value": 1500, "reason": "Specific reason based on their profile — e.g. 1500 kcal creates a 500-700 cal deficit for 1-1.5 lb/week loss at their height/activity level"},\n'
+    +'  "protein": {"value": 130, "reason": "At 5ft11 aiming to lose 20 lbs, 0.8-1g per lb of goal body weight preserves muscle during deficit"},\n'
+    +'  "carbs": {"value": 150, "reason": "Reason specific to their conditions"},\n'
+    +'  "fat": {"value": 55, "reason": "Reason specific to their conditions"},\n'
+    +'  "fiber": {"value": 30, "reason": "Reason specific to their conditions"},\n'
+    +'  "sugar": {"value": 25, "reason": "Reason specific to their conditions"},\n'
+    +'  "sodium": {"value": 1500, "reason": "Reason specific to their conditions — critical for high BP"},\n'
+    +'  "potassium": {"value": 4700, "reason": "Reason specific to their conditions"}\n'
+    +'},\n'
+    +'"meal_plan": {\n'
+    +'  "overview": "Diet approach name and why — e.g. DASH diet because...",\n'
+    +'  "breakfast": {"description": "What to eat and why", "example": "Specific meal example with portions", "cal": 375, "protein": 30, "carbs": 40, "fat": 12},\n'
+    +'  "lunch": {"description": "What to eat and why", "example": "Specific meal example", "cal": 450, "protein": 35, "carbs": 45, "fat": 14},\n'
+    +'  "dinner": {"description": "What to eat and why", "example": "Specific meal example", "cal": 500, "protein": 40, "carbs": 45, "fat": 16},\n'
+    +'  "snacks": {"description": "What to snack on and why", "example": "Specific snack examples", "cal": 175, "protein": 10, "carbs": 20, "fat": 6}\n'
+    +'},\n'
+    +'"saved_meals": [\n'
+    +'  {"name": "DASH Oatmeal Bowl", "meal_type": "Breakfast", "cal": 375, "protein": 15, "carbs": 52, "fat": 10, "fiber": 6, "sodium": 120, "description": "Oatmeal, blueberries, walnuts, low-fat milk"},\n'
+    +'  {"name": "Salmon Power Salad", "meal_type": "Lunch", "cal": 440, "protein": 38, "carbs": 28, "fat": 18, "fiber": 8, "sodium": 380, "description": "Grilled salmon, mixed greens, avocado, olive oil"},\n'
+    +'  {"name": "Herb Chicken & Veggies", "meal_type": "Dinner", "cal": 490, "protein": 42, "carbs": 38, "fat": 14, "fiber": 7, "sodium": 420, "description": "Baked chicken breast, roasted broccoli, sweet potato"},\n'
+    +'  {"name": "Greek Yogurt Parfait", "meal_type": "Snack", "cal": 180, "protein": 14, "carbs": 22, "fat": 4, "fiber": 2, "sodium": 65, "description": "Nonfat Greek yogurt, berries, honey"},\n'
+    +'  {"name": "Turkey Lettuce Wraps", "meal_type": "Lunch", "cal": 320, "protein": 30, "carbs": 18, "fat": 12, "fiber": 4, "sodium": 410, "description": "Ground turkey, lettuce, tomato, hummus"},\n'
+    +'  {"name": "Banana Almond Smoothie", "meal_type": "Snack", "cal": 210, "protein": 12, "carbs": 30, "fat": 6, "fiber": 4, "sodium": 80, "description": "Banana, almond butter, low-fat milk, spinach"}\n'
+    +'],\n'
+    +'"workout_plan": {\n'
+    +'  "overview": "Specific plan for their fitness level and conditions",\n'
+    +'  "frequency": "X days per week",\n'
+    +'  "cardio": {"type": "Specific types", "intensity": "Specific intensity with HR target", "duration": "X min", "frequency": "Xx/week", "why": "Clinical reason specific to their BP and weight loss goal"},\n'
+    +'  "strength": {"type": "Type of training", "sets_reps": "X sets x X reps", "frequency": "Xx/week", "exercises": ["Exercise 1","Exercise 2","Exercise 3","Exercise 4","Exercise 5"], "why": "Clinical reason", "precautions": "Any precautions for their conditions"},\n'
+    +'  "avoid": ["Specific things to avoid given their conditions"],\n'
+    +'  "progression": "How to safely progress over 4-8 weeks"\n'
+    +'},\n'
+    +'"foods_to_prioritize": ["food 1 + why","food 2 + why","food 3 + why","food 4 + why","food 5 + why"],\n'
+    +'"foods_to_limit": ["food 1 + why","food 2 + why","food 3 + why"],\n'
+    +'"lifestyle_tips": ["tip 1 specific to their profile","tip 2","tip 3","tip 4"]\n'
+    +'}';
 
   try {
     const res = await callClaude({model:'claude-sonnet-4-20250514', max_tokens:4000, messages:[{role:'user',content:prompt}]});
@@ -1746,17 +1727,33 @@ async function generateHealthRecs(){
     if(result.nutrition_goals){
       const g = getGoals();
       Object.entries(result.nutrition_goals).forEach(function(kv){
-        if(kv[1] && typeof kv[1]==='object' && kv[1].value > 0) g[kv[0]] = kv[1].value;
-        else if(kv[1] && typeof kv[1]==='number' && kv[1] > 0) g[kv[0]] = kv[1];
+        if(kv[1]&&kv[1].value>0) g[kv[0]] = kv[1].value;
       });
       localStorage.setItem('gn_goals', JSON.stringify(g));
+    }
+
+    // Save meals to recipes
+    if(result.saved_meals && result.saved_meals.length){
+      const existing = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
+      result.saved_meals.forEach(function(m){
+        if(!existing.find(function(e){return e.name===m.name;})){
+          existing.push({
+            name: m.name,
+            cal: m.cal||0, protein: m.protein||0, carbs: m.carbs||0,
+            fat: m.fat||0, fiber: m.fiber||0, sodium: m.sodium||0,
+            description: m.description||'', meal_type: m.meal_type||'',
+            from_health_ai: true
+          });
+        }
+      });
+      localStorage.setItem('gn_recipes', JSON.stringify(existing));
     }
 
     const html = buildHealthResultHTML(result);
     localStorage.setItem('gn_health_profile', JSON.stringify({rawText:input, summary:result.summary, renderedHTML:html}));
     status.textContent = '';
     document.getElementById('health-result').innerHTML = html;
-    showToast('\u2713 Goals updated!');
+    showToast('\u2713 Goals updated + '+((result.saved_meals&&result.saved_meals.length)||0)+' meals saved to Recipes!', 3000);
   } catch(e){
     status.textContent = '\u2717 Failed. Try again.';
     console.error(e);
@@ -1780,27 +1777,31 @@ function buildHealthResultHTML(r){
   // Nutrition Goals with reasoning for EVERY goal
   if(r.nutrition_goals){
     var g = r.nutrition_goals;
-    var labels = {calories:'Calories',protein:'Protein',carbs:'Carbs',fat:'Fat',fiber:'Fiber',sugar:'Sugar',sodium:'Sodium',potassium:'Potassium'};
-    var units = {calories:'kcal',protein:'g',carbs:'g',fat:'g',fiber:'g',sugar:'g',sodium:'mg',potassium:'mg'};
-    var colors = {calories:'var(--text)',protein:'var(--protein)',carbs:'var(--carbs)',fat:'var(--fat)',fiber:'var(--fiber)',sugar:'var(--sugar)',sodium:'#94a3b8',potassium:'#34d399'};
+    var goalColors = {calories:'var(--text)',protein:'var(--protein)',carbs:'var(--carbs)',fat:'var(--fat)',fiber:'var(--fiber)',sugar:'var(--sugar)',sodium:'#94a3b8',potassium:'#34d399'};
+    var goalUnits = {calories:'kcal',protein:'g',carbs:'g',fat:'g',fiber:'g',sugar:'g',sodium:'mg',potassium:'mg'};
+    var goalLabels = {calories:'Calories',protein:'Protein',carbs:'Carbs',fat:'Fat',fiber:'Fiber',sugar:'Sugar',sodium:'Sodium',potassium:'Potassium'};
     html += '<div class="card" style="margin-top:10px;">'
-      +'<div class="card-title">\ud83c\udfaf Nutrition Goals \u2014 Clinical Reasoning</div>'
-      +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Goals updated in your app. Tap any goal to see why.</div>'
-      +Object.entries(g).map(function(kv){
-        var val = (kv[1]&&typeof kv[1]==='object') ? kv[1].value : kv[1];
-        var why = (kv[1]&&typeof kv[1]==='object') ? kv[1].why : null;
-        var color = colors[kv[0]]||'var(--accent2)';
-        return '<div style="padding:11px 0;border-bottom:1px solid var(--border);">'
-          +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:'+(why?'6px':'0')+'">'
-          +'<div style="font-size:14px;font-weight:700;">'+( labels[kv[0]]||kv[0] )+'</div>'
-          +'<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:'+color+';">'+val
-          +'<span style="font-size:11px;font-weight:400;color:var(--muted);"> '+(units[kv[0]]||'')+'/day</span></div>'
-          +'</div>'
-          +(why ? '<div style="font-size:12px;color:var(--muted);line-height:1.6;background:var(--bg4);border-radius:8px;padding:8px 10px;">\ud83e\udea7 '+why+'</div>' : '')
-          +'</div>';
-      }).join('')
-      +'</div>';
+      +'<div class="card-title">\ud83c\udfaf Your Personalized Nutrition Goals</div>'
+      +'<div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Every goal is based on your specific health profile and conditions.</div>';
+    Object.entries(g).forEach(function(kv){
+      var key = kv[0], val = kv[1];
+      var numVal = typeof val === 'object' ? val.value : val;
+      var reason = typeof val === 'object' ? val.reason : null;
+      var color = goalColors[key]||'var(--accent2)';
+      var unit = goalUnits[key]||'';
+      var label = goalLabels[key]||key;
+      html += '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+        +'<div style="font-size:14px;font-weight:700;">'+label+'</div>'
+        +'<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:'+color+';">'+numVal+'<span style="font-size:11px;font-weight:500;color:var(--muted);"> '+unit+'/day</span></div>'
+        +'</div>'
+        +(reason ? '<div style="font-size:12px;color:var(--muted);line-height:1.5;">\ud83d\udca1 '+reason+'</div>' : '')
+        +'</div>';
+    });
+    html += '</div>';
   }
+
+  // Meal Plan
   if(r.meal_plan){
     var mp = r.meal_plan;
     var mealEmojis = {breakfast:'\ud83c\udf05',lunch:'\u2600\ufe0f',dinner:'\ud83c\udf19',snacks:'\ud83c\udf4e'};
