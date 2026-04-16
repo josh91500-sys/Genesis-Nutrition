@@ -432,6 +432,11 @@ select option{background:var(--bg2);}
           <div class="more-label">Planner</div>
           <div class="more-sub">Meal plan & water</div>
         </div>
+        <div class="more-item" onclick="showSubPage('mealplan')">
+          <div class="more-icon">🍽️</div>
+          <div class="more-label">Meal Plan</div>
+          <div class="more-sub">From Health AI</div>
+        </div>
 
         <div class="more-item" onclick="showSubPage('health')">
           <div class="more-icon">🩺</div>
@@ -675,12 +680,14 @@ function showPage(name, btn){
 
 function showSubPage(name){
   const el = document.getElementById('sub-page-content');
+  if(name==='weight'){ showWeightTracker(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
+  if(name==='health' && !isPro()){ showPaywall('Health AI'); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   const pages = {
     planner: renderPlannerSubPage,
-    fitness: renderFitnessSubPage,
     health: renderHealthSubPage,
     goals: renderGoalsSubPage,
     recipes: renderRecipesSubPage,
+    mealplan: renderMealPlanSubPage,
   };
   if(pages[name]) pages[name](el);
   el.scrollIntoView({behavior:'smooth',block:'start'});
@@ -1667,1435 +1674,374 @@ async function generateHealthRecs(){
   const input = document.getElementById('health-input').value.trim();
   if(!input) return;
   const status = document.getElementById('health-status');
+  const btn = document.getElementById('health-btn');
+  if(btn){ btn.disabled=true; btn.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>'; }
   status.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  try {
-    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:
-      `Clinical nutrition AI. User: "${input}". Return ONLY JSON:
-{"conditions":["list"],"summary":"2 sentence clinical summary","recommendations":[{"nutrient":"Sodium","direction":"decrease","recommended":1500,"unit":"mg","why":"Clinical explanation with mechanism","study_title":"Real study title","study_url":"https://pubmed.ncbi.nlm.nih.gov/PMID"}],"suggested_goals":{"calories":1800,"protein":120,"carbs":180,"fat":60,"fiber":30,"sugar":25,"sodium":1500,"potassium":4700,"vitc":90,"iron":18,"calcium":1000,"vitd":20}}`}]});
-    const data = await res.json();
-    const text = data.content?.[0]?.text||'';
-    const match = text.match(/\{[\s\S]*\}/);
-    if(!match) throw new Error();
-    const result = JSON.parse(match[0]);
-    localStorage.setItem('gn_health_profile',JSON.stringify({rawText:input,...result}));
-    if(result.suggested_goals){
-      const g = loadGoals();
-      Object.entries(result.suggested_goals).forEach(([k,v])=>{ if(v>0) g[k]=v; });
-      localStorage.setItem('gn_goals',JSON.stringify(g));
-    }
-    status.textContent='✓ Goals updated!';
-    const el = document.getElementById('health-result');
-    el.innerHTML = `<div style="margin-top:10px;padding:12px;background:var(--bg4);border-radius:var(--r1);">
-      <div style="font-size:13px;line-height:1.6;margin-bottom:10px;">${result.summary||''}</div>
-      ${(result.recommendations||[]).map(r=>`
-        <div style="padding:10px 0;border-top:1px solid var(--border);">
-          <div style="font-size:13px;font-weight:700;margin-bottom:4px;">${r.direction==='decrease'?'↓ Decrease':'↑ Increase'} ${r.nutrient} → ${r.recommended}${r.unit}</div>
-          <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px;">${r.why}</div>
-          ${r.study_url?`<a href="${r.study_url}" target="_blank" style="font-size:11px;color:var(--accent2);">📄 ${r.study_title} →</a>`:''}
-        </div>`).join('')}
-    </div>`;
-  } catch(e){ status.textContent='✗ Failed. Try again.'; }
-}
 
-function renderRecipesSubPage(el){
-  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  el.innerHTML = `<div class="card">
-    <div class="card-title">👨‍🍳 My Recipes</div>
-    <button class="btn-primary" onclick="showCreateRecipe()">＋ Create Recipe</button>
-    ${recipes.length?recipes.map((r,i)=>`
-      <div style="padding:12px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-        <div><div style="font-size:14px;font-weight:600;">${r.name}</div><div style="font-size:11px;color:var(--muted);">${Math.round(r.cal)} kcal · ${r.ingredients?.length||0} ingredients</div></div>
-        <div style="display:flex;gap:6px;">
-          <button onclick="addRecipeToLog(${i})" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">＋ Log</button>
-          <button onclick="deleteRecipe(${i})" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">×</button>
-        </div>
-      </div>`).join(''):'<div style="font-size:13px;color:var(--muted);margin-top:10px;">No recipes yet.</div>'}
-  </div>
-  <div id="recipe-create-form"></div>`;
-}
-
-function showCreateRecipe(){
-  const el = document.getElementById('recipe-create-form');
-  el.innerHTML = `<div class="card">
-    <div class="card-title">New Recipe</div>
-    <div class="input-group"><label class="input-label">Recipe Name</label><input type="text" id="rc-name" placeholder="e.g. My Protein Bowl"></div>
-    <div class="input-row">
-      <div class="input-group"><label class="input-label">Calories</label><input type="number" id="rc-cal" placeholder="0"></div>
-      <div class="input-group"><label class="input-label">Protein (g)</label><input type="number" id="rc-protein" placeholder="0"></div>
-    </div>
-    <div class="input-row">
-      <div class="input-group"><label class="input-label">Carbs (g)</label><input type="number" id="rc-carbs" placeholder="0"></div>
-      <div class="input-group"><label class="input-label">Fat (g)</label><input type="number" id="rc-fat" placeholder="0"></div>
-    </div>
-    <button class="btn-primary" onclick="saveRecipe()">Save Recipe</button>
-  </div>`;
-}
-
-function saveRecipe(){
-  const name = document.getElementById('rc-name').value.trim();
-  if(!name) return;
-  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  recipes.push({name, cal:parseFloat(document.getElementById('rc-cal').value)||0,
-    protein:parseFloat(document.getElementById('rc-protein').value)||0,
-    carbs:parseFloat(document.getElementById('rc-carbs').value)||0,
-    fat:parseFloat(document.getElementById('rc-fat').value)||0});
-  localStorage.setItem('gn_recipes',JSON.stringify(recipes));
-  showToast('✓ Recipe saved!');
-  renderRecipesSubPage(document.getElementById('sub-page-content'));
-}
-
-function addRecipeToLog(idx){
-  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  const r = recipes[idx];
-  if(!r) return;
-  const log = loadDayLog(dayOffset);
-  log.foods.push({meal:'Snacks',name:r.name,cal:r.cal,protein:r.protein,carbs:r.carbs,fat:r.fat,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:100,id:Date.now()});
-  saveDayLog(log, dayOffset);
-  showToast('✓ '+r.name+' added');
-}
-
-function deleteRecipe(idx){
-  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  recipes.splice(idx,1);
-  localStorage.setItem('gn_recipes',JSON.stringify(recipes));
-  renderRecipesSubPage(document.getElementById('sub-page-content'));
-}
-
-// ══════════════════════════════════════════════════════
-// SETTINGS
-// ══════════════════════════════════════════════════════
-function openSettings(){
-  const g = loadGoals();
-  ['calories','protein','carbs','fat','fiber','sugar','sodium','potassium'].forEach(k=>{
-    const el = document.getElementById('g-'+k);
-    if(el) el.value = g[k]||'';
-  });
-  document.getElementById('settings-modal').classList.add('open');
-}
-function closeSettings(){ document.getElementById('settings-modal').classList.remove('open'); }
-
-// ══════════════════════════════════════════════════════
-// API
-// ══════════════════════════════════════════════════════
-async function callClaude(body){
-  return fetch('/.netlify/functions/claude', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(body)
-  });
-}
-
-// ══════════════════════════════════════════════════════
-// TOAST
-// ══════════════════════════════════════════════════════
-function showToast(msg, duration=2500){
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), duration);
-}
-
-// ══════════════════════════════════════════════════════
-// INIT
-// ══════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', ()=>{
-  renderNutrition();
-});
-</script>
-<script>
-
-function toggleMacroDetail(){
-  const el = document.getElementById('macro-detail');
-  if(!el) return;
-  const isOpen = el.style.display !== 'none';
-  el.style.display = isOpen ? 'none' : 'block';
-}
-
-
-// ══════════════════════════════════════
-// FULL NUTRIENT INFO DATABASE
-// ══════════════════════════════════════
-const NUTRIENT_INFO = {
-  // MACROS
-  calories: {name:'Calories',unit:'kcal',color:'#f0f0f8',category:'Macros',
-    role:'Primary energy source for all bodily functions.',
-    detail:'Calories fuel everything from breathing to exercise. Balance intake with expenditure for weight management.',
-    link:'https://www.hsph.harvard.edu/nutritionsource/carbohydrates/carbohydrates-and-blood-sugar/'},
-  protein: {name:'Protein',unit:'g',color:'var(--protein)',category:'Macros',
-    role:'Builds and repairs muscles, organs, skin, and hair. Essential for immune function.',
-    detail:'Made of amino acids. Complete proteins (meat, eggs, dairy) contain all 9 essential amino acids. Aim for 0.7-1g per pound of body weight if active.',
-    link:'https://www.hsph.harvard.edu/nutritionsource/what-should-you-eat/protein/'},
-  carbs: {name:'Carbohydrates',unit:'g',color:'var(--carbs)',category:'Macros',
-    role:'Primary fuel for brain and muscles during exercise.',
-    detail:'Choose complex carbs (whole grains, vegetables) over simple sugars. Fiber-rich carbs help blood sugar control.',
-    link:'https://www.hsph.harvard.edu/nutritionsource/carbohydrates/'},
-  fat: {name:'Total Fat',unit:'g',color:'var(--fat)',category:'Macros',
-    role:'Supports cell growth, hormone production, and absorption of vitamins A, D, E, K.',
-    detail:'Focus on unsaturated fats (olive oil, nuts, avocado). Limit saturated fat and avoid trans fats.',
-    link:'https://www.hsph.harvard.edu/nutritionsource/what-should-you-eat/fats-and-cholesterol/'},
-  fiber: {name:'Fiber',unit:'g',color:'var(--fiber)',category:'Macros',
-    role:'Supports digestive health, lowers cholesterol, stabilizes blood sugar.',
-    detail:'Soluble fiber (oats, beans) lowers LDL cholesterol. Insoluble fiber (vegetables, whole grains) aids digestion. Most Americans get only half the recommended amount.',
-    link:'https://www.hsph.harvard.edu/nutritionsource/carbohydrates/fiber/'},
-  sugar: {name:'Sugar',unit:'g',color:'var(--sugar)',category:'Macros',
-    role:'Quick energy source. Excess sugar linked to obesity, diabetes, and heart disease.',
-    detail:'WHO recommends less than 25g of added sugar per day. Natural sugars in fruit and dairy are less concerning than added sugars.',
-    link:'https://www.hsph.harvard.edu/nutritionsource/carbohydrates/added-sugar-in-the-diet/'},
-  sodium: {name:'Sodium',unit:'mg',color:'#94a3b8',category:'Minerals',
-    role:'Regulates fluid balance, blood pressure, and nerve/muscle function.',
-    detail:'High sodium raises blood pressure. Most Americans consume 2-3x the recommended amount. Found heavily in processed foods.',
-    link:'https://www.heart.org/en/healthy-living/healthy-eating/eat-smart/sodium/how-much-sodium-should-i-eat-per-day'},
-  potassium: {name:'Potassium',unit:'mg',color:'#34d399',category:'Minerals',
-    role:'Counteracts sodium, lowers blood pressure, supports heart and muscle function.',
-    detail:'Most people are deficient. Bananas, sweet potatoes, avocados, and beans are excellent sources. Critical for heart rhythm.',
-    link:'https://ods.od.nih.gov/factsheets/Potassium-HealthProfessional/'},
-  calcium: {name:'Calcium',unit:'mg',color:'#a78bfa',category:'Minerals',
-    role:'Builds and maintains bones and teeth. Essential for muscle contraction and nerve signals.',
-    detail:'Requires Vitamin D for absorption. Beyond dairy: leafy greens, fortified foods, sardines. Peak bone mass built before age 30.',
-    link:'https://ods.od.nih.gov/factsheets/Calcium-HealthProfessional/'},
-  iron: {name:'Iron',unit:'mg',color:'#f59e0b',category:'Minerals',
-    role:'Carries oxygen in red blood cells. Essential for energy production.',
-    detail:'Heme iron (meat) absorbs better than non-heme iron (plants). Pair plant iron with Vitamin C to boost absorption. Deficiency causes fatigue and anemia.',
-    link:'https://ods.od.nih.gov/factsheets/Iron-HealthProfessional/'},
-  magnesium: {name:'Magnesium',unit:'mg',color:'#6ee7b7',category:'Minerals',
-    role:'Involved in 300+ enzyme reactions. Supports muscle, nerve, blood sugar, and bone health.',
-    detail:'About 50% of Americans are deficient. Found in nuts, seeds, leafy greens, and whole grains. Supports sleep quality.',
-    link:'https://ods.od.nih.gov/factsheets/Magnesium-HealthProfessional/'},
-  zinc: {name:'Zinc',unit:'mg',color:'#fbbf24',category:'Minerals',
-    role:'Immune function, wound healing, DNA synthesis, and sense of taste/smell.',
-    detail:'Oysters are the richest source. Also in meat, legumes, nuts, and seeds. Deficiency impairs immune response.',
-    link:'https://ods.od.nih.gov/factsheets/Zinc-HealthProfessional/'},
-  phosphorus: {name:'Phosphorus',unit:'mg',color:'#f472b6',category:'Minerals',
-    role:'Builds bones and teeth alongside calcium. Part of ATP (cellular energy).',
-    detail:'Found in most protein-rich foods. Rarely deficient in people who eat enough protein. Works with calcium for bone density.',
-    link:'https://ods.od.nih.gov/factsheets/Phosphorus-HealthProfessional/'},
-  selenium: {name:'Selenium',unit:'mcg',color:'#38bdf8',category:'Minerals',
-    role:'Antioxidant protection, thyroid function, immune support.',
-    detail:'Brazil nuts are extremely rich — just 1-2 per day meets daily needs. Also in seafood and meat.',
-    link:'https://ods.od.nih.gov/factsheets/Selenium-HealthProfessional/'},
-  vitc: {name:'Vitamin C',unit:'mg',color:'#fb923c',category:'Vitamins',
-    role:'Antioxidant, immune support, collagen production, iron absorption.',
-    detail:'Water-soluble — not stored in body, need daily intake. Citrus, bell peppers, strawberries are top sources. Helps fight colds and heal wounds.',
-    link:'https://ods.od.nih.gov/factsheets/VitaminC-HealthProfessional/'},
-  vitd: {name:'Vitamin D',unit:'mcg',color:'#facc15',category:'Vitamins',
-    role:'Calcium absorption, bone health, immune function, mood regulation.',
-    detail:'The "sunshine vitamin" — skin makes it from UV exposure. Over 1 billion people worldwide are deficient. Essential for immune health and depression prevention.',
-    link:'https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/'},
-  vita: {name:'Vitamin A',unit:'mcg',color:'#f97316',category:'Vitamins',
-    role:'Vision (especially night vision), immune function, skin health, cell growth.',
-    detail:'Found as retinol in animal foods and beta-carotene in colorful vegetables. Sweet potato, carrots, and leafy greens are top sources.',
-    link:'https://ods.od.nih.gov/factsheets/VitaminA-HealthProfessional/'},
-  vite: {name:'Vitamin E',unit:'mg',color:'#84cc16',category:'Vitamins',
-    role:'Antioxidant that protects cells. Supports immune function and skin health.',
-    detail:'Nuts and seeds are the best sources, especially sunflower seeds and almonds. Fat-soluble — stored in body fat.',
-    link:'https://ods.od.nih.gov/factsheets/VitaminE-HealthProfessional/'},
-  vitk: {name:'Vitamin K',unit:'mcg',color:'#4ade80',category:'Vitamins',
-    role:'Blood clotting and bone metabolism. Two forms: K1 (plants) and K2 (fermented foods).',
-    detail:'Leafy greens like kale and spinach are richest in K1. K2 found in natto, cheese, eggs. People on blood thinners need consistent intake.',
-    link:'https://ods.od.nih.gov/factsheets/VitaminK-HealthProfessional/'},
-  vitb12: {name:'Vitamin B12',unit:'mcg',color:'#e879f9',category:'Vitamins',
-    role:'Nerve function, red blood cell formation, DNA synthesis.',
-    detail:'Found almost exclusively in animal products. Vegans must supplement. Deficiency causes nerve damage, fatigue, and megaloblastic anemia.',
-    link:'https://ods.od.nih.gov/factsheets/VitaminB12-HealthProfessional/'},
-  vitb6: {name:'Vitamin B6',unit:'mg',color:'#c084fc',category:'Vitamins',
-    role:'Protein metabolism, neurotransmitter production (serotonin, dopamine), immune function.',
-    detail:'Found in poultry, fish, potatoes, and bananas. Important for mood regulation and brain health.',
-    link:'https://ods.od.nih.gov/factsheets/VitaminB6-HealthProfessional/'},
-  folate: {name:'Folate (B9)',unit:'mcg',color:'#f0abfc',category:'Vitamins',
-    role:'DNA synthesis, cell division, prevention of neural tube defects during pregnancy.',
-    detail:'Critical before and during pregnancy. Leafy greens, legumes, and fortified foods are top sources. Folic acid is the synthetic form in supplements.',
-    link:'https://ods.od.nih.gov/factsheets/Folate-HealthProfessional/'},
-  thiamine: {name:'Thiamine (B1)',unit:'mg',color:'#fde68a',category:'Vitamins',
-    role:'Energy metabolism from carbohydrates. Essential for nerve and heart function.',
-    detail:'Found in whole grains, legumes, and pork. Deficiency causes beriberi and Wernicke encephalopathy (common with heavy alcohol use).',
-    link:'https://ods.od.nih.gov/factsheets/Thiamin-HealthProfessional/'},
-  riboflavin: {name:'Riboflavin (B2)',unit:'mg',color:'#fcd34d',category:'Vitamins',
-    role:'Energy production, cell growth, fat metabolism, antioxidant activity.',
-    detail:'Milk and dairy are top sources. Excess is excreted in urine (turns it bright yellow). Helps prevent migraines.',
-    link:'https://ods.od.nih.gov/factsheets/Riboflavin-HealthProfessional/'},
-  niacin: {name:'Niacin (B3)',unit:'mg',color:'#fdba74',category:'Vitamins',
-    role:'Energy metabolism, DNA repair, skin health.',
-    detail:'High doses lower LDL cholesterol. Meat, poultry, and fish are top sources. Deficiency causes pellagra (dermatitis, diarrhea, dementia).',
-    link:'https://ods.od.nih.gov/factsheets/Niacin-HealthProfessional/'},
-  pantothenic: {name:'Pantothenic Acid (B5)',unit:'mg',color:'#fef08a',category:'Vitamins',
-    role:'Converts food to energy. Required for hormone and cholesterol synthesis.',
-    detail:'Widely distributed in food — "pantothenic" means "from everywhere." Deficiency is rare.',
-    link:'https://ods.od.nih.gov/factsheets/PantothenicAcid-HealthProfessional/'},
-  biotin: {name:'Biotin (B7)',unit:'mcg',color:'#d9f99d',category:'Vitamins',
-    role:'Fat, carbohydrate, and protein metabolism. Supports hair, skin, and nail health.',
-    detail:'Eggs (cooked), nuts, seeds, and liver are top sources. Popular supplement for hair growth, though evidence is mainly for people with deficiency.',
-    link:'https://ods.od.nih.gov/factsheets/Biotin-HealthProfessional/'},
-  choline: {name:'Choline',unit:'mg',color:'#99f6e4',category:'Vitamins',
-    role:'Brain development, nerve function, fat metabolism, liver health.',
-    detail:'Eggs are the richest source — one egg provides ~150mg. Essential during pregnancy for fetal brain development. Most people do not get enough.',
-    link:'https://ods.od.nih.gov/factsheets/Choline-HealthProfessional/'},
-};
-
-// Default daily values for display
-const DAILY_VALUES = {
-  calories:2000, protein:50, carbs:275, fat:78, fiber:28, sugar:50,
-  sodium:2300, potassium:4700, calcium:1300, iron:18, magnesium:420,
-  zinc:11, phosphorus:1250, selenium:55,
-  vitc:90, vitd:20, vita:900, vite:15, vitk:120, vitb12:2.4,
-  vitb6:1.7, folate:400, thiamine:1.2, riboflavin:1.3, niacin:16,
-  pantothenic:5, biotin:30, choline:550
-};
-
-function showNutritionDetail(){
-  const log = loadDayLog(dayOffset);
-  const t = getTotals(log.foods||[]);
-  const goals = loadGoals();
-
-  const dayEl = document.getElementById('detail-day-label');
-  if(dayEl) dayEl.textContent = dayOffset===0?'Today':dayOffset===-1?'Yesterday':
-    new Date(dateKey(dayOffset)+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
-
-  const totals = {};
-  (log.foods||[]).forEach(f=>{
-    Object.keys(NUTRIENT_INFO).forEach(k=>{
-      totals[k] = (totals[k]||0) + (parseFloat(f[k])||0);
-    });
-    totals.calories = (totals.calories||0) + (parseFloat(f.cal)||0);
-  });
-
-  const el = document.getElementById('nutrition-detail-content');
-  const categories = ['Macros','Minerals','Vitamins'];
-  const goalMap = {...DAILY_VALUES, ...goals, calories:goals.calories||2000};
-
-  let html = '';
-
-  const calPct = Math.min(100,(totals.calories/(goalMap.calories||2000))*100);
-  const calOver = totals.calories > goalMap.calories;
-  html += '<div style="margin:12px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:16px;text-align:center;">'
-    + '<div style="font-family:Syne,sans-serif;font-size:56px;font-weight:800;line-height:1;">' + Math.round(totals.calories||0) + '</div>'
-    + '<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">calories eaten today</div>'
-    + '<div style="height:8px;background:var(--bg5);border-radius:99px;overflow:hidden;margin-bottom:6px;">'
-    + '<div style="height:100%;width:'+calPct+'%;background:'+(calOver?'#ff6b6b':'var(--accent)')+';border-radius:99px;"></div></div>'
-    + '<div style="font-size:13px;color:'+(calOver?'#ff6b6b':'var(--fiber)')+';">'
-    + (calOver ? '+'+Math.round(totals.calories-goalMap.calories)+' over goal' : Math.round(goalMap.calories-totals.calories)+' remaining of '+goalMap.calories+' goal')
-    + '</div></div>';
-
-  categories.forEach(cat=>{
-    const items = Object.entries(NUTRIENT_INFO).filter(([k,v])=>v.category===cat);
-    html += '<div class="nutrient-section"><div class="nutrient-section-title">' + cat + '</div>';
-    items.forEach(([key, info])=>{
-      const val = key==='calories' ? (totals.calories||0) : (totals[key]||0);
-      const goal = goalMap[key]||DAILY_VALUES[key]||1;
-      const pct = Math.min(100,(val/goal)*100);
-      const isHigh = pct > 110;
-      const isGood = pct >= 80 && pct <= 110;
-      const statusColor = isHigh ? '#ff6b6b' : isGood ? 'var(--fiber)' : info.color;
-
-      html += '<div class="nutrient-row">'
-        + '<div class="nutrient-row-left">'
-        + '<div class="nutrient-row-name">' + info.name + '</div>'
-        + '<div class="nutrient-row-val" style="color:'+statusColor+';">' + (val>100?Math.round(val):val.toFixed(1)) + info.unit
-        + ' <span style="color:var(--muted);">/ ' + (goal>100?Math.round(goal):goal) + info.unit + '</span></div>'
-        + '</div>'
-        + '<div class="nutrient-bar-wrap">'
-        + '<div class="nutrient-bar-bg"><div class="nutrient-bar-fill" style="width:'+pct+'%;background:'+statusColor+';"></div></div>'
-        + '<div class="nutrient-pct">' + Math.round(pct) + '%</div>'
-        + '</div>'
-        + '<button class="nutrient-info-btn" data-key="'+key+'" onclick="toggleNutrientInfo(this)">ℹ️ Why</button>'
-        + '</div>'
-        + '<div class="info-panel" id="info-'+key+'">'
-        + '<strong style="color:var(--text);">Role: </strong>' + info.role + '<br><br>'
-        + '<strong style="color:var(--text);">Details: </strong>' + info.detail
-        + '<br><br><a href="'+info.link+'" target="_blank" style="color:var(--accent2);">📚 Read research →</a>'
-        + '</div>';
-    });
-    html += '</div>';
-  });
-
-  html += '<div class="nutrient-section"><div class="nutrient-section-title">Foods Logged Today</div>';
-  const foods = log.foods||[];
-  if(!foods.length){
-    html += '<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px;">No foods logged yet.</div>';
-  } else {
-    foods.forEach(f=>{
-      html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">'
-        + '<div><div style="font-size:13px;font-weight:600;">' + f.name + '</div>'
-        + '<div style="font-size:11px;color:var(--muted);">' + f.meal + ' · P '+(f.protein||0).toFixed(0)+'g · C '+(f.carbs||0).toFixed(0)+'g · F '+(f.fat||0).toFixed(0)+'g</div></div>'
-        + '<div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;">' + Math.round(f.cal||0) + '</div>'
-        + '</div>';
-    });
-  }
-  html += '</div>';
-
-  el.innerHTML = html;
-
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.getElementById('page-nutrition-detail').classList.add('active');
-}
-
-function toggleNutrientInfo(btn){
-  const key = btn.dataset.key;
-  const panel = document.getElementById('info-'+key);
-  if(!panel) return;
-  const isOpen = panel.classList.contains('open');
-  document.querySelectorAll('.info-panel.open').forEach(p=>p.classList.remove('open'));
-  document.querySelectorAll('.nutrient-info-btn').forEach(b=>b.textContent='ℹ️ Why');
-  if(!isOpen){
-    panel.classList.add('open');
-    btn.textContent = '✕ Close';
-    panel.scrollIntoView({behavior:'smooth',block:'nearest'});
-  }
-}
-
-// ══════════════════════════════════════
-// RESTAURANT NUTRITION SEARCH
-// ══════════════════════════════════════
-let restaurantResults = [];
-
-async function doRestaurantSearch(){
-  const query = document.getElementById('restaurant-input').value.trim();
-  if(!query) return;
-  const status = document.getElementById('restaurant-status');
-  const results = document.getElementById('restaurant-results');
-  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  results.innerHTML = '';
-
-  const prompt = `You are a nutrition database with access to official restaurant nutrition guides.
-
-The user is searching for: "${query}"
-
-Using your knowledge of official restaurant nutrition guides (published on restaurant websites and FDA nutrition disclosures), return the EXACT nutrition facts for this item as listed in the official nutrition guide.
-
-Important rules:
-- Use ONLY official nutrition guide values, not estimates
-- If the item has size options (small/medium/large), return all sizes
-- If sauce/dressing is separate, list it separately
-- Be specific about serving size (e.g. "1 sandwich", "6 wings", "bowl")
-- If you don't have reliable official data for this exact item, say so clearly
-
-Return ONLY a JSON array:
-[{
-  "name": "exact item name as listed in nutrition guide",
-  "restaurant": "restaurant name",
-  "serving_desc": "serving size description",
-  "serving_g": 0,
-  "cal": 0,
-  "protein": 0,
-  "carbs": 0,
-  "fat": 0,
-  "fiber": 0,
-  "sugar": 0,
-  "sodium": 0,
-  "source": "Official nutrition guide" or "Estimated - verify at restaurant"
-}]`;
+  const prompt = 'You are a clinical dietitian and certified personal trainer. User profile: "'+input+'".\n\n'
+    +'Create a comprehensive, fully detailed health plan. Be specific about WHY each goal is set — every single number must have a clinical reason.\n\n'
+    +'Return ONLY this JSON structure (no other text):\n'
+    +'{\n'
+    +'"conditions": ["list conditions, goals, stats identified"],\n'
+    +'"summary": "3-4 sentence clinical overview addressing their specific situation including calorie deficit math, BP context, weight loss rate etc",\n'
+    +'"nutrition_goals": {\n'
+    +'"calories": 1500,\n'
+    +'"protein": 140,\n'
+    +'"carbs": 150,\n'
+    +'"fat": 50,\n'
+    +'"fiber": 30,\n'
+    +'"sugar": 25,\n'
+    +'"sodium": 1500,\n'
+    +'"potassium": 4700\n'
+    +'},\n'
+    +'"goal_reasoning": {\n'
+    +'"calories": "Exact reason — e.g. At ~2100 TDEE for sedentary 5\'11 male, 1500 cal creates 600 cal/day deficit = ~1.2 lbs/week loss toward 20 lb goal in ~17 weeks",\n'
+    +'"protein": "Exact reason — e.g. 140g (0.9g/lb goal weight) preserves muscle mass during caloric deficit; high protein increases satiety",\n'
+    +'"carbs": "Exact reason — e.g. 150g complex carbs support energy for workouts without blood sugar spikes that worsen hypertension",\n'
+    +'"fat": "Exact reason — e.g. 50g emphasizes unsaturated fats; reduces LDL which is co-risk factor with hypertension",\n'
+    +'"fiber": "Exact reason — e.g. 30g soluble fiber shown to reduce systolic BP by 2-3 mmHg; also aids satiety at calorie deficit",\n'
+    +'"sugar": "Exact reason — e.g. Under 25g added sugar; excess sugar raises BP and promotes visceral fat",\n'
+    +'"sodium": "Exact reason — e.g. 1500mg DASH diet target; every 1g sodium reduction lowers systolic BP ~2 mmHg",\n'
+    +'"potassium": "Exact reason — e.g. 4700mg counteracts sodium effects; potassium/sodium ratio key for BP control"\n'
+    +'},\n'
+    +'"meal_plan": {\n'
+    +'"overview": "Diet approach name and why — e.g. DASH + calorie deficit",\n'
+    +'"breakfast": {"description":"what to eat and why","example":"Specific food example with portions","cal":350,"protein":25,"carbs":40,"fat":10},\n'
+    +'"lunch": {"description":"what to eat and why","example":"Specific food example with portions","cal":400,"protein":35,"carbs":40,"fat":12},\n'
+    +'"dinner": {"description":"what to eat and why","example":"Specific food example with portions","cal":500,"protein":45,"carbs":50,"fat":15},\n'
+    +'"snacks": {"description":"snack strategy","example":"Specific snack examples","cal":250,"protein":15,"carbs":20,"fat":8}\n'
+    +'},\n'
+    +'"saved_meals": [\n'
+    +'{"name":"Overnight Oats","cal":380,"protein":22,"carbs":55,"fat":8,"fiber":8,"sodium":180,"description":"High fiber, low sodium breakfast"},\n'
+    +'{"name":"Grilled Salmon + Quinoa","cal":520,"protein":42,"carbs":38,"fat":18,"fiber":6,"sodium":410,"description":"Omega-3s support BP reduction"},\n'
+    +'{"name":"Turkey Veggie Bowl","cal":430,"protein":38,"carbs":45,"fat":10,"fiber":9,"sodium":380,"description":"Lean protein + high potassium veggies"},\n'
+    +'{"name":"Greek Yogurt Parfait","cal":280,"protein":20,"carbs":32,"fat":6,"fiber":4,"sodium":120,"description":"High protein snack, low sodium"}\n'
+    +'],\n'
+    +'"workout_plan": {\n'
+    +'"overview": "Plan name and clinical rationale for this person",\n'
+    +'"frequency": "X days per week breakdown",\n'
+    +'"cardio": {\n'
+    +'"type": "specific modalities",\n'
+    +'"intensity": "specific — e.g. 50-60% max HR (target HR zone for hypertension)",\n'
+    +'"duration": "time",\n'
+    +'"frequency": "X days/week",\n'
+    +'"why": "clinical reason specific to their conditions and goals"\n'
+    +'},\n'
+    +'"strength": {\n'
+    +'"type": "type of training",\n'
+    +'"sets_reps": "e.g. 3 sets of 12-15 reps",\n'
+    +'"frequency": "X days/week",\n'
+    +'"exercises": [\n'
+    +'{"name":"Goblet Squat","sets":3,"reps":"12-15","rest":"60 sec","muscle":"Legs","notes":"Large muscle group burns more calories"},\n'
+    +'{"name":"Dumbbell Row","sets":3,"reps":"12","rest":"60 sec","muscle":"Back","notes":""},\n'
+    +'{"name":"Incline Push-Up","sets":3,"reps":"15","rest":"60 sec","muscle":"Chest","notes":"Modified for beginners"},\n'
+    +'{"name":"Shoulder Press","sets":3,"reps":"12","rest":"60 sec","muscle":"Shoulders","notes":"Avoid holding breath"},\n'
+    +'{"name":"Romanian Deadlift","sets":3,"reps":"12","rest":"60 sec","muscle":"Hamstrings","notes":"Keep weight moderate"},\n'
+    +'{"name":"Plank","sets":3,"reps":"30 sec","rest":"45 sec","muscle":"Core","notes":"Builds stability"}\n'
+    +'],\n'
+    +'"why": "clinical reason",\n'
+    +'"precautions": "specific safety notes for their conditions"\n'
+    +'},\n'
+    +'"avoid": ["specific things to avoid based on their conditions"],\n'
+    +'"progression": "how to safely increase intensity over 4-8 weeks"\n'
+    +'},\n'
+    +'"nutrition_recommendations": [\n'
+    +'{"nutrient":"Sodium","direction":"decrease","target":1500,"unit":"mg","why":"full clinical explanation","foods_to_eat":["Bananas","Sweet potato","Spinach"],"foods_to_avoid":["Canned soup","Deli meat","Fast food"],"study_title":"DASH Diet and Blood Pressure","study_url":"https://pubmed.ncbi.nlm.nih.gov/9843908/"}\n'
+    +'],\n'
+    +'"lifestyle_tips": ["specific tip 1","specific tip 2","specific tip 3","specific tip 4"]\n'
+    +'}';
 
   try {
-    const res = await callClaude({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
-      messages: [{role: 'user', content: prompt}]
-    });
+    const res = await callClaude({model:'claude-sonnet-4-20250514', max_tokens:4000, messages:[{role:'user',content:prompt}]});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
-    const text = data.content?.[0]?.text || '';
-    const match = text.match(/\[[\s\S]*\]/);
-    if(!match) throw new Error('No results');
-    const foods = JSON.parse(match[0]);
-    if(!foods.length) throw new Error('Empty results');
-    restaurantResults = foods;
-    status.textContent = '✓ Found '+foods.length+' item'+(foods.length!==1?'s':'');
-    renderRestaurantResults(foods);
-  } catch(e) {
-    status.textContent = '✗ Could not find nutrition data. Try being more specific, e.g. "Big Mac" or "Chipotle chicken burrito".';
+    const text = (data.content&&data.content[0]&&data.content[0].text)||'';
+    const match = text.match(/\{[\s\S]*\}/);
+    if(!match) throw new Error('No JSON');
+    const result = JSON.parse(match[0]);
+
+    // Save nutrition goals
+    if(result.nutrition_goals){
+      const g = getGoals();
+      Object.entries(result.nutrition_goals).forEach(function(kv){ if(kv[1]>0) g[kv[0]]=kv[1]; });
+      localStorage.setItem('gn_goals', JSON.stringify(g));
+    }
+
+    // Save meals to recipes
+    if(result.saved_meals && result.saved_meals.length){
+      const existing = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
+      result.saved_meals.forEach(function(m){
+        if(!existing.find(function(e){return e.name===m.name;})){
+          existing.push({name:m.name,cal:m.cal,protein:m.protein,carbs:m.carbs,fat:m.fat,fiber:m.fiber||0,sodium:m.sodium||0,description:m.description||''});
+        }
+      });
+      localStorage.setItem('gn_recipes', JSON.stringify(existing));
+    }
+
+    // Save workout suggestions
+    if(result.workout_plan && result.workout_plan.strength && result.workout_plan.strength.exercises){
+      localStorage.setItem('gn_ai_workout', JSON.stringify({
+        name: result.workout_plan.overview,
+        exercises: result.workout_plan.strength.exercises,
+        cardio: result.workout_plan.cardio,
+        savedAt: new Date().toISOString()
+      }));
+    }
+
+    const html = buildHealthResultHTML(result);
+    localStorage.setItem('gn_health_profile', JSON.stringify({rawText:input, summary:result.summary, renderedHTML:html}));
+    status.textContent = '';
+    document.getElementById('health-result').innerHTML = html;
+    if(btn){ btn.disabled=false; btn.innerHTML='\ud83e\udd16 Generate Full Health Plan'; }
+    showToast('\u2713 Goals updated! Meals saved to Recipes!', 3000);
+  } catch(e){
+    status.textContent = '\u2717 Failed. Try again.';
+    if(btn){ btn.disabled=false; btn.innerHTML='\ud83e\udd16 Generate Full Health Plan'; }
   }
 }
 
-function renderRestaurantResults(foods){
-  const el = document.getElementById('restaurant-results');
-  el.innerHTML = foods.map((f, idx) => {
-    const isOfficial = f.source && f.source.toLowerCase().includes('official');
-    return '<div class="food-card">'
-      + '<div class="food-card-top">'
-      + '<div>'
-      + '<div style="font-size:10px;color:var(--accent2);font-weight:700;margin-bottom:2px;">🍽️ ' + (f.restaurant||'') + '</div>'
-      + '<div class="food-card-name">' + f.name + '</div>'
-      + '<div style="margin-top:4px;">'
-      + '<span class="' + (isOfficial?'verified-badge':'ai-badge') + '">'
-      + (isOfficial ? '✓ Official Guide' : '⚠️ Estimate') + '</span>'
-      + '</div>'
-      + '</div>'
-      + '<div style="text-align:right;">'
-      + '<div class="food-card-val">' + Math.round(f.cal||0) + '</div>'
-      + '<div class="food-card-unit">kcal</div>'
-      + '</div>'
-      + '</div>'
-      + '<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">' + (f.serving_desc||'') + '</div>'
-      + '<div class="food-card-macros">'
-      + '<span class="fmacro" style="color:var(--protein)">P ' + (f.protein||0).toFixed(0) + 'g</span>'
-      + '<span class="fmacro" style="color:var(--carbs)">C ' + (f.carbs||0).toFixed(0) + 'g</span>'
-      + '<span class="fmacro" style="color:var(--fat)">F ' + (f.fat||0).toFixed(0) + 'g</span>'
-      + (f.fiber>0 ? '<span class="fmacro" style="color:var(--fiber)">Fi ' + (f.fiber||0).toFixed(0) + 'g</span>' : '')
-      + '<span class="fmacro">Na ' + Math.round(f.sodium||0) + 'mg</span>'
-      + '</div>'
-      + (!isOfficial ? '<div style="font-size:11px;color:var(--sugar);margin:6px 0;">⚠️ Could not verify from official guide — confirm on restaurant website or app before logging.</div>' : '')
-      + '<button class="food-card-add" style="margin-top:8px;" data-idx="'+idx+'" onclick="addRestaurantFood('+idx+')">＋ Add to Today</button>'
-      + '</div>';
-  }).join('');
-}
+function buildHealthResultHTML(r){
+  var html = '';
 
-function addRestaurantFood(idx){
-  const f = restaurantResults[idx];
-  if(!f) return;
-  const log = loadDayLog(dayOffset);
-  log.foods.push({
-    meal: 'Dinner',
-    name: f.name,
-    cal: parseFloat(f.cal)||0,
-    protein: parseFloat(f.protein)||0,
-    carbs: parseFloat(f.carbs)||0,
-    fat: parseFloat(f.fat)||0,
-    fiber: parseFloat(f.fiber)||0,
-    sugar: parseFloat(f.sugar)||0,
-    sodium: parseFloat(f.sodium)||0,
-    potassium: 0, vitc:0, iron:0, calcium:0, vitd:0,
-    serving: parseFloat(f.serving_g)||100,
-    verified: !!(f.source && f.source.toLowerCase().includes('official')),
-    ai_sourced: !f.source || !f.source.toLowerCase().includes('official'),
-    id: Date.now()
-  });
-  saveDayLog(log, dayOffset);
-  showToast('✓ ' + f.name + ' added');
-}
+  // Summary banner
+  html += '<div style="background:var(--bg4);border-radius:var(--r2);padding:14px;margin-top:12px;">'
+    +'<div style="font-size:13px;line-height:1.7;margin-bottom:10px;">'+r.summary+'</div>'
+    +(r.conditions&&r.conditions.length?'<div style="display:flex;flex-wrap:wrap;gap:6px;">'
+      +r.conditions.map(function(c){return '<span style="background:rgba(99,87,255,.2);color:var(--accent2);border-radius:99px;padding:3px 10px;font-size:11px;font-weight:600;">'+c+'</span>';}).join('')
+      +'</div>':'')
+    +'</div>';
 
-// ═══════════════════════════════════════
-// BARCODE SCANNER (html5-qrcode)
-// ═══════════════════════════════════════
-var barcodeScanner = null;
-
-function startBarcodeScanner(){
-  var wrap = document.getElementById('barcode-scanner-wrap');
-  var btn = document.getElementById('start-scanner-btn');
-  if(wrap) wrap.style.display = 'block';
-  if(btn) btn.style.display = 'none';
-  document.getElementById('barcode-status').textContent = 'Point camera at barcode...';
-
-  try {
-    barcodeScanner = new Html5Qrcode('barcode-reader');
-    barcodeScanner.start(
-      {facingMode:'environment'},
-      {fps:10, qrbox:{width:250,height:150}},
-      function(decodedText){
-        stopBarcodeScanner();
-        document.getElementById('barcode-status').textContent = 'Found: '+decodedText+' — looking up...';
-        lookupUPCCode(decodedText.replace(/[^0-9]/g,''));
-      },
-      function(err){}
-    ).catch(function(e){
-      document.getElementById('barcode-status').textContent = 'Camera not available. Enter UPC manually below.';
-      if(wrap) wrap.style.display='none';
-      if(btn) btn.style.display='block';
+  // Nutrition Goals with reasoning
+  if(r.nutrition_goals && r.goal_reasoning){
+    var g=r.nutrition_goals, gr=r.goal_reasoning;
+    var colors={calories:'var(--text)',protein:'var(--protein)',carbs:'var(--carbs)',fat:'var(--fat)',fiber:'var(--fiber)',sugar:'var(--sugar)',sodium:'#94a3b8',potassium:'#34d399'};
+    var units={calories:'kcal',protein:'g',carbs:'g',fat:'g',fiber:'g',sugar:'g',sodium:'mg',potassium:'mg'};
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83c\udfaf Your Daily Goals — With Reasoning</div>';
+    Object.keys(g).forEach(function(k){
+      var val=g[k], reason=gr[k]||'', color=colors[k]||'var(--text)', unit=units[k]||'';
+      html += '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+        +'<span style="font-size:14px;font-weight:700;text-transform:capitalize;">'+k+'</span>'
+        +'<span style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:'+color+';">'+val+'<span style="font-size:11px;font-weight:500;color:var(--muted);"> '+unit+'</span></span>'
+        +'</div>'
+        +(reason?'<div style="font-size:12px;color:var(--muted);line-height:1.6;background:var(--bg4);border-radius:8px;padding:8px 10px;">'+reason+'</div>':'')
+        +'</div>';
     });
-  } catch(e){
-    document.getElementById('barcode-status').textContent = 'Scanner not available. Enter UPC number manually below.';
-    if(wrap) wrap.style.display='none';
-    if(btn) btn.style.display='block';
+    html += '</div>';
   }
-}
 
-function stopBarcodeScanner(){
-  if(barcodeScanner){
-    barcodeScanner.stop().catch(function(){});
-    barcodeScanner = null;
+  // Meal Plan
+  if(r.meal_plan){
+    var mp=r.meal_plan;
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83c\udf7d\ufe0f Meal Plan — '+mp.overview+'</div>'
+      +['breakfast','lunch','dinner','snacks'].map(function(meal){
+        var m=mp[meal]; if(!m) return '';
+        var emojis={breakfast:'\ud83c\udf05',lunch:'\u2600\ufe0f',dinner:'\ud83c\udf19',snacks:'\ud83c\udf4e'};
+        return '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
+          +'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+          +'<span style="font-size:13px;font-weight:700;">'+(emojis[meal]||'')+' '+meal.charAt(0).toUpperCase()+meal.slice(1)+'</span>'
+          +'<span style="font-size:12px;color:var(--accent2);">'+m.cal+' kcal</span></div>'
+          +'<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">'+m.description+'</div>'
+          +'<div style="font-size:12px;color:var(--text);font-style:italic;margin-bottom:4px;">'+m.example+'</div>'
+          +'<div style="font-size:11px;color:var(--muted);">P '+m.protein+'g · C '+m.carbs+'g · F '+m.fat+'g</div></div>';
+      }).join('')+'</div>';
   }
-  var wrap = document.getElementById('barcode-scanner-wrap');
-  var btn = document.getElementById('start-scanner-btn');
-  if(wrap) wrap.style.display='none';
-  if(btn) btn.style.display='block';
-}
 
-function lookupUPC(){
-  var upc = (document.getElementById('upc-input').value||'').trim().replace(/[^0-9]/g,'');
-  if(!upc){ showToast('Enter a UPC number'); return; }
-  lookupUPCCode(upc);
-}
+  // Saved Meals notice
+  if(r.saved_meals&&r.saved_meals.length){
+    html += '<div style="background:rgba(45,212,160,.1);border:1px solid rgba(45,212,160,.3);border-radius:var(--r2);padding:12px 14px;margin-top:10px;">'
+      +'<div style="font-size:13px;font-weight:700;color:var(--fiber);margin-bottom:6px;">\u2713 '+r.saved_meals.length+' Meals Saved to Recipes</div>'
+      +'<div style="font-size:12px;color:var(--muted);">'+r.saved_meals.map(function(m){return m.name;}).join(', ')+' — find them in More \u2192 Recipes to log anytime.</div>'
+      +'</div>';
+  }
 
-async function lookupUPCCode(upc){
-  var status = document.getElementById('barcode-status');
-  var preview = document.getElementById('barcode-preview');
-  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  preview.innerHTML = '';
+  // Workout Plan
+  if(r.workout_plan){
+    var wp=r.workout_plan;
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83d\udcaa Workout Plan</div>'
+      +'<div style="font-size:13px;line-height:1.6;color:var(--muted);margin-bottom:10px;">'+wp.overview+'</div>'
+      +'<div style="font-size:12px;color:var(--accent2);margin-bottom:12px;">\ud83d\udcc5 '+wp.frequency+'</div>';
 
-  try {
-    var r = await fetch('https://world.openfoodfacts.org/api/v0/product/'+upc+'.json');
-    var d = await r.json();
-    if(d.status===1 && d.product && d.product.product_name){
-      var p = d.product, n = p.nutriments||{};
-      var sgRaw = p.serving_size||'';
-      var sgMatch = sgRaw.match(/([\d.]+)\s*g/i);
-      var sg = sgMatch ? parseFloat(sgMatch[1]) : 100;
-      var food = {
-        name: p.product_name,
-        serving_desc: p.serving_size||'1 serving',
-        serving_g: sg,
-        cal: Math.round(n['energy-kcal_serving']||n['energy-kcal_100g']||0),
-        protein: parseFloat((n['proteins_serving']||n['proteins_100g']||0).toFixed(1)),
-        carbs: parseFloat((n['carbohydrates_serving']||n['carbohydrates_100g']||0).toFixed(1)),
-        fat: parseFloat((n['fat_serving']||n['fat_100g']||0).toFixed(1)),
-        fiber: parseFloat((n['fiber_serving']||n['fiber_100g']||0).toFixed(1)),
-        sugar: parseFloat((n['sugars_serving']||n['sugars_100g']||0).toFixed(1)),
-        sodium: Math.round((n['sodium_serving']||n['sodium_100g']||0)*1000),
-        potassium: Math.round((n['potassium_serving']||n['potassium_100g']||0)*1000),
-        vitc:0, iron:0, calcium:0, vitd:0,
-        source: 'Food Label (Barcode '+upc+')'
-      };
-      status.textContent = '';
-      showFoodPreview(food, 'barcode-preview');
-      return;
+    if(wp.cardio){
+      html += '<div style="background:var(--bg4);border-radius:12px;padding:14px;margin-bottom:10px;">'
+        +'<div style="font-size:13px;font-weight:700;color:var(--carbs);margin-bottom:6px;">\ud83c\udfc3 Cardio — '+wp.cardio.type+'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">'+wp.cardio.duration+' · '+wp.cardio.frequency+' · '+wp.cardio.intensity+'</div>'
+        +'<div style="font-size:12px;color:var(--text);line-height:1.5;">'+wp.cardio.why+'</div>'
+        +'</div>';
     }
-    throw new Error('not found');
-  } catch(e){
-    try {
-      status.textContent = 'Looking up in database...';
-      var res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:400,messages:[{role:'user',content:'What product has UPC/barcode '+upc+'? Return nutrition facts as ONLY JSON: {"name":"product name","serving_desc":"serving size","serving_g":100,"cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"source":"Barcode lookup"}. If you dont know this specific UPC, say so in the name field.'}]});
-      var data = await res.json();
-      var text = (data.content&&data.content[0]&&data.content[0].text)||'';
-      var match = text.match(/\{[\s\S]*\}/);
-      if(!match) throw new Error();
-      var food = JSON.parse(match[0]);
-      status.textContent = '';
-      showFoodPreview(food, 'barcode-preview');
-    } catch(e2){
-      status.textContent = '✗ Product not found. Try entering the UPC number manually or use Scan Label instead.';
+
+    if(wp.strength && wp.strength.exercises && wp.strength.exercises.length){
+      html += '<div style="background:var(--bg4);border-radius:12px;padding:14px;margin-bottom:10px;">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+        +'<div style="font-size:13px;font-weight:700;color:var(--protein);">\ud83c\udfcb\ufe0f Strength Training</div>'
+        +'<button onclick="addAIWorkoutToLog()" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">+ Add to Workout Tab</button>'
+        +'</div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">'+wp.strength.sets_reps+' · '+wp.strength.frequency+'</div>'
+        +wp.strength.exercises.map(function(ex){
+          return '<div style="padding:8px 0;border-bottom:1px solid var(--border);">'
+            +'<div style="display:flex;justify-content:space-between;">'
+            +'<span style="font-size:13px;font-weight:600;">'+ex.name+'</span>'
+            +'<span style="font-size:12px;color:var(--accent2);">'+ex.sets+' × '+ex.reps+'</span></div>'
+            +(ex.notes?'<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+ex.notes+'</div>':'')
+            +'</div>';
+        }).join('')
+        +'<div style="font-size:12px;color:var(--text);line-height:1.5;margin-top:8px;">'+wp.strength.why+'</div>'
+        +(wp.strength.precautions?'<div style="font-size:11px;color:var(--sugar);margin-top:6px;">\u26a0\ufe0f '+wp.strength.precautions+'</div>':'')
+        +'</div>';
     }
-  }
-}
 
-// ═══════════════════════════════════════
-// COPY YESTERDAY
-// ═══════════════════════════════════════
-function copyYesterday(){
-  var yesterday=loadDayLog(dayOffset-1);
-  if(!yesterday.foods||!yesterday.foods.length){ showToast('No foods logged yesterday'); return; }
-  var today=loadDayLog(dayOffset);
-  var added=0;
-  yesterday.foods.forEach(function(f){ today.foods.push(Object.assign({},f,{id:Date.now()+added})); added++; });
-  saveDayLog(today,dayOffset);
-  renderNutrition();
-  showToast('✓ Copied '+added+' foods from yesterday');
-}
+    if(wp.avoid&&wp.avoid.length){
+      html += '<div style="background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.2);border-radius:12px;padding:12px;margin-bottom:10px;">'
+        +'<div style="font-size:12px;font-weight:700;color:#ff9090;margin-bottom:6px;">\ud83d\udeab Avoid</div>'
+        +wp.avoid.map(function(a){return '<div style="font-size:12px;color:var(--muted);padding:2px 0;">\u2022 '+a+'</div>';}).join('')
+        +'</div>';
+    }
 
-// ═══════════════════════════════════════
-// WORKOUT TRACKER
-// ═══════════════════════════════════════
-function loadWorkouts(){ try{ return JSON.parse(localStorage.getItem('gn_workouts')||'[]'); }catch(e){return[];} }
-function saveWorkouts(w){ localStorage.setItem('gn_workouts',JSON.stringify(w)); }
-
-function renderWorkout(){
-  var el = document.getElementById('workout-content');
-  if(!el) return;
-
-  var dayLabel = workoutDayOffset===0 ? 'Today' : workoutDayOffset===-1 ? 'Yesterday' :
-    new Date(dateKey(workoutDayOffset)+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
-  var dlEl = document.getElementById('workout-day-label');
-  if(dlEl) dlEl.textContent = dayLabel;
-  var nextBtn = document.querySelector('#workout-log-tab .day-nav-btn:last-child');
-  if(nextBtn) nextBtn.style.opacity = workoutDayOffset >= 0 ? '0.3' : '1';
-
-  var log = loadDayWorkout();
-  var exercises = log.exercises || [];
-  var vol = getWorkoutVolume(exercises);
-
-  var summaryEl = document.getElementById('workout-summary');
-  if(summaryEl){
-    summaryEl.innerHTML = exercises.length ?
-      '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px 16px;">'
-      +'<div style="display:flex;justify-content:space-around;text-align:center;">'
-      +'<div><div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;color:var(--accent2);">'+exercises.length+'</div><div style="font-size:11px;color:var(--muted);">Exercises</div></div>'
-      +'<div style="width:1px;background:var(--border);"></div>'
-      +'<div><div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;color:var(--protein);">'+vol.sets+'</div><div style="font-size:11px;color:var(--muted);">Sets</div></div>'
-      +'<div style="width:1px;background:var(--border);"></div>'
-      +'<div><div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;color:var(--fiber);">'+vol.reps+'</div><div style="font-size:11px;color:var(--muted);">Reps</div></div>'
-      +'<div style="width:1px;background:var(--border);"></div>'
-      +'<div><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:var(--carbs);">'+Math.round(vol.volume/1000*10)/10+'k</div><div style="font-size:11px;color:var(--muted);">Vol lbs</div></div>'
-      +'</div></div>'
-      : '';
+    if(wp.progression){
+      html += '<div style="font-size:12px;color:var(--muted);line-height:1.6;padding:4px 0;">'
+        +'\ud83d\udcc8 <strong style="color:var(--text);">Progression: </strong>'+wp.progression+'</div>';
+    }
+    html += '</div>';
   }
 
-  renderRecentExercises();
+  // Nutrition recommendations
+  if(r.nutrition_recommendations&&r.nutrition_recommendations.length){
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83d\udcca Nutrition Details</div>'
+      +r.nutrition_recommendations.map(function(rec){
+        return '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
+          +'<div style="font-size:13px;font-weight:700;margin-bottom:4px;">'
+          +(rec.direction==='decrease'?'\u2193 Decrease ':'\u2191 Increase ')+rec.nutrient+' \u2192 '+rec.target+(rec.unit||'')+'</div>'
+          +'<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px;">'+rec.why+'</div>'
+          +(rec.foods_to_eat&&rec.foods_to_eat.length?'<div style="font-size:11px;color:var(--fiber);margin-bottom:4px;">\u2713 Eat: '+rec.foods_to_eat.join(', ')+'</div>':'')
+          +(rec.foods_to_avoid&&rec.foods_to_avoid.length?'<div style="font-size:11px;color:#ff9090;margin-bottom:4px;">\u2715 Limit: '+rec.foods_to_avoid.join(', ')+'</div>':'')
+          +(rec.study_url?'<a href="'+rec.study_url+'" target="_blank" style="font-size:11px;color:var(--accent2);">\ud83d\udcd4 '+rec.study_title+' \u2192</a>':'')
+          +'</div>';
+      }).join('')+'</div>';
+  }
 
-  if(!exercises.length){
-    el.innerHTML = '<div class="empty-state"><div class="empty-icon">💪</div>'
-      +'<div class="empty-text">No exercises logged yet.<br>Tap <strong>+ Add Exercise</strong> to start.</div></div>'
-      +'<div style="padding:0 16px;"><button class="btn-primary" onclick="showAddExerciseModal()">+ Add Exercise</button></div>';
+  // Lifestyle tips
+  if(r.lifestyle_tips&&r.lifestyle_tips.length){
+    html += '<div class="card" style="margin-top:10px;">'
+      +'<div class="card-title">\ud83d\udca1 Lifestyle Tips</div>'
+      +r.lifestyle_tips.map(function(t){return '<div style="font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">\u2022 '+t+'</div>';}).join('')
+      +'</div>';
+  }
+
+  html += '<div style="margin:10px 0 20px;padding:12px;background:var(--bg4);border-radius:10px;font-size:11px;color:var(--muted);line-height:1.6;">'
+    +'\u26a0\ufe0f Not medical advice. Always consult your doctor, dietitian, or trainer before making changes, especially with medical conditions or medications.'
+    +'</div>';
+
+  return html;
+}
+
+function addAIWorkoutToLog(){
+  const saved = JSON.parse(localStorage.getItem('gn_ai_workout')||'null');
+  if(!saved||!saved.exercises) { showToast('No AI workout saved yet'); return; }
+  const log = loadDayWorkout();
+  saved.exercises.forEach(function(ex){
+    if(!log.exercises.find(function(e){return e.name===ex.name;})){
+      log.exercises.push({
+        name: ex.name,
+        muscle: ex.muscle||'',
+        sets: Array.from({length:parseInt(ex.sets)||3}, function(){return {weight:'',reps:ex.reps||'12'};})
+      });
+    }
+  });
+  saveDayWorkout(log);
+  showToast('\u2713 AI workout added to today\'s log!', 3000);
+  document.querySelectorAll('.nav-btn').forEach(function(b){
+    if(b.textContent.trim().indexOf('Workout')>=0) showPage('workout',b);
+  });
+  setTimeout(function(){ setWorkoutTab('log'); renderWorkout(); }, 150);
+}
+
+
+
+// ═══════════════════════════════════════
+// MEAL PLAN SUB PAGE
+// ═══════════════════════════════════════
+function renderMealPlanSubPage(el){
+  const profile = JSON.parse(localStorage.getItem('gn_health_profile')||'null');
+  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
+
+  if(!profile){
+    el.innerHTML = '<div class="card">'
+      +'<div class="card-title">\ud83c\udf7d\ufe0f Meal Plan</div>'
+      +'<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:13px;">No Health AI plan yet.<br><br>'
+      +'<button onclick="showSubPage(\'health\')" class="btn-primary" style="max-width:200px;">Generate Health AI Plan</button>'
+      +'</div></div>';
     return;
   }
 
-  var html = '';
-  exercises.forEach(function(ex, ei){
-    var bestSet = ex.sets ? ex.sets.reduce(function(best,s){ return (parseFloat(s.weight)||0) > (parseFloat(best.weight)||0) ? s : best; }, ex.sets[0]||{}) : {};
-    var totalVol = (ex.sets||[]).reduce(function(a,s){ return a + ((parseFloat(s.weight)||0)*(parseInt(s.reps)||0)); }, 0);
+  // Parse meal plan from saved HTML or show recipes saved by Health AI
+  var html = '<div class="card"><div class="card-title">\ud83c\udf7d\ufe0f Your Health AI Meal Plan</div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:14px;">Based on: '+profile.rawText+'</div>';
 
-    html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);margin:8px 16px 0;overflow:hidden;">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);">'
-      +'<div>'
-      +'<div style="font-size:15px;font-weight:700;">'+ex.name+'</div>'
-      +'<div style="font-size:11px;color:var(--accent2);margin-top:2px;">'+(ex.muscle||'')+' · Best: '+(bestSet.weight||0)+' lbs · Vol: '+Math.round(totalVol)+' lbs</div>'
-      +'</div>'
-      +'<button onclick="deleteExerciseFromLog('+ei+')" style="background:none;border:none;color:var(--muted2);font-size:20px;cursor:pointer;">×</button>'
-      +'</div>'
-      +'<div style="display:grid;grid-template-columns:32px 1fr 1fr 80px auto;gap:6px;padding:8px 16px 4px;align-items:center;">'
-      +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;">Set</div>'
-      +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;">Weight (lbs)</div>'
-      +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;">Reps</div>'
-      +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;">Vol</div>'
-      +'<div></div>'
-      +'</div>';
-
-    (ex.sets||[]).forEach(function(s, si){
-      var setVol = (parseFloat(s.weight)||0) * (parseInt(s.reps)||0);
-      var isPR = s.weight && parseFloat(s.weight) >= parseFloat(bestSet.weight||0);
-      html += '<div style="display:grid;grid-template-columns:32px 1fr 1fr 80px auto;gap:6px;padding:4px 16px;align-items:center;">'
-        +'<div style="font-size:13px;font-weight:700;color:'+(isPR&&s.weight?'var(--sugar)':'var(--muted)')+';">'+(si+1)+(isPR&&s.weight&&si===ex.sets.length-1&&ex.sets.length>1?'🔥':'')+'</div>'
-        +'<input type="number" value="'+(s.weight||'')+'" placeholder="0" step="2.5" onchange="updateExerciseSet('+ei+','+si+',\'weight\',this.value)" style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:8px;color:var(--text);font-size:14px;text-align:center;outline:none;width:100%;">'
-        +'<input type="number" value="'+(s.reps||'')+'" placeholder="0" onchange="updateExerciseSet('+ei+','+si+',\'reps\',this.value)" style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:8px;color:var(--text);font-size:14px;text-align:center;outline:none;width:100%;">'
-        +'<div style="font-size:12px;color:var(--muted);text-align:center;">'+(setVol>0?Math.round(setVol)+' lbs':'-')+'</div>'
-        +'<button onclick="deleteExerciseSet('+ei+','+si+')" style="background:none;border:none;color:var(--muted2);font-size:18px;cursor:pointer;">×</button>'
-        +'</div>';
-    });
-
-    html += '<div style="padding:8px 16px 12px;display:flex;gap:8px;">'
-      +'<button onclick="addExerciseSet('+ei+')" style="flex:1;background:none;border:1px dashed var(--border2);color:var(--accent2);border-radius:8px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;">+ Add Set</button>'
-      +'</div>'
-      +'</div>';
-  });
-
-  html += '<div style="padding:10px 16px 20px;">'
-    +'<button class="btn-primary" onclick="showAddExerciseModal()">+ Add Exercise</button>'
-    +'</div>';
-
-  el.innerHTML = html;
-}
-
-var workoutDayOffset = 0;
-
-function loadDayWorkout(offset){
-  if(offset===undefined) offset=workoutDayOffset;
-  try{ return JSON.parse(localStorage.getItem('gn_wlog_'+dateKey(offset))||'{"exercises":[]}'); }
-  catch(e){ return {exercises:[]}; }
-}
-
-function saveDayWorkout(data, offset){
-  if(offset===undefined) offset=workoutDayOffset;
-  localStorage.setItem('gn_wlog_'+dateKey(offset), JSON.stringify(data));
-}
-
-function getWorkoutVolume(exercises){
-  var sets=0, reps=0, volume=0;
-  (exercises||[]).forEach(function(ex){
-    (ex.sets||[]).forEach(function(s){
-      sets++;
-      reps += parseInt(s.reps)||0;
-      volume += (parseFloat(s.weight)||0)*(parseInt(s.reps)||0);
-    });
-  });
-  return {sets:sets, reps:reps, volume:volume};
-}
-
-function changeWorkoutDay(dir){
-  if(workoutDayOffset+dir > 0) return;
-  workoutDayOffset += dir;
-  renderWorkout();
-}
-
-function renderRecentExercises(){
-  var el = document.getElementById('workout-recent');
-  if(!el) return;
-  var seen = {}, recent = [];
-  for(var i=0; i<=14; i++){
-    var log = loadDayWorkout(-i);
-    (log.exercises||[]).forEach(function(ex){
-      if(!seen[ex.name] && recent.length < 8){
-        seen[ex.name]=true;
-        recent.push(ex);
+  // Show daily breakdown
+  if(profile.renderedHTML){
+    // Extract meal plan section - show saved meals as loggable items
+    html += '<div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:10px;">Saved Meals — Tap to Log</div>';
+    if(recipes.length){
+      const aiMeals = recipes.filter(function(r){ return r.description; });
+      const regularMeals = recipes.filter(function(r){ return !r.description; });
+      if(aiMeals.length){
+        html += aiMeals.map(function(r,i){
+          const realIdx = recipes.indexOf(r);
+          return '<div style="background:var(--bg4);border-radius:12px;padding:14px;margin-bottom:8px;">'
+            +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">'
+            +'<div><div style="font-size:14px;font-weight:700;">'+r.name+'</div>'
+            +'<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+r.description+'</div></div>'
+            +'<div style="text-align:right;flex-shrink:0;margin-left:10px;">'
+            +'<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;">'+Math.round(r.cal)+'</div>'
+            +'<div style="font-size:10px;color:var(--muted);">kcal</div></div></div>'
+            +'<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">'
+            +'<span style="font-size:11px;color:var(--protein);">P '+r.protein+'g</span>'
+            +'<span style="font-size:11px;color:var(--carbs);">C '+r.carbs+'g</span>'
+            +'<span style="font-size:11px;color:var(--fat);">F '+r.fat+'g</span>'
+            +(r.fiber?'<span style="font-size:11px;color:var(--fiber);">Fi '+r.fiber+'g</span>':'')
+            +(r.sodium?'<span style="font-size:11px;color:#94a3b8;">Na '+r.sodium+'mg</span>':'')
+            +'</div>'
+            +'<div style="display:flex;gap:6px;">'
+            +'<select id="meal-select-'+realIdx+'" style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:7px;color:var(--text);font-size:12px;outline:none;">'
+            +'<option value="Breakfast">\ud83c\udf05 Breakfast</option>'
+            +'<option value="Lunch">\u2600\ufe0f Lunch</option>'
+            +'<option value="Dinner" selected>\ud83c\udf19 Dinner</option>'
+            +'<option value="Snacks">\ud83c\udf4e Snack</option>'
+            +'</select>'
+            +'<button onclick="logMealPlanItem('+realIdx+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;">+ Log</button>'
+            +'</div></div>';
+        }).join('');
+      } else {
+        html += '<div style="font-size:13px;color:var(--muted);">Generate a Health AI plan to save meals here.</div>';
       }
-    });
-  }
-  if(!recent.length){ el.innerHTML=''; return; }
-  window._recentExercises = recent;
-  el.innerHTML = '<div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;">RECENT — TAP TO ADD</div>'
-    +'<div class="quick-chips">'
-    +recent.map(function(ex,i){
-      var lastSet = ex.sets&&ex.sets.length ? ex.sets[ex.sets.length-1] : null;
-      return '<button class="quick-chip" onclick="quickAddExercise('+i+')">'
-        +'<span class="quick-chip-cal">'+(lastSet&&lastSet.weight?lastSet.weight+' lbs':'--')+'</span>'
-        +ex.name+'</button>';
-    }).join('')
-    +'</div>';
-}
-
-function quickAddExercise(idx){
-  var ex = window._recentExercises && window._recentExercises[idx];
-  if(!ex) return;
-  var log = loadDayWorkout();
-  var lastSet = ex.sets&&ex.sets.length ? ex.sets[ex.sets.length-1] : {weight:'',reps:''};
-  log.exercises.push({name:ex.name, muscle:ex.muscle||'', sets:[{weight:lastSet.weight,reps:lastSet.reps}]});
-  saveDayWorkout(log);
-  renderWorkout();
-  showToast('✓ '+ex.name+' added');
-}
-
-function showAddExerciseModal(){
-  var modal = document.getElementById('add-exercise-modal');
-  if(!modal){
-    var div = document.createElement('div');
-    div.id = 'add-exercise-modal';
-    div.className = 'modal-backdrop';
-    div.innerHTML = '<div class="modal-sheet">'
-      +'<div class="modal-handle"></div>'
-      +'<div class="modal-title">Add Exercise</div>'
-      +'<div class="input-group"><label class="input-label">Exercise Name</label>'
-      +'<input type="text" id="ex-name-input" placeholder="e.g. Bench Press, Squat, Running..." list="exercise-suggestions">'
-      +'<datalist id="exercise-suggestions">'
-      +['Bench Press','Incline Bench Press','Decline Bench Press','Dumbbell Fly','Cable Fly',
-        'Squat','Leg Press','Leg Extension','Leg Curl','Calf Raise','Romanian Deadlift',
-        'Deadlift','Barbell Row','Lat Pulldown','Pull Up','Seated Cable Row','T-Bar Row',
-        'Overhead Press','Arnold Press','Lateral Raise','Front Raise','Face Pull',
-        'Bicep Curl','Hammer Curl','Preacher Curl','Tricep Pushdown','Skull Crusher','Dips',
-        'Plank','Crunches','Russian Twist','Hanging Leg Raise','Ab Wheel',
-        'Running','Cycling','Elliptical','Jump Rope','Rowing Machine','Stair Climber'
-      ].map(function(n){return '<option value="'+n+'">';}).join('')
-      +'</datalist></div>'
-      +'<div class="input-group"><label class="input-label">Muscle Group</label>'
-      +'<select id="ex-muscle-input">'
-      +'<option value="">Select muscle group...</option>'
-      +'<option>Chest</option><option>Back</option><option>Shoulders</option>'
-      +'<option>Biceps</option><option>Triceps</option><option>Legs</option>'
-      +'<option>Core</option><option>Cardio</option><option>Full Body</option>'
-      +'</select></div>'
-      +'<div style="display:flex;gap:8px;">'
-      +'<button class="btn-primary" onclick="addExerciseToLog()">Add Exercise</button>'
-      +'<button class="btn-secondary" style="width:auto;padding:14px 20px;" onclick="closeAddExerciseModal()">Cancel</button>'
-      +'</div></div>';
-    document.body.appendChild(div);
-  }
-  document.getElementById('add-exercise-modal').classList.add('open');
-  setTimeout(function(){ var el=document.getElementById('ex-name-input'); if(el) el.focus(); }, 300);
-}
-
-function closeAddExerciseModal(){
-  var modal = document.getElementById('add-exercise-modal');
-  if(modal) modal.classList.remove('open');
-}
-
-function addExerciseToLog(){
-  var name = document.getElementById('ex-name-input').value.trim();
-  if(!name){ showToast('Enter an exercise name'); return; }
-  var muscle = document.getElementById('ex-muscle-input').value;
-  var log = loadDayWorkout();
-  log.exercises.push({name:name, muscle:muscle, sets:[{weight:'',reps:''}]});
-  saveDayWorkout(log);
-  closeAddExerciseModal();
-  renderWorkout();
-  showToast('✓ '+name+' added');
-}
-
-function addExerciseSet(ei){
-  var log = loadDayWorkout();
-  if(!log.exercises[ei]) return;
-  var lastSet = log.exercises[ei].sets.slice(-1)[0]||{weight:'',reps:''};
-  log.exercises[ei].sets.push({weight:lastSet.weight, reps:lastSet.reps});
-  saveDayWorkout(log);
-  renderWorkout();
-}
-
-function updateExerciseSet(ei, si, field, val){
-  var log = loadDayWorkout();
-  if(!log.exercises[ei]||!log.exercises[ei].sets[si]) return;
-  log.exercises[ei].sets[si][field] = val;
-  saveDayWorkout(log);
-  var vol = getWorkoutVolume(log.exercises);
-  var summaryEl = document.getElementById('workout-summary');
-  if(summaryEl && log.exercises.length) renderWorkout();
-}
-
-function deleteExerciseSet(ei, si){
-  var log = loadDayWorkout();
-  if(!log.exercises[ei]) return;
-  log.exercises[ei].sets.splice(si,1);
-  if(!log.exercises[ei].sets.length) log.exercises[ei].sets.push({weight:'',reps:''});
-  saveDayWorkout(log);
-  renderWorkout();
-}
-
-function deleteExerciseFromLog(ei){
-  if(!confirm('Remove this exercise?')) return;
-  var log = loadDayWorkout();
-  log.exercises.splice(ei,1);
-  saveDayWorkout(log);
-  renderWorkout();
-}
-
-function startNewWorkout(){
-  showAddExerciseModal();
-}
-
-function addExercise(wi){
-  var name=prompt('Exercise name (e.g. Bench Press, Squat, Deadlift):');
-  if(!name) return;
-  var workouts=loadWorkouts();
-  if(!workouts[wi].exercises) workouts[wi].exercises=[];
-  workouts[wi].exercises.push({name:name,sets:[{weight:'',reps:''}]});
-  saveWorkouts(workouts); renderWorkout();
-}
-
-function addSet(wi,ei){
-  var workouts=loadWorkouts();
-  workouts[wi].exercises[ei].sets.push({weight:'',reps:''});
-  saveWorkouts(workouts); renderWorkout();
-}
-
-function updateSet(wi,ei,si,field,val){
-  var workouts=loadWorkouts();
-  workouts[wi].exercises[ei].sets[si][field]=val;
-  saveWorkouts(workouts);
-}
-
-function deleteSet(wi,ei,si){
-  var workouts=loadWorkouts();
-  workouts[wi].exercises[ei].sets.splice(si,1);
-  saveWorkouts(workouts); renderWorkout();
-}
-
-function deleteWorkout(wi){
-  if(!confirm('Delete this workout?')) return;
-  var workouts=loadWorkouts();
-  workouts.splice(wi,1);
-  saveWorkouts(workouts); renderWorkout();
-}
-
-// ═══════════════════════════════════════
-// WEIGHT TRACKER
-// ═══════════════════════════════════════
-function loadWeightLog(){ try{return JSON.parse(localStorage.getItem('gn_weight_log')||'[]');}catch(e){return[];} }
-function saveWeightLog(l){ localStorage.setItem('gn_weight_log',JSON.stringify(l)); }
-
-function showWeightTracker(container){
-  var log=loadWeightLog();
-  var today=log.find(function(e){return e.date===dateKey(0);});
-  var html='<div class="card"><div class="card-title">⚖️ Weight Tracker</div>'
-    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;">'
-    +'<input type="number" id="weight-input" placeholder="Weight (lbs)" value="'+(today?today.weight:'')+'" step="0.1" style="flex:1;">'
-    +'<button onclick="logWeight()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">Log</button>'
-    +'</div>';
-
-  if(log.length>=2){
-    var recent=log.slice(-14);
-    var weights=recent.map(function(e){return e.weight;});
-    var minW=Math.min.apply(null,weights)-2, maxW=Math.max.apply(null,weights)+2;
-    var W=300,H=90,pad=10;
-    var pts=recent.map(function(e,i){
-      var x=(i/(recent.length-1))*(W-pad*2)+pad;
-      var y=H-pad-((e.weight-minW)/(maxW-minW))*(H-pad*2);
-      return x+','+y;
-    }).join(' ');
-    var dots=recent.map(function(e,i){
-      var x=(i/(recent.length-1))*(W-pad*2)+pad;
-      var y=H-pad-((e.weight-minW)/(maxW-minW))*(H-pad*2);
-      return '<circle cx="'+x+'" cy="'+y+'" r="4" fill="var(--accent2)"/>';
-    }).join('');
-    html+='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;margin-bottom:6px;">'
-      +'<polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="2"/>'
-      +dots+'</svg>';
-    html+='<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:12px;">'
-      +'<span>'+new Date(recent[0].date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+'</span>'
-      +'<span>'+new Date(recent[recent.length-1].date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+'</span></div>';
-  } else {
-    html+='<div style="text-align:center;color:var(--muted);font-size:13px;padding:10px 0 14px;">Log at least 2 days to see your trend chart.</div>';
-  }
-
-  html+=log.slice().reverse().slice(0,10).map(function(e){
-    return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;">'
-      +'<span style="color:var(--muted);">'+new Date(e.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+'</span>'
-      +'<span style="font-weight:700;">'+e.weight+' lbs</span></div>';
-  }).join('');
-  html+='</div>';
-  container.innerHTML=html;
-}
-
-function logWeight(){
-  var val=parseFloat(document.getElementById('weight-input')&&document.getElementById('weight-input').value);
-  if(!val){showToast('Enter a weight first');return;}
-  var log=loadWeightLog();
-  var idx=log.findIndex(function(e){return e.date===dateKey(0);});
-  if(idx>=0) log[idx].weight=val; else log.push({date:dateKey(0),weight:val});
-  log.sort(function(a,b){return a.date.localeCompare(b.date);});
-  saveWeightLog(log);
-  showToast('✓ Weight logged: '+val+' lbs');
-  showWeightTracker(document.getElementById('sub-page-content'));
-}
-
-// ═══════════════════════════════════════
-// PRO PAYWALL
-// ═══════════════════════════════════════
-function isPro(){ return localStorage.getItem('gn_pro')==='true'; }
-
-function applyPromoCode(){
-  const code = (document.getElementById('promo-input')&&document.getElementById('promo-input').value||'').trim().toUpperCase();
-  const statusEl = document.getElementById('promo-status');
-  const VALID_CODES = ['NEENER'];
-  if(VALID_CODES.includes(code)){
-    localStorage.setItem('gn_pro','true');
-    if(statusEl) statusEl.innerHTML = '<span style="color:var(--fiber);">✓ Code applied! Pro unlocked.</span>';
-    setTimeout(function(){
-      showToast('⭐ Pro unlocked! Welcome to Genesis Pro!', 3000);
-      showSubPage('health');
-    }, 800);
-  } else if(!code){
-    if(statusEl) statusEl.innerHTML = '<span style="color:#ff9090;">Enter a promo code.</span>';
-  } else {
-    if(statusEl) statusEl.innerHTML = '<span style="color:#ff9090;">✗ Invalid code. Try again.</span>';
-  }
-}
-function getGoals(){ return loadGoals(); }
-
-function showPaywall(feature){
-  var el=document.getElementById('sub-page-content');
-  el.innerHTML='<div style="margin:10px 16px;background:linear-gradient(135deg,rgba(99,87,255,.15),rgba(245,158,11,.1));border:1px solid var(--accent);border-radius:var(--r2);padding:24px;text-align:center;">'
-    +'<div style="font-size:42px;margin-bottom:12px;">⭐</div>'
-    +'<div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;margin-bottom:8px;">Genesis Pro</div>'
-    +'<div style="font-size:14px;color:var(--muted);margin-bottom:18px;line-height:1.6;">Upgrade to unlock '+feature+' and all Pro features for just $4.99/month.</div>'
-    +'<div style="text-align:left;margin-bottom:18px;">'
-    +['🤖 AI Search & Restaurant Search','🩺 Health AI with personalized goals','📊 Full vitamin & mineral breakdown','📅 AI Meal Planner','📈 30-day history & trends'].map(function(f){
-      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;">'+f+'</div>';
-    }).join('')+'</div>'
-    +'<button onclick="startCheckout()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;">Upgrade to Pro — $4.99/month</button>'
-    +'<div style="font-size:11px;color:var(--muted);margin-top:10px;">Cancel anytime · Secure payment via Stripe</div>'
-    +'</div>';
-  el.scrollIntoView({behavior:'smooth'});
-}
-
-async function startCheckout(){
-  try {
-    showToast('Connecting to Stripe...');
-    var res = await fetch('/.netlify/functions/stripe-checkout', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        priceId: 'price_1TMcrPL35VL5z6ikzMkMgzKg',
-        successUrl: window.location.origin+'/?session_id={CHECKOUT_SESSION_ID}',
-        cancelUrl: window.location.origin+'/?cancelled=1'
-      })
-    });
-    var rawText = await res.text();
-    console.log('Stripe response status:', res.status);
-    console.log('Stripe response body:', rawText);
-    if(!rawText || rawText.trim()===''){
-      throw new Error('Function returned empty response (status '+res.status+')');
     }
-    var data = JSON.parse(rawText);
-    if(data.url){
-      window.location.href = data.url;
-    } else {
-      throw new Error(data.error||'No checkout URL in response');
-    }
-  } catch(e){
-    console.error('Checkout error:', e);
-    showToast(e.message, 5000);
   }
+
+  html += '<div style="margin-top:14px;">'
+    +'<button onclick="showSubPage(\'health\')" class="btn-secondary">\ud83e\udd16 Regenerate Health AI Plan</button>'
+    +'</div></div>';
+
+  el.innerHTML = html;
 }
 
-</script>
-
-<script>
-// ═══════════════════════════════════════
-// WORKOUT TABS
-// ═══════════════════════════════════════
-var calView = 'month';
-var calDate = new Date();
-
-function setWorkoutTab(tab){
-  ['log','goals','ai','calendar'].forEach(function(t){
-    var btn = document.getElementById('wtab-'+t);
-    var el = document.getElementById('workout-'+t+'-tab');
-    if(btn) btn.classList.toggle('active', t===tab);
-    if(el) el.style.display = t===tab ? 'block' : 'none';
+function logMealPlanItem(idx){
+  const recipes = JSON.parse(localStorage.getItem('gn_recipes')||'[]');
+  const r = recipes[idx]; if(!r) return;
+  const mealEl = document.getElementById('meal-select-'+idx);
+  const meal = mealEl ? mealEl.value : 'Dinner';
+  const log = loadDayLog(dayOffset);
+  log.foods.push({
+    meal:meal, name:r.name, cal:r.cal, protein:r.protein,
+    carbs:r.carbs, fat:r.fat, fiber:r.fiber||0, sugar:0,
+    sodium:r.sodium||0, potassium:0, vitc:0, iron:0, calcium:0, vitd:0,
+    serving:100, id:Date.now()
   });
-  if(tab==='log') renderWorkout();
-  if(tab==='goals') renderWorkoutGoals();
-  if(tab==='calendar') renderCalendar();
+  saveDayLog(log, dayOffset);
+  showToast('\u2713 '+r.name+' added to '+meal);
 }
 
-// ═══════════════════════════════════════
-// WORKOUT GOALS
-// ═══════════════════════════════════════
-function loadWorkoutGoals(){ try{return JSON.parse(localStorage.getItem('gn_wgoals')||'[]');}catch(e){return[];} }
-function saveWorkoutGoals(g){ localStorage.setItem('gn_wgoals',JSON.stringify(g)); }
 
-function renderWorkoutGoals(){
-  var el = document.getElementById('workout-goals-tab');
-  if(!el) return;
-  var goals = loadWorkoutGoals();
-  var html = '<div class="card"><div class="card-title">🎯 Fitness Goals</div>'
-    +'<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Track strength, cardio, and body goals. Log your progress as you hit new milestones.</div>'
-    +'<button class="btn-primary" onclick="showAddGoalForm()" style="margin-bottom:0;">+ Add Goal</button></div>'
-    +'<div id="add-goal-form"></div>';
-
-  if(goals.length){
-    html += '<div style="margin:10px 16px 0;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Active Goals</div>';
-    goals.forEach(function(g,i){
-      var pct = Math.min(100, (g.current/g.target)*100);
-      var color = {Strength:'var(--protein)',Cardio:'var(--carbs)',Body:'var(--fiber)',Endurance:'#4aa8ff',Flexibility:'#a78bfa'}[g.category]||'var(--accent2)';
-      var achieved = g.current >= g.target;
-      html += '<div class="card">'
-        +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">'
-        +'<div><div style="font-size:15px;font-weight:700;">'+(achieved?'🏆 ':'')+g.name+'</div>'
-        +'<div style="font-size:11px;color:'+color+';margin-top:2px;">'+g.category+(g.timeframe?' · '+g.timeframe:'')+'</div></div>'
-        +'<div style="text-align:right;">'
-        +'<div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:'+color+';">'+g.current+'</div>'
-        +'<div style="font-size:11px;color:var(--muted);">of '+g.target+' '+g.unit+'</div>'
-        +'</div></div>'
-        +'<div style="height:8px;background:var(--bg5);border-radius:99px;overflow:hidden;margin-bottom:10px;">'
-        +'<div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:99px;transition:width .5s;"></div></div>'
-        +(achieved
-          ? '<div style="text-align:center;font-size:13px;color:var(--fiber);font-weight:700;padding:6px 0;">🎉 Goal achieved!</div>'
-          : '<div style="display:flex;gap:8px;">'
-            +'<input type="number" id="goal-log-'+i+'" placeholder="Log new value ('+g.unit+')" style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;">'
-            +'<button onclick="logGoalProgress('+i+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">Log</button>'
-            +'<button onclick="deleteWorkoutGoal('+i+')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;">×</button>'
-            +'</div>')
-        +(g.history&&g.history.length
-          ? '<div style="margin-top:10px;font-size:11px;color:var(--muted);">History: '+g.history.slice(-5).map(function(h){return h.val+' '+g.unit+' on '+new Date(h.date).toLocaleDateString('en-US',{month:'short',day:'numeric'});}).join(' → ')+'</div>'
-          : '')
-        +'</div>';
-    });
-  }
-  el.innerHTML = html;
-}
-
-function showAddGoalForm(){
-  document.getElementById('add-goal-form').innerHTML = '<div class="card">'
-    +'<div class="card-title">New Goal</div>'
-    +'<div class="input-group"><label class="input-label">Goal Name</label>'
-    +'<input type="text" id="ng-name" placeholder="e.g. Bench Press 225 lbs, Run 5K, Lose 20 lbs"></div>'
-    +'<div class="input-row">'
-    +'<div class="input-group"><label class="input-label">Category</label>'
-    +'<select id="ng-cat"><option>Strength</option><option>Cardio</option><option>Body</option><option>Endurance</option><option>Flexibility</option></select></div>'
-    +'<div class="input-group"><label class="input-label">Unit</label>'
-    +'<input type="text" id="ng-unit" placeholder="lbs, miles, min, reps..."></div>'
-    +'</div>'
-    +'<div class="input-row">'
-    +'<div class="input-group"><label class="input-label">Current Value</label>'
-    +'<input type="number" id="ng-current" placeholder="0" step="0.1"></div>'
-    +'<div class="input-group"><label class="input-label">Target Value</label>'
-    +'<input type="number" id="ng-target" placeholder="0" step="0.1"></div>'
-    +'</div>'
-    +'<div class="input-group"><label class="input-label">Target Date (optional)</label>'
-    +'<input type="date" id="ng-date"></div>'
-    +'<button class="btn-primary" onclick="saveWorkoutGoal()">Save Goal</button>'
-    +'<button class="btn-secondary" style="margin-top:8px;" onclick="document.getElementById(\'add-goal-form\').innerHTML=\'\'">Cancel</button>'
-    +'</div>';
-}
-
-function saveWorkoutGoal(){
-  var name = document.getElementById('ng-name').value.trim();
-  if(!name){ showToast('Enter a goal name'); return; }
-  var goals = loadWorkoutGoals();
-  goals.push({
-    name: name,
-    category: document.getElementById('ng-cat').value,
-    unit: document.getElementById('ng-unit').value||'',
-    current: parseFloat(document.getElementById('ng-current').value)||0,
-    target: parseFloat(document.getElementById('ng-target').value)||0,
-    targetDate: document.getElementById('ng-date').value||'',
-    timeframe: document.getElementById('ng-date').value ? 'by '+new Date(document.getElementById('ng-date').value+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
-    history: [],
-    created: new Date().toISOString()
-  });
-  saveWorkoutGoals(goals);
-  showToast('✓ Goal saved!');
-  document.getElementById('add-goal-form').innerHTML='';
-  renderWorkoutGoals();
-}
-
-function logGoalProgress(idx){
-  var val = parseFloat(document.getElementById('goal-log-'+idx).value);
-  if(!val){ showToast('Enter a value'); return; }
-  var goals = loadWorkoutGoals();
-  if(!goals[idx]) return;
-  goals[idx].current = val;
-  if(!goals[idx].history) goals[idx].history = [];
-  goals[idx].history.push({val:val, date:new Date().toISOString()});
-  saveWorkoutGoals(goals);
-  if(val >= goals[idx].target) showToast('🏆 Goal achieved: '+goals[idx].name+'!', 4000);
-  else showToast('✓ Progress logged: '+val+' '+goals[idx].unit);
-  renderWorkoutGoals();
-}
-
-function deleteWorkoutGoal(idx){
-  if(!confirm('Delete this goal?')) return;
-  var goals = loadWorkoutGoals();
-  goals.splice(idx,1);
-  saveWorkoutGoals(goals);
-  renderWorkoutGoals();
-}
-
-// ═══════════════════════════════════════
-// AI WORKOUT COACH
-// ═══════════════════════════════════════
-async function generateAIWorkout(){
-  var input = document.getElementById('ai-workout-input').value.trim();
-  if(!input) return;
-  var btn = document.getElementById('ai-workout-btn');
-  var status = document.getElementById('ai-workout-status');
-  var result = document.getElementById('ai-workout-result');
-  btn.disabled=true;
-  btn.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  status.textContent='';
-  result.innerHTML='';
-
-  try {
-    var res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:3000,messages:[{role:'user',content:
-      'Create a detailed workout plan for: "'+input+'"\n\n'
-      +'Return ONLY JSON:\n'
-      +'{"plan_name":"e.g. 4-Day Push/Pull Split","overview":"2 sentence summary","days":['
-      +'{"day":"Day 1 - Push","focus":"Chest, Shoulders, Triceps","exercises":['
-      +'{"name":"Bench Press","sets":4,"reps":"8-10","rest":"90 sec","notes":"Keep back flat, controlled descent","muscle":"Chest"}'
-      +']}'
-      +'],"tips":["tip1","tip2","tip3"]}'
-    }]});
-    if(!res.ok) throw new Error();
-    var data = await res.json();
-    var text = (data.content&&data.content[0]&&data.content[0].text)||'';
-    var match = text.match(/\{[\s\S]*\}/);
-    if(!match) throw new Error();
-    var plan = JSON.parse(match[0]);
-    status.textContent='';
-    renderAIWorkoutPlan(plan);
-  } catch(e){ status.textContent='✗ Failed to generate. Try again.'; }
-  btn.disabled=false;
-  btn.innerHTML='🤖 Generate Workout Plan';
-}
-
-function renderAIWorkoutPlan(plan){
-  var el = document.getElementById('ai-workout-result');
-  var html = '<div class="card">'
-    +'<div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;margin-bottom:6px;">'+plan.plan_name+'</div>'
-    +'<div style="font-size:13px;color:var(--muted);margin-bottom:14px;">'+plan.overview+'</div>';
-
-  (plan.days||[]).forEach(function(day){
-    html += '<div style="background:var(--bg4);border-radius:var(--r1);overflow:hidden;margin-bottom:10px;">'
-      +'<div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">'
-      +'<div><div style="font-size:14px;font-weight:700;">'+day.day+'</div>'
-      +'<div style="font-size:11px;color:var(--accent2);">'+day.focus+'</div></div>'
-      +'<button onclick="logThisWorkout(\''+day.day.replace(/'/g,"&#39;")+'\')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">+ Log This</button>'
-      +'</div>';
-    (day.exercises||[]).forEach(function(ex){
-      html += '<div style="padding:10px 14px;border-bottom:1px solid var(--border);">'
-        +'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
-        +'<div style="font-size:13px;font-weight:600;">'+ex.name+'</div>'
-        +'<div style="font-size:12px;color:var(--accent2);">'+ex.sets+' sets × '+ex.reps+'</div></div>'
-        +'<div style="font-size:11px;color:var(--muted);">Rest: '+ex.rest+(ex.notes?' · '+ex.notes:'')+'</div>'
-        +'</div>';
-    });
-    html += '</div>';
-  });
-
-  if(plan.tips&&plan.tips.length){
-    html += '<div style="background:var(--bg4);border-radius:var(--r1);padding:12px 14px;">'
-      +'<div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Tips</div>'
-      +plan.tips.map(function(t){return '<div style="font-size:13px;padding:4px 0;border-bottom:1px solid var(--border);">• '+t+'</div>';}).join('')
-      +'</div>';
-  }
-  html += '</div>';
-  el.innerHTML = html;
-}
-
-function logThisWorkout(dayName){
-  var workouts = loadWorkouts();
-  workouts.unshift({name:dayName, date:new Date().toISOString(), exercises:[]});
-  saveWorkouts(workouts);
-  setWorkoutTab('log');
-  showToast('✓ '+dayName+' added to log');
-}
-
-// ═══════════════════════════════════════
-// CALENDAR
-// ═══════════════════════════════════════
-function setCalView(view){
-  calView = view;
-  ['month','week','day'].forEach(function(v){
-    var el = document.getElementById('cal-view-'+v);
-    if(el) el.classList.toggle('active', v===view);
-  });
-  renderCalendar();
-}
-
-function renderCalendar(){
-  var el = document.getElementById('calendar-content');
-  if(!el) return;
-  if(calView==='month') renderCalMonth(el);
-  else if(calView==='week') renderCalWeek(el);
-  else renderCalDay(el);
-}
-
-function getCalEvents(dateStr){
-  var log = null;
-  try { log = JSON.parse(localStorage.getItem('gn_log_'+dateStr)||'{"foods":[]}'); } catch(e){ log={foods:[]}; }
-  var workouts = loadWorkouts().filter(function(w){ return w.date && w.date.startsWith(dateStr); });
-  var cal = parseInt(log.foods.reduce(function(a,f){return a+(f.cal||0);},0));
-  return {foods:log.foods||[], workouts:workouts, cal:cal, hasData:(log.foods&&log.foods.length>0)||workouts.length>0};
-}
-
-function renderCalMonth(el){
-  var year = calDate.getFullYear(), month = calDate.getMonth();
-  var firstDay = new Date(year,month,1).getDay();
-  var daysInMonth = new Date(year,month+1,0).getDate();
-  var today = new Date();
-  var monthName = calDate.toLocaleDateString('en-US',{month:'long',year:'numeric'});
-  var goals = getGoals();
-
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;padding:0 16px;margin-bottom:10px;">'
-    +'<button onclick="changeCalMonth(-1)" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">‹</button>'
-    +'<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;">'+monthName+'</div>'
-    +'<button onclick="changeCalMonth(1)" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">›</button>'
-    +'</div>'
-    +'<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 16px;">'
-    +['Su','Mo','Tu','We','Th','Fr','Sa'].map(function(d){
-      return '<div style="text-align:center;font-size:11px;font-weight:700;color:var(--muted);padding:4px 0;">'+d+'</div>';
-    }).join('');
-
-  for(var i=0;i<firstDay;i++) html+='<div></div>';
-
-  for(var day=1;day<=daysInMonth;day++){
-    var dateStr = year+'-'+(String(month+1).padStart(2,'0'))+'-'+(String(day).padStart(2,'0'));
-    var events = getCalEvents(dateStr);
-    var isToday = today.getFullYear()===year && today.getMonth()===month && today.getDate()===day;
-    var pct = events.cal>0 ? Math.min(100,(events.cal/goals.calories)*100) : 0;
-    var dotColor = events.cal > goals.calories ? '#ff6b6b' : events.cal > 0 ? 'var(--fiber)' : 'var(--bg5)';
-
-    html += '<div onclick="calDayClick(\''+dateStr+'\')" style="background:var(--bg3);border:1px solid '+(isToday?'var(--accent)':'var(--border)')+';border-radius:8px;padding:4px;min-height:52px;cursor:pointer;position:relative;">'
-      +'<div style="font-size:12px;font-weight:'+(isToday?'800':'400')+';color:'+(isToday?'var(--accent2)':'var(--text)')+';">'+day+'</div>'
-      +(events.cal>0?'<div style="font-size:9px;color:var(--muted);margin-top:1px;">'+events.cal+'</div>':'')
-      +(events.workouts.length?'<div style="font-size:9px;color:var(--accent2);">💪</div>':'')
-      +'<div style="position:absolute;bottom:3px;left:3px;right:3px;height:3px;background:var(--bg5);border-radius:99px;overflow:hidden;">'
-      +'<div style="height:100%;width:'+pct+'%;background:'+dotColor+';border-radius:99px;"></div></div>'
-      +'</div>';
-  }
-  html += '</div>';
-  html += '<div id="cal-day-detail" style="margin:10px 16px 0;"></div>';
-  el.innerHTML = html;
-}
-
-function renderCalWeek(el){
-  var today = new Date(calDate);
-  var dayOfWeek = today.getDay();
-  var weekStart = new Date(today); weekStart.setDate(today.getDate()-dayOfWeek);
-  var goals = getGoals();
-
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;padding:0 16px;margin-bottom:10px;">'
-    +'<button onclick="changeCalWeek(-1)" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">‹</button>'
-    +'<div style="font-size:14px;font-weight:700;">Week of '+weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})+'</div>'
-    +'<button onclick="changeCalWeek(1)" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">›</button>'
-    +'</div>';
-
-  for(var i=0;i<7;i++){
-    var d = new Date(weekStart); d.setDate(weekStart.getDate()+i);
-    var dateStr = d.toISOString().split('T')[0];
-    var events = getCalEvents(dateStr);
-    var isToday = d.toDateString()===new Date().toDateString();
-    var pct = events.cal>0?Math.min(100,(events.cal/goals.calories)*100):0;
-    var barColor = events.cal>goals.calories?'#ff6b6b':events.cal>0?'var(--fiber)':'var(--bg5)';
-
-    html += '<div onclick="calDayClick(\''+dateStr+'\')" style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg3);border:1px solid '+(isToday?'var(--accent)':'var(--border)')+';border-radius:12px;margin:0 16px 6px;cursor:pointer;">'
-      +'<div style="width:44px;text-align:center;">'
-      +'<div style="font-size:11px;color:var(--muted);">'+d.toLocaleDateString('en-US',{weekday:'short'})+'</div>'
-      +'<div style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:'+(isToday?'var(--accent2)':'var(--text)')+';">'+d.getDate()+'</div>'
-      +'</div>'
-      +'<div style="flex:1;">'
-      +(events.cal>0?'<div style="font-size:13px;font-weight:600;">'+events.cal+' kcal</div>':'<div style="font-size:12px;color:var(--muted2);">No food logged</div>')
-      +(events.workouts.length?'<div style="font-size:11px;color:var(--accent2);">💪 '+events.workouts.map(function(w){return w.name;}).join(', ')+'</div>':'')
-      +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;margin-top:4px;">'
-      +'<div style="height:100%;width:'+pct+'%;background:'+barColor+';border-radius:99px;"></div></div>'
-      +'</div>'
-      +(events.foods.length?'<div style="font-size:11px;color:var(--muted);">'+events.foods.length+' items</div>':'')
-      +'</div>';
-  }
-  html += '<div id="cal-day-detail" style="margin:10px 16px 0;"></div>';
-  el.innerHTML = html;
-}
-
-function renderCalDay(el){
-  var dateStr = calDate.toISOString().split('T')[0];
-  var events = getCalEvents(dateStr);
-  var isToday = calDate.toDateString()===new Date().toDateString();
-
-  var html = '<div style="display:flex;align-items:center;justify-content:space-between;padding:0 16px;margin-bottom:10px;">'
-    +'<button onclick="changeCalDay(-1)" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">‹</button>'
-    +'<div style="font-size:15px;font-weight:700;">'+(isToday?'Today · ':'')+calDate.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})+'</div>'
-    +'<button onclick="changeCalDay(1)" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">›</button>'
-    +'</div>';
-
-  html += '<div class="card"><div class="card-title">🍽️ Food</div>';
-  if(events.foods.length){
-    var goals = getGoals();
-    var t = getTotals(events.foods);
-    html += '<div style="font-family:Syne,sans-serif;font-size:36px;font-weight:800;margin-bottom:4px;">'+Math.round(t.cal)+'<span style="font-size:14px;font-weight:500;color:var(--muted)"> kcal</span></div>'
-      +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">P '+t.protein.toFixed(0)+'g · C '+t.carbs.toFixed(0)+'g · F '+t.fat.toFixed(0)+'g</div>'
-      +events.foods.map(function(f){
-        return '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;">'
-          +'<span>'+f.name+'</span><span style="font-weight:700;">'+Math.round(f.cal||0)+'</span></div>';
-      }).join('');
-  } else { html += '<div style="color:var(--muted);font-size:13px;">No food logged.</div>'; }
-  html += '</div>';
-
-  html += '<div class="card"><div class="card-title">💪 Workouts</div>';
-  if(events.workouts.length){
-    events.workouts.forEach(function(w){
-      html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);">'
-        +'<div style="font-size:14px;font-weight:700;margin-bottom:4px;">'+w.name+'</div>'
-        +(w.exercises||[]).map(function(ex){
-          return '<div style="font-size:12px;color:var(--muted);">'
-            +ex.name+' · '+(ex.sets||[]).map(function(s,i){return (i+1)+': '+(s.weight||'?')+' lbs × '+(s.reps||'?');}).join(', ')
-            +'</div>';
-        }).join('')+'</div>';
-    });
-  } else { html += '<div style="color:var(--muted);font-size:13px;">No workouts logged.</div>'; }
-  html += '</div>';
-
-  el.innerHTML = html;
-}
-
-function calDayClick(dateStr){
-  var existing = document.getElementById('cal-day-detail');
-  if(!existing) return;
-  var events = getCalEvents(dateStr);
-  var goals = getGoals();
-  var t = getTotals(events.foods);
-  var d = new Date(dateStr+'T12:00:00');
-
-  existing.innerHTML = '<div class="card">'
-    +'<div style="font-size:14px;font-weight:700;margin-bottom:10px;">'+d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})+'</div>'
-    +(events.cal>0?'<div style="font-size:13px;margin-bottom:6px;">🍽️ '+Math.round(t.cal)+' kcal · P '+t.protein.toFixed(0)+'g · C '+t.carbs.toFixed(0)+'g · F '+t.fat.toFixed(0)+'g</div>':'<div style="font-size:13px;color:var(--muted);margin-bottom:6px;">No food logged</div>')
-    +(events.workouts.length?'<div style="font-size:13px;">💪 '+events.workouts.map(function(w){return w.name;}).join(', ')+'</div>':'')
-    +'</div>';
-  existing.scrollIntoView({behavior:'smooth',block:'nearest'});
-}
-
-function changeCalMonth(dir){
-  calDate = new Date(calDate.getFullYear(), calDate.getMonth()+dir, 1);
-  renderCalendar();
-}
-function changeCalWeek(dir){
-  calDate.setDate(calDate.getDate()+(dir*7));
-  renderCalendar();
-}
-function changeCalDay(dir){
-  calDate.setDate(calDate.getDate()+dir);
-  renderCalendar();
-}
-
-</script>
-
-<script>
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js')
-    .then(reg=>console.log('SW registered:', reg.scope))
-    .catch(err=>console.log('SW registration failed:', err));
-}
-</script>
-</body>
-</html>
