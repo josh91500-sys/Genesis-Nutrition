@@ -3145,7 +3145,7 @@ function showPaywall(feature){
 
 async function startCheckout(){
   try {
-    showToast('Redirecting to checkout...');
+    showToast('Connecting to Stripe...');
     var res = await fetch('/.netlify/functions/stripe-checkout', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -3155,15 +3155,22 @@ async function startCheckout(){
         cancelUrl: window.location.origin+'/?cancelled=1'
       })
     });
-    var data = await res.json();
+    // Get raw text first to debug
+    var rawText = await res.text();
+    console.log('Stripe response status:', res.status);
+    console.log('Stripe response body:', rawText);
+    if(!rawText || rawText.trim()===''){
+      throw new Error('Function returned empty response (status '+res.status+')');
+    }
+    var data = JSON.parse(rawText);
     if(data.url){
       window.location.href = data.url;
     } else {
-      throw new Error(data.error||'No checkout URL returned');
+      throw new Error(data.error||'No checkout URL in response');
     }
   } catch(e){
     console.error('Checkout error:', e);
-    showToast('Checkout error: '+e.message, 4000);
+    showToast(e.message, 5000);
   }
 }
 
