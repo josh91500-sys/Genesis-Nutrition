@@ -432,11 +432,7 @@ select option{background:var(--bg2);}
           <div class="more-label">Planner</div>
           <div class="more-sub">Meal plan & water</div>
         </div>
-        <div class="more-item" onclick="showSubPage('fitness')">
-          <div class="more-icon">💪</div>
-          <div class="more-label">Fitness Goals</div>
-          <div class="more-sub">Track workouts</div>
-        </div>
+
         <div class="more-item" onclick="showSubPage('health')">
           <div class="more-icon">🩺</div>
           <div class="more-label">Health AI</div>
@@ -849,20 +845,6 @@ function setMode(mode, el){
 async function doDescribeLookup(){
   const input = document.getElementById('describe-input').value.trim();
   if(!input) return;
-
-  // Detect fitness goal and redirect
-  const isFitnessGoal = /\b(bench|squat|deadlift|overhead press|curl|row|pull.?up|push.?up|lift|run|mile|5k|marathon|plank|reps|sets|gym|muscle|cardio|hiit|sprint)\b/i.test(input);
-  if(isFitnessGoal){
-    closeAddFood();
-    showToast('Sounds like a fitness goal — redirecting...');
-    setTimeout(function(){
-      document.querySelectorAll('.nav-btn').forEach(function(b){
-        if(b.textContent.trim().indexOf('Workout')>=0) showPage('workout',b);
-      });
-      setTimeout(function(){ setWorkoutTab('goals'); setTimeout(function(){ showAddGoalForm(); var el=document.getElementById('ng-name'); if(el) el.value=input; },200); },150);
-    },500);
-    return;
-  }
 
   const btn = document.getElementById('describe-btn');
   const status = document.getElementById('describe-status');
