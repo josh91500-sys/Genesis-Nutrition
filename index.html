@@ -293,6 +293,7 @@ select option{background:var(--bg2);}
     <div class="cal-summary" id="cal-summary" onclick="showNutritionDetail()" style="cursor:pointer;"></div>
 
     <div id="water-bar" style="margin:10px 16px 0;"></div>
+    <div id="fasting-timer-bar" style="margin:8px 16px 0;"></div>
     <div style="margin:8px 16px 0;"><button onclick="if(isPro())showMealPlanModal();else showProPaywall('AI Meal Planner',null)" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:13px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;"><span style="font-size:22px;">&#x1F37D;&#xFE0F;</span><div><div style="font-size:14px;font-weight:700;color:var(--text);">Generate Meal Plan</div><div style="font-size:11px;color:var(--muted);">AI builds a full day from your goals</div></div><span style="margin-left:auto;color:var(--accent2);font-size:18px;">&#x203A;</span></button></div>
     <!-- Quick re-add recent foods -->
     <div id="quick-recent" style="margin:10px 16px 0;"></div>
@@ -391,6 +392,11 @@ select option{background:var(--bg2);}
         <button class="day-nav-btn" onclick="changeWorkoutDay(1)">&#x203A;</button>
       </div>
       <div id="workout-summary" style="margin:10px 16px 0;"></div>
+      <div style="display:flex;gap:6px;padding:0 16px;margin-top:8px;">
+        <button onclick="showTemplatesMenu()" style="flex:1;background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:8px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;">&#x1F4CB; Templates</button>
+        <button onclick="saveCurrentAsTemplate()" style="flex:1;background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:8px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;">&#x1F4BE; Save</button>
+        <button onclick="showRestMenu()" style="flex:1;background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:8px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;">&#x23F1;&#xFE0F; Rest</button>
+      </div>
       <div id="workout-recent" style="margin:8px 16px 0;"></div>
       <div id="workout-content" style="padding-bottom:20px;"></div>
     </div>
@@ -428,7 +434,6 @@ select option{background:var(--bg2);}
           <div class="more-label">Planner</div>
           <div class="more-sub">Meal plan & water</div>
         </div>
-
         <div class="more-item" onclick="showSubPage('health')">
           <div class="more-icon">🩺</div>
           <div class="more-label">Health AI</div>
@@ -438,6 +443,16 @@ select option{background:var(--bg2);}
           <div class="more-icon">🎯</div>
           <div class="more-label">Goals</div>
           <div class="more-sub">Set daily targets</div>
+        </div>
+        <div class="more-item" onclick="showSubPage('supplements')">
+          <div class="more-icon">💊</div>
+          <div class="more-label">Supplements</div>
+          <div class="more-sub">Vitamins &amp; more</div>
+        </div>
+        <div class="more-item" onclick="showMeasurementsModal()">
+          <div class="more-icon">📏</div>
+          <div class="more-label">Measurements</div>
+          <div class="more-sub">Body tracking</div>
         </div>
         <div class="more-item" onclick="showSubPage('recipes')">
           <div class="more-icon">👨‍🍳</div>
@@ -771,6 +786,7 @@ function renderNutrition(){
       </div>
     </div>
     <div class="cal-bar-wrap"><div class="cal-bar-fill ${over?'over':''}" style="width:${pct}%"></div></div>
+    <div style="display:flex;gap:6px;margin-top:12px;">${(function(){var pCal=(t.protein||0)*4,cCal=(t.carbs||0)*4,fCal=(t.fat||0)*9;var total=pCal+cCal+fCal||1;var pPct=Math.round(pCal/total*100),cPct=Math.round(cCal/total*100),fPct=Math.round(fCal/total*100);return '<div style="flex:1;background:var(--bg4);border-radius:10px;padding:8px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:var(--protein);">'+pPct+'%</div><div style="font-size:9px;color:var(--muted);">PROTEIN</div></div><div style="flex:1;background:var(--bg4);border-radius:10px;padding:8px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:var(--carbs);">'+cPct+'%</div><div style="font-size:9px;color:var(--muted);">CARBS</div></div><div style="flex:1;background:var(--bg4);border-radius:10px;padding:8px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:var(--fat);">'+fPct+'%</div><div style="font-size:9px;color:var(--muted);">FAT</div></div>';})()}</div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;background:rgba(45,212,160,.08);border-radius:8px;padding:7px 10px;">
       <div style="font-size:12px;color:var(--fiber);">&#x1F525; Thermic Effect of Food</div>
       <div style="font-size:12px;font-weight:700;color:var(--fiber);">~${getTotalsTEF(log.foods)} kcal burned</div>
@@ -1607,6 +1623,38 @@ Return ONLY JSON: {"meals":[{"meal":"Breakfast","foods":[{"name":"food","cal":0,
   }
 }
 
+function renderFitnessSubPage(el){
+  const goals = JSON.parse(localStorage.getItem('gn_fitness_goals')||'[]');
+  el.innerHTML = `<div class="card">
+    <div class="card-title">\ud83d\udcaa Fitness Goals</div>
+    <div class="input-group"><label class="input-label">What do you want to achieve?</label>
+      <textarea id="fit-input" rows="2" placeholder="e.g. bench 315 lbs, hike 9 miles, run 5K under 25 min"></textarea></div>
+    <button class="btn-primary" onclick="generateFitnessGoal()">\ud83e\udd16 Create Goal</button>
+    <div id="fit-status" class="ai-status"></div>
+  </div>
+  ${goals.length ? `<div class="card">
+    <div class="card-title">Active Goals</div>
+    ${goals.map((g,i)=>{
+      const pct = Math.min(100,(g.current/g.target)*100);
+      const color = {Strength:'var(--protein)',Cardio:'var(--carbs)',Endurance:'var(--fiber)'}[g.category]||'var(--accent2)';
+      return `<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+          <div><div style="font-size:14px;font-weight:700;">${g.name}</div><div style="font-size:11px;color:${color};">${g.category}</div></div>
+          <div style="text-align:right;"><div style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;">${g.current}</div><div style="font-size:10px;color:var(--muted);">of ${g.target} ${g.unit}</div></div>
+        </div>
+        <div style="height:6px;background:var(--bg5);border-radius:99px;overflow:hidden;margin-bottom:6px;">
+          <div style="height:100%;width:${pct}%;background:${color};border-radius:99px;"></div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input type="number" id="fg_log_${i}" placeholder="Log new value" style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:8px;color:var(--text);font-size:13px;outline:none;">
+          <button onclick="logFitnessGoal(${i})" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Log</button>
+          <button onclick="deleteFitnessGoal(${i})" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer;">\u00d7</button>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>` : ''}`;
+}
+
 async function generateFitnessGoal(){
   const input = document.getElementById('fit-input').value.trim();
   if(!input) return;
@@ -2154,6 +2202,7 @@ function showSubPage(name){
   var el=document.getElementById('sub-page-content');
   if(name==='weight'){ showWeightTracker(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   if(name==='health'){ renderHealthSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
+  if(name==='supplements'){ renderSupplementsSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   var pages={planner:renderPlannerSubPage,goals:renderGoalsSubPage,recipes:renderRecipesSubPage};
   if(pages[name]) pages[name](el);
   el.scrollIntoView({behavior:'smooth',block:'start'});
@@ -2615,6 +2664,402 @@ function addDescribeResult(idx){ var food=window._describeResults&&window._descr
 
 </script>
 
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// FASTING TIMER
+// ═══════════════════════════════════════════════════════════════
+var _fastingInterval = null;
+function renderFastingTimer(){
+  var el = document.getElementById('fasting-timer-bar');
+  if(!el) return;
+  var lastEatenTime = getLastEatenTime();
+  if(!lastEatenTime){
+    el.innerHTML = '<button onclick="showFastingMenu()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;color:var(--text);"><span style="font-size:22px;">&#x23F1;&#xFE0F;</span><div style="flex:1;text-align:left;"><div style="font-size:14px;font-weight:700;">Fasting Timer</div><div style="font-size:11px;color:var(--muted);">Tap to start tracking</div></div><span style="color:var(--accent2);font-size:18px;">&#x203A;</span></button>';
+    return;
+  }
+  var now = Date.now();
+  var hoursSince = (now - lastEatenTime) / 3600000;
+  var h = Math.floor(hoursSince);
+  var m = Math.floor((hoursSince - h) * 60);
+  var target = parseInt(localStorage.getItem('gn_fasting_target')||'16');
+  var progress = Math.min(100, (hoursSince / target) * 100);
+  var achieved = hoursSince >= target;
+  var color = achieved ? 'var(--fiber)' : hoursSince > target*0.75 ? 'var(--sugar)' : 'var(--accent2)';
+  el.innerHTML = '<button onclick="showFastingMenu()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--text);">'
+    +'<span style="font-size:22px;">'+(achieved?'&#x1F389;':'&#x23F1;&#xFE0F;')+'</span>'
+    +'<div style="flex:1;text-align:left;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">'
+    +'<div style="font-size:14px;font-weight:700;">Fasting: '+h+'h '+m+'m</div>'
+    +'<div style="font-size:11px;color:'+color+';font-weight:700;">'+(achieved?'\u2713 Goal!':Math.round(hoursSince*10)/10+'/'+target+'h')+'</div>'
+    +'</div>'
+    +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+progress+'%;background:'+color+';border-radius:99px;"></div></div>'
+    +'</div></button>';
+}
+function getLastEatenTime(){
+  for(var i=0; i<=3; i++){
+    var log = loadDayLog(-i);
+    if(log.foods && log.foods.length){
+      var last = log.foods[log.foods.length-1];
+      if(last.eaten_at) return last.eaten_at;
+      if(last.id) return last.id;
+    }
+  }
+  return null;
+}
+function showFastingMenu(){
+  var target = parseInt(localStorage.getItem('gn_fasting_target')||'16');
+  var opts = [12, 14, 16, 18, 20, 24];
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'fasting-menu';
+  modal.innerHTML = '<div class="modal-sheet">'
+    +'<div class="modal-handle"></div>'
+    +'<div class="modal-title">&#x23F1;&#xFE0F; Intermittent Fasting</div>'
+    +'<div style="font-size:13px;color:var(--muted);margin-bottom:14px;">Timer tracks time since your last logged food.</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;">'
+    +opts.map(function(h){ return '<button onclick="setFastingTarget('+h+')" style="background:'+(h===target?'var(--accent)':'var(--bg4)')+';border:1px solid '+(h===target?'var(--accent)':'var(--border2)')+';color:'+(h===target?'#fff':'var(--text)')+';border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;">'+h+'h</button>'; }).join('')
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.6;">&#x1F4A1; Popular: 16:8, 18:6, or OMAD (24h).</div>'
+    +'<button class="btn-secondary" onclick="document.getElementById(\'fasting-menu\').remove()">Close</button>'
+    +'</div>';
+  document.body.appendChild(modal);
+}
+function setFastingTarget(hours){
+  localStorage.setItem('gn_fasting_target', hours);
+  var modal = document.getElementById('fasting-menu');
+  if(modal) modal.remove();
+  renderFastingTimer();
+  showToast('\u2713 Fasting target: '+hours+'h');
+}
+function startFastingTimer(){
+  if(_fastingInterval) clearInterval(_fastingInterval);
+  _fastingInterval = setInterval(function(){
+    var el = document.getElementById('fasting-timer-bar');
+    var home = document.getElementById('page-nutrition');
+    if(el && home && home.classList.contains('active')) renderFastingTimer();
+  }, 60000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REST TIMER
+// ═══════════════════════════════════════════════════════════════
+var _restInterval = null, _restEndTime = 0;
+function startRestTimer(seconds){
+  if(_restInterval) clearInterval(_restInterval);
+  _restEndTime = Date.now() + seconds*1000;
+  showRestTimerOverlay();
+  _restInterval = setInterval(function(){
+    var remaining = Math.max(0, Math.round((_restEndTime - Date.now())/1000));
+    var tEl = document.getElementById('rest-timer-time');
+    if(tEl) tEl.textContent = Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0');
+    if(remaining <= 0){
+      clearInterval(_restInterval); _restInterval = null;
+      showToast('\u23F0 Rest complete!', 3000);
+      closeRestTimer();
+      try {
+        var ctx = new (window.AudioContext||window.webkitAudioContext)();
+        var osc = ctx.createOscillator(); var gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = 800; gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime+0.3);
+        osc.start(); osc.stop(ctx.currentTime+0.3);
+      } catch(e){}
+    }
+  }, 250);
+}
+function showRestTimerOverlay(){
+  var existing = document.getElementById('rest-timer-overlay');
+  if(existing) existing.remove();
+  var ov = document.createElement('div');
+  ov.id = 'rest-timer-overlay';
+  ov.style.cssText = 'position:fixed;bottom:90px;left:16px;right:16px;background:var(--accent);color:#fff;border-radius:var(--r2);padding:14px 18px;display:flex;align-items:center;gap:12px;z-index:300;box-shadow:0 4px 24px rgba(99,87,255,.4);';
+  ov.innerHTML = '<span style="font-size:22px;">&#x23F1;&#xFE0F;</span>'
+    +'<div style="flex:1;"><div style="font-size:11px;opacity:.8;">REST TIMER</div>'
+    +'<div id="rest-timer-time" style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;">--:--</div></div>'
+    +'<button onclick="addRestTime(30)" style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;">+30s</button>'
+    +'<button onclick="closeRestTimer()" style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;">\u2715</button>';
+  document.body.appendChild(ov);
+}
+function addRestTime(s){ _restEndTime += s*1000; }
+function closeRestTimer(){
+  if(_restInterval) clearInterval(_restInterval);
+  _restInterval = null;
+  var ov = document.getElementById('rest-timer-overlay'); if(ov) ov.remove();
+}
+function showRestMenu(){
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'rest-menu';
+  modal.innerHTML = '<div class="modal-sheet">'
+    +'<div class="modal-handle"></div>'
+    +'<div class="modal-title">&#x23F1;&#xFE0F; Rest Timer</div>'
+    +'<div style="font-size:13px;color:var(--muted);margin-bottom:14px;">Select rest duration:</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">'
+    +[60,90,120,180,240,300].map(function(s){
+      var label = s<60 ? s+'s' : Math.floor(s/60)+'m'+(s%60?' '+(s%60)+'s':'');
+      return '<button onclick="document.getElementById(\'rest-menu\').remove();startRestTimer('+s+')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;">'+label+'</button>';
+    }).join('')
+    +'</div>'
+    +'<button class="btn-secondary" onclick="document.getElementById(\'rest-menu\').remove()">Cancel</button>'
+    +'</div>';
+  document.body.appendChild(modal);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GROCERY LIST
+// ═══════════════════════════════════════════════════════════════
+function exportGroceryList(plan){
+  if(!plan || !plan.meals) return;
+  var items = {};
+  plan.meals.forEach(function(m){
+    (m.foods||[]).forEach(function(f){
+      var name = f.name.split(',')[0].trim();
+      items[name] = (items[name]||0) + 1;
+    });
+  });
+  var lines = Object.keys(items).sort().map(function(k){ return (items[k]>1 ? '('+items[k]+'x) ' : '') + k; });
+  var text = '&#x1F6D2; Genesis Grocery List\n\n' + lines.map(function(l){return '\u25A1 '+l;}).join('\n');
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'grocery-modal';
+  modal.innerHTML = '<div class="modal-sheet">'
+    +'<div class="modal-handle"></div>'
+    +'<div class="modal-title">&#x1F6D2; Grocery List</div>'
+    +'<div style="background:var(--bg4);border-radius:var(--r1);padding:14px;margin-bottom:14px;max-height:300px;overflow-y:auto;">'
+    +lines.map(function(l){return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">\u25A1 '+l+'</div>';}).join('')
+    +'</div>'
+    +'<button class="btn-primary" onclick="copyGroceryList(this)" data-text="'+text.replace(/"/g,'&quot;').replace(/\n/g,'||NL||')+'">&#x1F4CB; Copy List</button>'
+    +'<button class="btn-secondary" style="margin-top:8px;" onclick="shareGroceryList(this)" data-text="'+text.replace(/"/g,'&quot;').replace(/\n/g,'||NL||')+'">&#x1F4E4; Share</button>'
+    +'<button class="btn-secondary" style="margin-top:8px;" onclick="document.getElementById(\'grocery-modal\').remove()">Close</button>'
+    +'</div>';
+  document.body.appendChild(modal);
+}
+function copyGroceryList(btn){
+  var text = btn.dataset.text.replace(/\|\|NL\|\|/g, '\n');
+  if(navigator.clipboard){ navigator.clipboard.writeText(text); showToast('\u2713 Copied to clipboard!'); }
+  else { var ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast('\u2713 Copied!'); }
+}
+function shareGroceryList(btn){
+  var text = btn.dataset.text.replace(/\|\|NL\|\|/g, '\n');
+  if(navigator.share){ navigator.share({title:'Grocery List', text:text}); }
+  else copyGroceryList(btn);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PR DETECTION
+// ═══════════════════════════════════════════════════════════════
+function getExercisePR(exerciseName){
+  var best = 0;
+  for(var i=0; i<=90; i++){
+    var log = loadDayWorkout(-i);
+    (log.exercises||[]).forEach(function(ex){
+      if(ex.name === exerciseName){
+        (ex.sets||[]).forEach(function(s){
+          var w = parseFloat(s.weight)||0;
+          if(w > best) best = w;
+        });
+      }
+    });
+  }
+  return best;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SUPPLEMENTS
+// ═══════════════════════════════════════════════════════════════
+function loadSupplements(){ try{return JSON.parse(localStorage.getItem('gn_supplements')||'[]');}catch(e){return[];} }
+function saveSupplements(s){ localStorage.setItem('gn_supplements',JSON.stringify(s)); }
+function loadSupplementLog(offset){ offset=offset||0; try{return JSON.parse(localStorage.getItem('gn_suplog_'+dateKey(offset))||'{}');}catch(e){return{};} }
+function saveSupplementLog(data, offset){ offset=offset||0; localStorage.setItem('gn_suplog_'+dateKey(offset), JSON.stringify(data)); }
+
+function renderSupplementsSubPage(el){
+  var sups = loadSupplements();
+  var todayLog = loadSupplementLog(0);
+  var html = '<div class="card"><div class="card-title">&#x1F48A; Supplements</div>'
+    +'<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Track daily supplements and vitamins.</div>';
+  if(sups.length){
+    html += '<div style="margin-bottom:14px;">';
+    sups.forEach(function(s, i){
+      var taken = !!todayLog[s.name];
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">'
+        +'<button onclick="toggleSupplement(this)" data-name="'+s.name.replace(/"/g,'&quot;')+'" style="width:28px;height:28px;border-radius:8px;border:2px solid '+(taken?'var(--fiber)':'var(--border2)')+';background:'+(taken?'var(--fiber)':'transparent')+';color:#000;font-size:16px;font-weight:800;cursor:pointer;">'+(taken?'\u2713':'')+'</button>'
+        +'<div style="flex:1;"><div style="font-size:14px;font-weight:600;'+(taken?'text-decoration:line-through;color:var(--muted);':'')+'">'+s.name+'</div>'
+        +(s.dose?'<div style="font-size:11px;color:var(--muted);">'+s.dose+'</div>':'')+'</div>'
+        +'<button onclick="deleteSupplement('+i+')" style="background:none;border:none;color:var(--muted2);font-size:18px;cursor:pointer;">\u00D7</button>'
+        +'</div>';
+    });
+    html += '</div>';
+  }
+  html += '<div class="input-group"><label class="input-label">Add Supplement</label>'
+    +'<div style="display:flex;gap:8px;"><input type="text" id="new-sup-name" placeholder="Name"><input type="text" id="new-sup-dose" placeholder="Dose" style="flex:0 0 100px;"></div></div>'
+    +'<button class="btn-primary" onclick="addSupplement()">+ Add</button>'
+    +'</div>';
+  el.innerHTML = html;
+}
+function addSupplement(){
+  var name = document.getElementById('new-sup-name').value.trim();
+  if(!name){ showToast('Enter a name'); return; }
+  var dose = document.getElementById('new-sup-dose').value.trim();
+  var sups = loadSupplements();
+  sups.push({name:name, dose:dose});
+  saveSupplements(sups);
+  renderSupplementsSubPage(document.getElementById('sub-page-content'));
+  showToast('\u2713 Added '+name);
+}
+function toggleSupplement(btn){
+  var name = btn.dataset.name;
+  var log = loadSupplementLog(0);
+  log[name] = !log[name];
+  saveSupplementLog(log, 0);
+  renderSupplementsSubPage(document.getElementById('sub-page-content'));
+}
+function deleteSupplement(idx){
+  var sups = loadSupplements();
+  sups.splice(idx,1);
+  saveSupplements(sups);
+  renderSupplementsSubPage(document.getElementById('sub-page-content'));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WORKOUT TEMPLATES
+// ═══════════════════════════════════════════════════════════════
+function loadWorkoutTemplates(){ try{return JSON.parse(localStorage.getItem('gn_wtemplates')||'[]');}catch(e){return[];} }
+function saveWorkoutTemplates(t){ localStorage.setItem('gn_wtemplates',JSON.stringify(t)); }
+function saveCurrentAsTemplate(){
+  var log = loadDayWorkout();
+  if(!log.exercises || !log.exercises.length){ showToast('No exercises to save'); return; }
+  var name = prompt('Template name (e.g. "Push Day A"):');
+  if(!name) return;
+  var templates = loadWorkoutTemplates();
+  templates.push({
+    name: name,
+    created: new Date().toISOString(),
+    exercises: log.exercises.map(function(ex){
+      return { name:ex.name, muscle:ex.muscle||'', sets: (ex.sets||[]).map(function(s){return {weight:s.weight||'', reps:s.reps||''};}) };
+    })
+  });
+  saveWorkoutTemplates(templates);
+  showToast('\u2713 Template saved: '+name);
+}
+function showTemplatesMenu(){
+  var templates = loadWorkoutTemplates();
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'templates-menu';
+  var html = '<div class="modal-sheet"><div class="modal-handle"></div>'
+    +'<div class="modal-title">&#x1F4CB; Workout Templates</div>';
+  if(!templates.length){
+    html += '<div style="text-align:center;color:var(--muted);padding:14px;font-size:13px;">No templates saved yet. Complete a workout and tap "Save as Template".</div>';
+  } else {
+    html += '<div style="max-height:400px;overflow-y:auto;">'
+      +templates.map(function(t, i){
+        return '<div style="display:flex;align-items:center;gap:8px;padding:12px;background:var(--bg4);border-radius:var(--r1);margin-bottom:8px;">'
+          +'<div style="flex:1;"><div style="font-size:14px;font-weight:700;">'+t.name+'</div><div style="font-size:11px;color:var(--muted);">'+t.exercises.length+' exercises \u00B7 '+new Date(t.created).toLocaleDateString('en-US',{month:'short',day:'numeric'})+'</div></div>'
+          +'<button onclick="loadTemplate('+i+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;">Load</button>'
+          +'<button onclick="deleteTemplate('+i+')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:8px 10px;font-size:12px;cursor:pointer;">\u00D7</button>'
+          +'</div>';
+      }).join('')+'</div>';
+  }
+  html += '<button class="btn-secondary" style="margin-top:12px;" onclick="document.getElementById(\'templates-menu\').remove()">Close</button></div>';
+  modal.innerHTML = html;
+  document.body.appendChild(modal);
+}
+function loadTemplate(idx){
+  var templates = loadWorkoutTemplates();
+  var t = templates[idx]; if(!t) return;
+  var log = loadDayWorkout();
+  t.exercises.forEach(function(ex){
+    log.exercises.push({
+      name: ex.name, muscle: ex.muscle,
+      sets: ex.sets.map(function(s){ return {weight:'', reps:s.reps||''}; })
+    });
+  });
+  saveDayWorkout(log);
+  var m = document.getElementById('templates-menu'); if(m) m.remove();
+  renderWorkout();
+  showToast('\u2713 Loaded: '+t.name);
+}
+function deleteTemplate(idx){
+  if(!confirm('Delete template?')) return;
+  var templates = loadWorkoutTemplates();
+  templates.splice(idx,1);
+  saveWorkoutTemplates(templates);
+  showTemplatesMenu();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BODY MEASUREMENTS
+// ═══════════════════════════════════════════════════════════════
+function loadMeasurements(){ try{return JSON.parse(localStorage.getItem('gn_measurements')||'[]');}catch(e){return[];} }
+function saveMeasurementsList(m){ localStorage.setItem('gn_measurements',JSON.stringify(m)); }
+function showMeasurementsModal(){
+  var logs = loadMeasurements();
+  var today = logs.find(function(e){return e.date===dateKey(0);}) || {};
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'measurements-modal';
+  var html = '<div class="modal-sheet">'
+    +'<div class="modal-handle"></div>'
+    +'<div class="modal-title">&#x1F4CF; Body Measurements</div>'
+    +'<div style="font-size:13px;color:var(--muted);margin-bottom:14px;">Track inches. Only filled values save.</div>'
+    +'<div class="input-row">'
+    +'<div class="input-group"><label class="input-label">Chest</label><input type="number" id="mm-chest" placeholder="in" value="'+(today.chest||'')+'" step="0.25"></div>'
+    +'<div class="input-group"><label class="input-label">Waist</label><input type="number" id="mm-waist" placeholder="in" value="'+(today.waist||'')+'" step="0.25"></div>'
+    +'</div>'
+    +'<div class="input-row">'
+    +'<div class="input-group"><label class="input-label">Hips</label><input type="number" id="mm-hips" placeholder="in" value="'+(today.hips||'')+'" step="0.25"></div>'
+    +'<div class="input-group"><label class="input-label">Arm</label><input type="number" id="mm-arm" placeholder="in" value="'+(today.arm||'')+'" step="0.25"></div>'
+    +'</div>'
+    +'<div class="input-row">'
+    +'<div class="input-group"><label class="input-label">Thigh</label><input type="number" id="mm-thigh" placeholder="in" value="'+(today.thigh||'')+'" step="0.25"></div>'
+    +'<div class="input-group"><label class="input-label">Neck</label><input type="number" id="mm-neck" placeholder="in" value="'+(today.neck||'')+'" step="0.25"></div>'
+    +'</div>'
+    +'<button class="btn-primary" onclick="saveMeasurementLog()">Save</button>';
+  if(logs.length){
+    html += '<div style="margin-top:14px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:6px;">Recent</div>'
+      +logs.slice().reverse().slice(0,5).map(function(l){
+        var parts = [];
+        ['chest','waist','hips','arm','thigh','neck'].forEach(function(k){ if(l[k]) parts.push(k+': '+l[k]+'"'); });
+        return '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;"><div style="color:var(--muted);margin-bottom:2px;">'+new Date(l.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+'</div><div>'+(parts.join(' \u00B7 ')||'No data')+'</div></div>';
+      }).join('');
+  }
+  html += '<button class="btn-secondary" style="margin-top:10px;" onclick="document.getElementById(\'measurements-modal\').remove()">Close</button></div>';
+  modal.innerHTML = html;
+  document.body.appendChild(modal);
+}
+function saveMeasurementLog(){
+  var entry = {date:dateKey(0)};
+  ['chest','waist','hips','arm','thigh','neck'].forEach(function(k){
+    var v = parseFloat(document.getElementById('mm-'+k).value);
+    if(v>0) entry[k] = v;
+  });
+  if(Object.keys(entry).length===1){ showToast('Enter at least one'); return; }
+  var logs = loadMeasurements();
+  var idx = logs.findIndex(function(e){return e.date===entry.date;});
+  if(idx>=0) logs[idx] = Object.assign(logs[idx], entry); else logs.push(entry);
+  logs.sort(function(a,b){return a.date.localeCompare(b.date);});
+  saveMeasurementsList(logs);
+  document.getElementById('measurements-modal').remove();
+  showToast('\u2713 Saved');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+(function(){
+  var origRender = window.renderNutrition;
+  if(origRender){
+    window.renderNutrition = function(){
+      var r = origRender.apply(this, arguments);
+      if(typeof renderFastingTimer === 'function') renderFastingTimer();
+      return r;
+    };
+  }
+  setTimeout(startFastingTimer, 500);
+})();
+
+</script>
 <script>
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('/sw.js')
