@@ -3215,27 +3215,42 @@ function hideAuthGate(){
 async function doGoogleSignIn(){
   var status = document.getElementById('auth-status');
   status.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:8px;"><div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><span style="color:var(--muted);font-size:13px;">Opening Google...</span></div>';
+  
+  // Detect if app is running as installed PWA
+  var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  
+  if(isStandalone){
+    // PWAs can't reliably use redirect OR popup - direct user to browser
+    status.innerHTML = '<div style="color:var(--sugar);font-size:13px;line-height:1.5;">\u26A0\uFE0F Google Sign-In doesn\'t work inside installed PWAs yet.<br><br>Please use email/password here, or sign in with Google in your browser first at:<br><strong style="color:var(--accent2);">genesisnutrition.netlify.app</strong></div>';
+    return;
+  }
+  
   try {
     var provider = new firebase.auth.GoogleAuthProvider();
     provider.setCustomParameters({prompt:'select_account'});
-    // Use redirect on mobile/standalone, popup on desktop
-    var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-    if(isMobile || isStandalone){
-      await fbAuth.signInWithRedirect(provider);
-      // Page will redirect and return; getRedirectResult handles it in init
-    } else {
-      var result = await fbAuth.signInWithPopup(provider);
-      status.innerHTML = '<span style="color:var(--fiber);">\u2713 Signed in as ' + result.user.email + '</span>';
-      if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
-        await handlePostSignup(result.user);
-      }
+    // Always try popup first - works on desktop and mobile browsers
+    var result = await fbAuth.signInWithPopup(provider);
+    status.innerHTML = '<span style="color:var(--fiber);">\u2713 Signed in as ' + result.user.email + '</span>';
+    if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
+      await handlePostSignup(result.user);
     }
   } catch(e){
+    console.error('Popup failed, trying redirect:', e);
+    // Popup failed - try redirect as fallback
+    if(e.code === 'auth/popup-blocked' || e.code === 'auth/cancelled-popup-request'){
+      try {
+        var provider2 = new firebase.auth.GoogleAuthProvider();
+        provider2.setCustomParameters({prompt:'select_account'});
+        await fbAuth.signInWithRedirect(provider2);
+        return;
+      } catch(e2){
+        status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (e2.code||e2.message) + '</span>';
+        return;
+      }
+    }
     var msg = e.message || 'Sign in failed';
-    if(e.code === 'auth/popup-blocked') msg = 'Popup blocked. Allow popups or try email signup.';
     if(e.code === 'auth/popup-closed-by-user') msg = 'Sign in cancelled.';
-    if(e.code === 'auth/unauthorized-domain') msg = 'This domain is not authorized in Firebase. Add it in Auth > Settings > Authorized domains.';
+    if(e.code === 'auth/unauthorized-domain') msg = 'Domain not authorized. Add genesisnutrition.netlify.app in Firebase Auth settings.';
     status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + msg + '</span>';
   }
 }
@@ -3453,14 +3468,7 @@ function initFirebaseAuth(){
   // Check if there's a stored user from previous session
   fbAuth.getRedirectResult().then(function(result){
     console.log('[auth] getRedirectResult:', result);
-    var dbg2 = document.getElementById('auth-debug');
-    if(!dbg2){
-      dbg2 = document.createElement('div');
-      dbg2.id = 'auth-debug';
-      dbg2.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font-family:monospace;font-size:10px;padding:6px;z-index:99999;max-height:50vh;overflow-y:auto;white-space:pre-wrap;';
-      document.body.appendChild(dbg2);
-    }
-    dbg2.textContent += '[' + new Date().toLocaleTimeString() + '] redirect result: ' + (result && result.user ? 'user=' + result.user.email : 'no user') + '\n';
+
     if(result && result.user){
       console.log('[auth] Redirect SUCCESS:', result.user.email);
       if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
@@ -3471,29 +3479,14 @@ function initFirebaseAuth(){
     }
   }).catch(function(e){
     console.error('[auth] Redirect error:', e.code, e.message);
-    var dbg3 = document.getElementById('auth-debug');
-    if(!dbg3){
-      dbg3 = document.createElement('div');
-      dbg3.id = 'auth-debug';
-      dbg3.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font-family:monospace;font-size:10px;padding:6px;z-index:99999;max-height:50vh;overflow-y:auto;white-space:pre-wrap;';
-      document.body.appendChild(dbg3);
-    }
-    dbg3.textContent += '[' + new Date().toLocaleTimeString() + '] redirect ERROR: ' + (e.code||e.message) + '\n';
+
     var s = document.getElementById('auth-status');
     if(s) s.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (e.code || e.message) + '</span>';
   });
 
   fbAuth.onAuthStateChanged(function(user){
     console.log('[auth] onAuthStateChanged fired, user:', user ? user.email : 'null');
-    // Visible debug log
-    var dbg = document.getElementById('auth-debug');
-    if(!dbg){
-      dbg = document.createElement('div');
-      dbg.id = 'auth-debug';
-      dbg.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font-family:monospace;font-size:10px;padding:6px;z-index:99999;max-height:50vh;overflow-y:auto;white-space:pre-wrap;';
-      document.body.appendChild(dbg);
-    }
-    dbg.textContent += '[' + new Date().toLocaleTimeString() + '] auth state: ' + (user ? user.email : 'null') + '\n';
+
     if(user){
       _currentUser = user;
       console.log('[auth] Signed in as', user.email);
