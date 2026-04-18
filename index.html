@@ -3215,11 +3215,19 @@ async function doGoogleSignIn(){
   status.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:8px;"><div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><span style="color:var(--muted);font-size:13px;">Opening Google...</span></div>';
   try {
     var provider = new firebase.auth.GoogleAuthProvider();
-    var result = await fbAuth.signInWithPopup(provider);
-    status.innerHTML = '<span style="color:var(--fiber);">\u2713 Signed in as ' + result.user.email + '</span>';
-    // If new user, check for migration
-    if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
-      await handlePostSignup(result.user);
+    provider.setCustomParameters({prompt:'select_account'});
+    // Use redirect on mobile/standalone, popup on desktop
+    var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    if(isMobile || isStandalone){
+      await fbAuth.signInWithRedirect(provider);
+      // Page will redirect and return; getRedirectResult handles it in init
+    } else {
+      var result = await fbAuth.signInWithPopup(provider);
+      status.innerHTML = '<span style="color:var(--fiber);">\u2713 Signed in as ' + result.user.email + '</span>';
+      if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
+        await handlePostSignup(result.user);
+      }
     }
   } catch(e){
     var msg = e.message || 'Sign in failed';
@@ -3433,6 +3441,24 @@ document.addEventListener('DOMContentLoaded', function(){
     console.error('Firebase not loaded');
     return;
   }
+
+  // Handle redirect result from Google Sign-In
+  fbAuth.getRedirectResult().then(async function(result){
+    if(result && result.user){
+      console.log('[auth] Redirect sign-in completed:', result.user.email);
+      if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
+        await handlePostSignup(result.user);
+      }
+    }
+  }).catch(function(e){
+    console.error('[auth] Redirect error:', e);
+    if(e.code === 'auth/unauthorized-domain'){
+      setTimeout(function(){
+        var s = document.getElementById('auth-status');
+        if(s) s.innerHTML = '<span style="color:#ff9090;">\u2717 Domain not authorized. Check Firebase > Auth > Settings > Authorized domains.</span>';
+      }, 500);
+    }
+  });
 
   fbAuth.onAuthStateChanged(async function(user){
     if(user){
