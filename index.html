@@ -3453,6 +3453,14 @@ function initFirebaseAuth(){
   // Check if there's a stored user from previous session
   fbAuth.getRedirectResult().then(function(result){
     console.log('[auth] getRedirectResult:', result);
+    var dbg2 = document.getElementById('auth-debug');
+    if(!dbg2){
+      dbg2 = document.createElement('div');
+      dbg2.id = 'auth-debug';
+      dbg2.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font-family:monospace;font-size:10px;padding:6px;z-index:99999;max-height:50vh;overflow-y:auto;white-space:pre-wrap;';
+      document.body.appendChild(dbg2);
+    }
+    dbg2.textContent += '[' + new Date().toLocaleTimeString() + '] redirect result: ' + (result && result.user ? 'user=' + result.user.email : 'no user') + '\n';
     if(result && result.user){
       console.log('[auth] Redirect SUCCESS:', result.user.email);
       if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
@@ -3463,12 +3471,29 @@ function initFirebaseAuth(){
     }
   }).catch(function(e){
     console.error('[auth] Redirect error:', e.code, e.message);
+    var dbg3 = document.getElementById('auth-debug');
+    if(!dbg3){
+      dbg3 = document.createElement('div');
+      dbg3.id = 'auth-debug';
+      dbg3.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font-family:monospace;font-size:10px;padding:6px;z-index:99999;max-height:50vh;overflow-y:auto;white-space:pre-wrap;';
+      document.body.appendChild(dbg3);
+    }
+    dbg3.textContent += '[' + new Date().toLocaleTimeString() + '] redirect ERROR: ' + (e.code||e.message) + '\n';
     var s = document.getElementById('auth-status');
     if(s) s.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (e.code || e.message) + '</span>';
   });
 
   fbAuth.onAuthStateChanged(function(user){
     console.log('[auth] onAuthStateChanged fired, user:', user ? user.email : 'null');
+    // Visible debug log
+    var dbg = document.getElementById('auth-debug');
+    if(!dbg){
+      dbg = document.createElement('div');
+      dbg.id = 'auth-debug';
+      dbg.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;font-family:monospace;font-size:10px;padding:6px;z-index:99999;max-height:50vh;overflow-y:auto;white-space:pre-wrap;';
+      document.body.appendChild(dbg);
+    }
+    dbg.textContent += '[' + new Date().toLocaleTimeString() + '] auth state: ' + (user ? user.email : 'null') + '\n';
     if(user){
       _currentUser = user;
       console.log('[auth] Signed in as', user.email);
