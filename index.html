@@ -743,6 +743,11 @@ function renderNutrition(){
       </div>
     </div>
     <div class="cal-bar-wrap"><div class="cal-bar-fill ${over?'over':''}" style="width:${pct}%"></div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;background:rgba(45,212,160,.08);border-radius:8px;padding:7px 10px;">
+      <div style="font-size:12px;color:var(--fiber);">🔥 Thermic Effect of Food</div>
+      <div style="font-size:12px;font-weight:700;color:var(--fiber);">~${getTotalsTEF(log.foods)} kcal burned digesting</div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:4px;margin-bottom:2px;">Net calories: ~${Math.round(t.cal - getTotalsTEF(log.foods))} kcal</div>
     <div class="macro-row">
       ${[
         {key:'protein',label:'Protein',color:'var(--protein)'},
@@ -2555,6 +2560,39 @@ function renderWaterBar(){
 }
 function addWater(n){ var goal=getGoals().water||8; saveWater(Math.min(goal,Math.max(0,loadWater()+n))); renderWaterBar(); }
 function setWater(n){ saveWater(n); renderWaterBar(); }
+
+// ═══════════════════════════════════════
+// THERMIC EFFECT OF FOOD (TEF)
+// ═══════════════════════════════════════
+function calcTEF(food){
+  // Research-based TEF rates
+  var protein_tef = 0.25;  // 20-30%, use 25%
+  var carb_tef    = 0.075; // 5-10%, use 7.5%
+  var fat_tef     = 0.02;  // 0-3%, use 2%
+  var fiber_tef   = 0.20;  // ~20% (fermentation/digestion cost)
+
+  var protein_cal = (parseFloat(food.protein)||0) * 4;
+  var carb_cal    = Math.max(0, ((parseFloat(food.carbs)||0) - (parseFloat(food.fiber)||0))) * 4;
+  var fiber_cal   = (parseFloat(food.fiber)||0) * 2; // fiber ~2 kcal/g net
+  var fat_cal     = (parseFloat(food.fat)||0) * 9;
+
+  var tef = (protein_cal * protein_tef)
+           + (carb_cal   * carb_tef)
+           + (fiber_cal  * fiber_tef)
+           + (fat_cal    * fat_tef);
+
+  return Math.round(tef);
+}
+
+function calcNetCal(food){
+  return Math.max(0, Math.round((parseFloat(food.cal)||0) - calcTEF(food)));
+}
+
+function getTotalsTEF(foods){
+  var tef = 0;
+  (foods||[]).forEach(function(f){ tef += calcTEF(f); });
+  return tef;
+}
 </script>
 
 <script>
