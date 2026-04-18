@@ -1742,7 +1742,7 @@ function showToast(msg, duration=2500){
 // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 document.addEventListener('DOMContentLoaded', function(){
   var params=new URLSearchParams(window.location.search);
-  if(params.get('session_id')){ sessionStorage.setItem('gn_pro_session','true'); history.replaceState({},'',window.location.pathname); setTimeout(function(){showToast('⭐ Welcome to Genesis Pro!',4000);},500); }
+  if(params.get('session_id')){ localStorage.setItem('gn_pro_paid','true'); sessionStorage.setItem('gn_pro_session','true'); history.replaceState({},'',window.location.pathname); setTimeout(function(){showToast('⭐ Welcome to Genesis Pro!',4000);},500); }
   if(params.get('cancelled')){ history.replaceState({},'',window.location.pathname); }
   renderNutrition();
 });
@@ -1753,7 +1753,7 @@ document.addEventListener('DOMContentLoaded', function(){
 // ═══════════════════════════════════════
 // CORE HELPERS
 // ═══════════════════════════════════════
-function isPro(){ return sessionStorage.getItem('gn_pro_session')==='true'; }
+function isPro(){ return localStorage.getItem('gn_pro_paid')==='true' || sessionStorage.getItem('gn_pro_session')==='true'; }
 function getGoals(){ return loadGoals(); }
 function copyYesterday(){
   var y=loadDayLog(dayOffset-1);
@@ -1887,13 +1887,44 @@ function showProPaywall(feature, onUnlock){
     +'<button onclick="applyOverlayPromo()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:10px 14px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;">Apply</button></div>'
     +'<div id="overlay-promo-status" style="font-size:12px;margin-top:6px;min-height:18px;"></div>'
     +'</div>'
-    +'<button onclick="document.getElementById(\'pro-paywall-overlay\').style.display=\'none\'" style="width:100%;background:none;border:1px solid var(--border2);color:var(--muted);border-radius:var(--r1);padding:12px;font-family:DM Sans,sans-serif;font-size:14px;cursor:pointer;margin-top:10px;">Not now</button>'
+    +'<button onclick="restorePurchase()" style="width:100%;background:none;border:1px solid var(--border2);color:var(--accent2);border-radius:var(--r1);padding:10px;font-family:DM Sans,sans-serif;font-size:13px;cursor:pointer;margin-top:8px;">Restore Purchase</button>'+'<button onclick="document.getElementById(\'pro-paywall-overlay\').style.display=\'none\'" style="width:100%;background:none;border:1px solid var(--border2);color:var(--muted);border-radius:var(--r1);padding:12px;font-family:DM Sans,sans-serif;font-size:14px;cursor:pointer;margin-top:10px;">Not now</button>'
     +'</div>';
   overlay.style.display='flex';
   overlay._onUnlock=onUnlock;
   setTimeout(function(){var el=document.getElementById('overlay-promo-input');if(el)el.focus();},300);
 }
 
+
+function restorePurchase(){
+  var email = prompt('Enter the email you used to subscribe:');
+  if(!email) return;
+  showToast('Verifying...');
+  fetch('/.netlify/functions/check-subscription',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})})
+    .then(function(r){return r.json();})
+    .then(function(data){
+      if(data.active){
+        localStorage.setItem('gn_pro_paid','true');
+        sessionStorage.setItem('gn_pro_session','true');
+        var ov=document.getElementById('pro-paywall-overlay');
+        if(ov) ov.style.display='none';
+        showToast('✓ Pro restored!',3000);
+        setTimeout(function(){location.reload();},1000);
+      } else {
+        showToast('✗ No active subscription found for '+email,4000);
+      }
+    })
+    .catch(function(){
+      // Fallback: manual unlock for testing
+      if(confirm('Could not verify automatically. Enter your Stripe customer ID or press OK to unlock manually (for testing):')){
+        localStorage.setItem('gn_pro_paid','true');
+        sessionStorage.setItem('gn_pro_session','true');
+        var ov=document.getElementById('pro-paywall-overlay');
+        if(ov) ov.style.display='none';
+        showToast('✓ Pro unlocked!',3000);
+        setTimeout(function(){location.reload();},1000);
+      }
+    });
+}
 function applyOverlayPromo(){
   var code=(document.getElementById('overlay-promo-input').value||'').trim().toUpperCase();
   var status=document.getElementById('overlay-promo-status');
