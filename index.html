@@ -265,8 +265,64 @@ select option{background:var(--bg2);}
 .empty-icon{font-size:40px;margin-bottom:10px;}
 .empty-text{font-size:14px;line-height:1.5;}
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+<script>
+var firebaseConfig = {
+  apiKey: "AIzaSyDIA3sUL2Of9bRVDzud0H9jbMVtMC_JAac",
+  authDomain: "genesis-nutrition-5d6f8.firebaseapp.com",
+  projectId: "genesis-nutrition-5d6f8",
+  storageBucket: "genesis-nutrition-5d6f8.firebasestorage.app",
+  messagingSenderId: "273557707832",
+  appId: "1:273557707832:web:1da5319e876434504a9acd"
+};
+firebase.initializeApp(firebaseConfig);
+var fbAuth = firebase.auth();
+var fbDb = firebase.firestore();
+</script>
 </head>
 <body>
+<!-- AUTH GATE SCREEN -->
+<div id="auth-gate" style="display:none;position:fixed;inset:0;background:var(--bg1);z-index:10000;overflow-y:auto;padding:20px;">
+  <div style="max-width:400px;margin:40px auto;">
+    <div style="text-align:center;margin-bottom:32px;">
+      <div style="font-family:Syne,sans-serif;font-size:42px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px;">Genesis</div>
+      <div style="font-size:14px;color:var(--muted);">Nutrition</div>
+    </div>
+    <div id="auth-mode-tabs" style="display:flex;gap:8px;background:var(--bg3);border-radius:var(--r1);padding:4px;margin-bottom:20px;">
+      <button id="auth-tab-signin" onclick="setAuthMode('signin')" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;">Sign In</button>
+      <button id="auth-tab-signup" onclick="setAuthMode('signup')" style="flex:1;background:none;color:var(--muted);border:none;border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;">Sign Up</button>
+    </div>
+    <div id="auth-form">
+      <div class="input-group"><label class="input-label">Email</label><input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email"></div>
+      <div class="input-group"><label class="input-label">Password</label><input type="password" id="auth-password" placeholder="At least 6 characters" autocomplete="current-password"></div>
+      <div id="auth-signup-fields" style="display:none;">
+        <div class="input-group"><label class="input-label">Name (optional)</label><input type="text" id="auth-name" placeholder="Your name"></div>
+      </div>
+      <button class="btn-primary" onclick="doAuthSubmit()" id="auth-submit-btn">Sign In</button>
+      <div id="auth-status" style="font-size:13px;text-align:center;margin-top:12px;min-height:20px;"></div>
+      <div style="text-align:center;margin-top:16px;">
+        <button onclick="doForgotPassword()" style="background:none;border:none;color:var(--accent2);font-size:13px;cursor:pointer;" id="forgot-btn">Forgot password?</button>
+      </div>
+      <div style="text-align:center;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);">
+        <button onclick="continueAsGuest()" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:var(--r1);padding:10px 20px;font-family:DM Sans,sans-serif;font-size:13px;cursor:pointer;">Continue as Guest</button>
+        <div style="font-size:11px;color:var(--muted2);margin-top:6px;">Guest data saves to this device only</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- USER MENU (shown in header when signed in) -->
+<div id="user-menu-modal" class="modal-backdrop">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Account</div>
+    <div id="user-menu-content"></div>
+    <button class="btn-secondary" style="margin-top:10px;" onclick="document.getElementById('user-menu-modal').classList.remove('open')">Close</button>
+  </div>
+</div>
+
 <div id="screen">
 
   <!-- ══ HOME / NUTRITION PAGE ══ -->
@@ -277,7 +333,7 @@ select option{background:var(--bg2);}
           <div class="page-title">Genesis</div>
           <div class="page-sub" id="page-date-label">Today</div>
         </div>
-        <button class="hdr-btn" onclick="openSettings()">⚙️ Goals</button>
+        <div style="display:flex;gap:6px;"><button class="hdr-btn" onclick="showUserMenu()" style="padding:8px 10px;">👤</button><button class="hdr-btn" onclick="openSettings()">⚙️ Goals</button></div>
       </div>
     </div>
 
@@ -3090,6 +3146,310 @@ function saveMeasurementLog(){
     };
   }
   setTimeout(startFastingTimer, 500);
+})();
+
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// FIREBASE AUTH & SYNC
+// ═══════════════════════════════════════════════════════════════
+
+var _currentUser = null;
+var _authMode = 'signin';
+var _syncPending = false;
+var _syncTimeout = null;
+var _initialSyncDone = false;
+
+// Keys to sync to Firebase
+var SYNC_KEYS = [
+  'gn_goals',
+  'gn_water_',       // prefix: gn_water_YYYY-MM-DD
+  'gn_log_',         // prefix: gn_log_YYYY-MM-DD
+  'gn_wlog_',        // prefix: gn_wlog_YYYY-MM-DD
+  'gn_suplog_',      // prefix: gn_suplog_YYYY-MM-DD
+  'gn_weight_log',
+  'gn_wgoals',
+  'gn_wtemplates',
+  'gn_supplements',
+  'gn_measurements',
+  'gn_recipes',
+  'gn_health_profile',
+  'gn_fasting_target',
+  'gn_pro_paid',
+];
+
+// ─── AUTH UI ────────────────────────────────────────────────────
+function setAuthMode(mode){
+  _authMode = mode;
+  document.getElementById('auth-tab-signin').style.background = mode==='signin' ? 'var(--accent)' : 'transparent';
+  document.getElementById('auth-tab-signin').style.color = mode==='signin' ? '#fff' : 'var(--muted)';
+  document.getElementById('auth-tab-signup').style.background = mode==='signup' ? 'var(--accent)' : 'transparent';
+  document.getElementById('auth-tab-signup').style.color = mode==='signup' ? '#fff' : 'var(--muted)';
+  document.getElementById('auth-signup-fields').style.display = mode==='signup' ? 'block' : 'none';
+  document.getElementById('auth-submit-btn').textContent = mode==='signup' ? 'Create Account' : 'Sign In';
+  document.getElementById('forgot-btn').style.display = mode==='signin' ? 'inline' : 'none';
+  document.getElementById('auth-status').textContent = '';
+}
+
+function showAuthGate(){
+  document.getElementById('auth-gate').style.display = 'block';
+}
+
+function hideAuthGate(){
+  document.getElementById('auth-gate').style.display = 'none';
+}
+
+async function doAuthSubmit(){
+  var email = (document.getElementById('auth-email').value||'').trim();
+  var password = document.getElementById('auth-password').value||'';
+  var status = document.getElementById('auth-status');
+  var btn = document.getElementById('auth-submit-btn');
+  if(!email || !password){ status.innerHTML = '<span style="color:#ff9090;">Enter email and password</span>'; return; }
+  if(_authMode==='signup' && password.length < 6){ status.innerHTML = '<span style="color:#ff9090;">Password must be at least 6 characters</span>'; return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
+  status.textContent = '';
+
+  try {
+    if(_authMode==='signup'){
+      var cred = await fbAuth.createUserWithEmailAndPassword(email, password);
+      var name = (document.getElementById('auth-name').value||'').trim();
+      if(name){ await cred.user.updateProfile({displayName:name}); }
+      status.innerHTML = '<span style="color:var(--fiber);">\u2713 Account created! Setting up...</span>';
+      // Check if local data exists - ask to migrate
+      await handlePostSignup(cred.user);
+    } else {
+      await fbAuth.signInWithEmailAndPassword(email, password);
+      status.innerHTML = '<span style="color:var(--fiber);">\u2713 Signed in!</span>';
+    }
+  } catch(e){
+    var msg = e.message || 'Something went wrong';
+    if(e.code === 'auth/email-already-in-use') msg = 'That email is already registered. Try signing in.';
+    if(e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password') msg = 'Incorrect email or password.';
+    if(e.code === 'auth/user-not-found') msg = 'No account with that email. Try signing up.';
+    if(e.code === 'auth/invalid-email') msg = 'Invalid email address.';
+    if(e.code === 'auth/weak-password') msg = 'Password too weak. Use at least 6 characters.';
+    status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + msg + '</span>';
+  }
+  btn.disabled = false;
+  btn.textContent = _authMode==='signup' ? 'Create Account' : 'Sign In';
+}
+
+async function doForgotPassword(){
+  var email = (document.getElementById('auth-email').value||'').trim();
+  var status = document.getElementById('auth-status');
+  if(!email){ status.innerHTML = '<span style="color:#ff9090;">Enter your email first</span>'; return; }
+  try {
+    await fbAuth.sendPasswordResetEmail(email);
+    status.innerHTML = '<span style="color:var(--fiber);">\u2713 Reset link sent to ' + email + '</span>';
+  } catch(e){
+    status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (e.message||'Could not send reset email') + '</span>';
+  }
+}
+
+function continueAsGuest(){
+  localStorage.setItem('gn_guest_mode', 'true');
+  hideAuthGate();
+  if(typeof renderNutrition==='function') renderNutrition();
+  showToast('Continuing as guest \u2014 data saves to this device');
+}
+
+async function handlePostSignup(user){
+  // Check if local data exists to migrate
+  var hasLocal = false;
+  Object.keys(localStorage).forEach(function(k){
+    if(k.startsWith('gn_') && k !== 'gn_guest_mode') hasLocal = true;
+  });
+  if(hasLocal){
+    var shouldMigrate = confirm('You have existing data on this device. Save it to your new account? (Recommended)');
+    if(shouldMigrate){
+      await uploadAllToFirebase(user.uid);
+      showToast('\u2713 Data saved to your account',3000);
+    }
+  }
+  localStorage.removeItem('gn_guest_mode');
+  hideAuthGate();
+}
+
+// ─── SIGN OUT ───────────────────────────────────────────────────
+async function doSignOut(){
+  if(!confirm('Sign out? Your data stays saved to your account.')) return;
+  try {
+    await fbAuth.signOut();
+    // Clear local data (data is safe in cloud)
+    Object.keys(localStorage).forEach(function(k){ if(k.startsWith('gn_')) localStorage.removeItem(k); });
+    Object.keys(sessionStorage).forEach(function(k){ if(k.startsWith('gn_')) sessionStorage.removeItem(k); });
+    location.reload();
+  } catch(e){ showToast('Sign out failed: '+e.message); }
+}
+
+// ─── USER MENU ──────────────────────────────────────────────────
+function showUserMenu(){
+  var modal = document.getElementById('user-menu-modal');
+  var content = document.getElementById('user-menu-content');
+  if(!_currentUser){
+    content.innerHTML = '<div style="padding:14px;text-align:center;"><div style="font-size:14px;color:var(--muted);margin-bottom:16px;">You are using Genesis as a guest. Create an account to sync your data across devices.</div>'
+      +'<button class="btn-primary" onclick="document.getElementById(\'user-menu-modal\').classList.remove(\'open\');localStorage.removeItem(\'gn_guest_mode\');showAuthGate();">Create Account / Sign In</button></div>';
+  } else {
+    var displayName = _currentUser.displayName || _currentUser.email;
+    content.innerHTML = '<div style="padding:14px;background:var(--bg4);border-radius:var(--r1);margin-bottom:14px;">'
+      +'<div style="font-size:15px;font-weight:700;margin-bottom:4px;">'+displayName+'</div>'
+      +'<div style="font-size:12px;color:var(--muted);">'+_currentUser.email+'</div>'
+      +(isPro()?'<div style="font-size:11px;color:var(--sugar);margin-top:4px;">\u2b50 Genesis Pro</div>':'')
+      +'</div>'
+      +'<div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Your data syncs automatically to the cloud. Access it on any device by signing in.</div>'
+      +'<button class="btn-secondary" onclick="forceSyncNow()" style="margin-bottom:8px;">\u21BB Sync Now</button>'
+      +'<button class="btn-secondary" style="background:#ff6b6b22;color:#ff9090;border-color:#ff6b6b44;" onclick="doSignOut()">Sign Out</button>';
+  }
+  modal.classList.add('open');
+}
+
+// ─── FIREBASE SYNC ──────────────────────────────────────────────
+
+function getLocalDataBundle(){
+  var bundle = {};
+  Object.keys(localStorage).forEach(function(k){
+    if(!k.startsWith('gn_') || k === 'gn_guest_mode') return;
+    try {
+      var val = localStorage.getItem(k);
+      // Try to parse JSON, fall back to string
+      try { bundle[k] = JSON.parse(val); } catch(e){ bundle[k] = val; }
+    } catch(e){}
+  });
+  return bundle;
+}
+
+async function uploadAllToFirebase(uid){
+  if(!uid) return;
+  var bundle = getLocalDataBundle();
+  try {
+    // Split into chunks to stay under Firestore 1MB doc limit
+    // Store main doc with small data, per-day logs in subcollection
+    var mainData = {};
+    var dailyLogs = {};
+    Object.keys(bundle).forEach(function(k){
+      if(k.startsWith('gn_log_') || k.startsWith('gn_wlog_') || k.startsWith('gn_water_') || k.startsWith('gn_suplog_')){
+        dailyLogs[k.replace(/\./g,'_')] = bundle[k];
+      } else {
+        mainData[k.replace(/\./g,'_')] = bundle[k];
+      }
+    });
+    await fbDb.collection('users').doc(uid).set({
+      main: mainData,
+      daily: dailyLogs,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    console.log('[sync] Upload complete');
+  } catch(e){
+    console.error('[sync] Upload failed', e);
+  }
+}
+
+async function downloadAllFromFirebase(uid){
+  if(!uid) return false;
+  try {
+    var doc = await fbDb.collection('users').doc(uid).get();
+    if(!doc.exists){ console.log('[sync] No cloud data yet'); return false; }
+    var data = doc.data();
+    var mainData = data.main || {};
+    var dailyLogs = data.daily || {};
+    Object.keys(mainData).forEach(function(k){
+      var val = mainData[k];
+      localStorage.setItem(k, typeof val === 'string' ? val : JSON.stringify(val));
+    });
+    Object.keys(dailyLogs).forEach(function(k){
+      var val = dailyLogs[k];
+      localStorage.setItem(k, typeof val === 'string' ? val : JSON.stringify(val));
+    });
+    console.log('[sync] Download complete');
+    return true;
+  } catch(e){
+    console.error('[sync] Download failed', e);
+    return false;
+  }
+}
+
+function scheduleSync(){
+  if(!_currentUser) return;
+  if(_syncTimeout) clearTimeout(_syncTimeout);
+  _syncTimeout = setTimeout(function(){
+    uploadAllToFirebase(_currentUser.uid);
+  }, 2000); // debounce 2 sec
+}
+
+async function forceSyncNow(){
+  if(!_currentUser){ showToast('Sign in to sync'); return; }
+  showToast('Syncing...');
+  await uploadAllToFirebase(_currentUser.uid);
+  showToast('\u2713 Synced');
+}
+
+// ─── HOOK LOCALSTORAGE WRITES ───────────────────────────────────
+(function(){
+  var origSetItem = Storage.prototype.setItem;
+  Storage.prototype.setItem = function(key, val){
+    origSetItem.apply(this, arguments);
+    if(this === localStorage && key && key.startsWith('gn_') && key !== 'gn_guest_mode'){
+      if(_currentUser && _initialSyncDone) scheduleSync();
+    }
+  };
+})();
+
+// ─── AUTH STATE LISTENER ────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function(){
+  if(typeof fbAuth === 'undefined'){
+    console.error('Firebase not loaded');
+    return;
+  }
+
+  fbAuth.onAuthStateChanged(async function(user){
+    if(user){
+      _currentUser = user;
+      console.log('[auth] Signed in as', user.email);
+      hideAuthGate();
+      // Download cloud data and merge
+      await downloadAllFromFirebase(user.uid);
+      _initialSyncDone = true;
+      // Check pro status from cloud
+      try {
+        var doc = await fbDb.collection('users').doc(user.uid).get();
+        if(doc.exists){
+          var main = (doc.data()||{}).main||{};
+          if(main.gn_pro_paid === 'true' || main.gn_pro_paid === true){
+            localStorage.setItem('gn_pro_paid', 'true');
+          }
+        }
+      } catch(e){}
+      if(typeof renderNutrition === 'function') renderNutrition();
+      if(typeof renderFastingTimer === 'function') renderFastingTimer();
+    } else {
+      _currentUser = null;
+      _initialSyncDone = false;
+      if(localStorage.getItem('gn_guest_mode') === 'true'){
+        hideAuthGate();
+      } else {
+        showAuthGate();
+      }
+    }
+  });
+});
+
+// Hook into Stripe success to persist to Firebase
+(function(){
+  var origStartCheckout = window.startCheckout;
+  // Just make sure pro_paid gets synced when set
+  var params = new URLSearchParams(window.location.search);
+  if(params.get('session_id')){
+    setTimeout(function(){
+      if(_currentUser){
+        fbDb.collection('users').doc(_currentUser.uid).set({
+          main: { gn_pro_paid: 'true' }
+        }, { merge: true });
+      }
+    }, 2000);
+  }
 })();
 
 </script>
