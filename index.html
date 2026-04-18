@@ -280,6 +280,8 @@ var firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 var fbAuth = firebase.auth();
 var fbDb = firebase.firestore();
+// Use LOCAL persistence so sign-in survives page reload
+fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){console.error('Persistence error:',e);});
 </script>
 </head>
 <body>
@@ -3436,21 +3438,24 @@ async function forceSyncNow(){
 })();
 
 // ─── AUTH STATE LISTENER ────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', function(){
+document.addEventListener('DOMContentLoaded', async function(){
   if(typeof fbAuth === 'undefined'){
     console.error('Firebase not loaded');
     return;
   }
 
-  // Handle redirect result from Google Sign-In
-  fbAuth.getRedirectResult().then(async function(result){
+  // CRITICAL: Wait for getRedirectResult to complete BEFORE setting up onAuthStateChanged
+  // Otherwise the listener fires with null, shows auth gate, then the redirect resolves
+  var authStateReady = false;
+  try {
+    var result = await fbAuth.getRedirectResult();
     if(result && result.user){
       console.log('[auth] Redirect sign-in completed:', result.user.email);
       if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
         await handlePostSignup(result.user);
       }
     }
-  }).catch(function(e){
+  } catch(e){
     console.error('[auth] Redirect error:', e);
     if(e.code === 'auth/unauthorized-domain'){
       setTimeout(function(){
@@ -3458,7 +3463,7 @@ document.addEventListener('DOMContentLoaded', function(){
         if(s) s.innerHTML = '<span style="color:#ff9090;">\u2717 Domain not authorized. Check Firebase > Auth > Settings > Authorized domains.</span>';
       }, 500);
     }
-  });
+  }
 
   fbAuth.onAuthStateChanged(async function(user){
     if(user){
