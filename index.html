@@ -3438,32 +3438,34 @@ async function forceSyncNow(){
 })();
 
 // ─── AUTH STATE LISTENER ────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async function(){
-  if(typeof fbAuth === 'undefined'){
-    console.error('Firebase not loaded');
+function initFirebaseAuth(){
+  if(typeof firebase === 'undefined' || typeof fbAuth === 'undefined'){
+    console.error('[auth] Firebase not loaded, retrying...');
+    setTimeout(initFirebaseAuth, 500);
     return;
   }
+  console.log('[auth] initFirebaseAuth starting');
+  console.log('[auth] Current user on init:', fbAuth.currentUser ? fbAuth.currentUser.email : 'none');
 
-  // CRITICAL: Wait for getRedirectResult to complete BEFORE setting up onAuthStateChanged
-  // Otherwise the listener fires with null, shows auth gate, then the redirect resolves
-  var authStateReady = false;
-  try {
-    var result = await fbAuth.getRedirectResult();
+  // Log URL for debugging
+  console.log('[auth] URL on load:', window.location.href);
+
+  // Check if there's a stored user from previous session
+  fbAuth.getRedirectResult().then(function(result){
+    console.log('[auth] getRedirectResult:', result);
     if(result && result.user){
-      console.log('[auth] Redirect sign-in completed:', result.user.email);
+      console.log('[auth] Redirect SUCCESS:', result.user.email);
       if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
-        await handlePostSignup(result.user);
+        handlePostSignup(result.user);
       }
+    } else {
+      console.log('[auth] No redirect result');
     }
-  } catch(e){
-    console.error('[auth] Redirect error:', e);
-    if(e.code === 'auth/unauthorized-domain'){
-      setTimeout(function(){
-        var s = document.getElementById('auth-status');
-        if(s) s.innerHTML = '<span style="color:#ff9090;">\u2717 Domain not authorized. Check Firebase > Auth > Settings > Authorized domains.</span>';
-      }, 500);
-    }
-  }
+  }).catch(function(e){
+    console.error('[auth] Redirect error:', e.code, e.message);
+    var s = document.getElementById('auth-status');
+    if(s) s.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (e.code || e.message) + '</span>';
+  });
 
   fbAuth.onAuthStateChanged(async function(user){
     if(user){
@@ -3488,6 +3490,7 @@ document.addEventListener('DOMContentLoaded', async function(){
     } else {
       _currentUser = null;
       _initialSyncDone = false;
+      console.log('[auth] User is null');
       if(localStorage.getItem('gn_guest_mode') === 'true'){
         hideAuthGate();
       } else {
@@ -3495,7 +3498,14 @@ document.addEventListener('DOMContentLoaded', async function(){
       }
     }
   });
-});
+}
+
+// Kick off auth init - try immediately if DOM ready, else wait
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', initFirebaseAuth);
+} else {
+  initFirebaseAuth();
+}
 
 // Hook into Stripe success to persist to Firebase
 (function(){
