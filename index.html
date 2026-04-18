@@ -3467,30 +3467,48 @@ function initFirebaseAuth(){
     if(s) s.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (e.code || e.message) + '</span>';
   });
 
-  fbAuth.onAuthStateChanged(async function(user){
+  fbAuth.onAuthStateChanged(function(user){
+    console.log('[auth] onAuthStateChanged fired, user:', user ? user.email : 'null');
     if(user){
       _currentUser = user;
       console.log('[auth] Signed in as', user.email);
+      // Hide the gate IMMEDIATELY - do not wait for Firestore
       hideAuthGate();
-      // Download cloud data and merge
-      await downloadAllFromFirebase(user.uid);
-      _initialSyncDone = true;
-      // Check pro status from cloud
-      try {
-        var doc = await fbDb.collection('users').doc(user.uid).get();
-        if(doc.exists){
-          var main = (doc.data()||{}).main||{};
-          if(main.gn_pro_paid === 'true' || main.gn_pro_paid === true){
-            localStorage.setItem('gn_pro_paid', 'true');
+      if(typeof renderNutrition === 'function'){
+        try { renderNutrition(); } catch(e){ console.error('renderNutrition error:', e); }
+      }
+      if(typeof renderFastingTimer === 'function'){
+        try { renderFastingTimer(); } catch(e){ console.error('renderFastingTimer error:', e); }
+      }
+      // Now try to download cloud data - BUT don't let errors sign user out
+      (async function(){
+        try {
+          await downloadAllFromFirebase(user.uid);
+          _initialSyncDone = true;
+          console.log('[auth] Cloud data downloaded');
+          // Check pro status
+          try {
+            var doc = await fbDb.collection('users').doc(user.uid).get();
+            if(doc.exists){
+              var main = (doc.data()||{}).main||{};
+              if(main.gn_pro_paid === 'true' || main.gn_pro_paid === true){
+                localStorage.setItem('gn_pro_paid', 'true');
+              }
+            }
+          } catch(e){ console.error('[auth] Pro check error:', e); }
+          if(typeof renderNutrition === 'function') renderNutrition();
+        } catch(e){
+          console.error('[auth] Firestore sync failed:', e);
+          _initialSyncDone = true; // still mark as done so writes trigger sync
+          if(e.code === 'permission-denied'){
+            showToast('Cloud sync unavailable — data saved locally', 4000);
           }
         }
-      } catch(e){}
-      if(typeof renderNutrition === 'function') renderNutrition();
-      if(typeof renderFastingTimer === 'function') renderFastingTimer();
+      })();
     } else {
       _currentUser = null;
       _initialSyncDone = false;
-      console.log('[auth] User is null');
+      console.log('[auth] User is null - showing auth gate');
       if(localStorage.getItem('gn_guest_mode') === 'true'){
         hideAuthGate();
       } else {
