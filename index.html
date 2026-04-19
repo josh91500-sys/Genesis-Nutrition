@@ -3407,23 +3407,42 @@ async function doGoogleSignIn(){
 var GOOGLE_CLIENT_ID = '273557707832-4pto6k85q1i5i56m5kthmc16l2r2920r.apps.googleusercontent.com';
 function doGoogleSignInGIS(){
   var status = document.getElementById('auth-status');
+  
+  // Debug info
+  var dbg = 'Debug: ';
+  dbg += 'ClientID=' + (GOOGLE_CLIENT_ID ? 'SET' : 'MISSING') + ' | ';
+  dbg += 'google=' + (typeof google !== 'undefined' ? 'YES' : 'NO') + ' | ';
+  dbg += 'google.accounts=' + (typeof google !== 'undefined' && google.accounts ? 'YES' : 'NO');
+  console.log(dbg);
+  
   if(!GOOGLE_CLIENT_ID){
-    status.innerHTML = '<div style="color:var(--sugar);font-size:13px;line-height:1.5;">Google Sign-In setup incomplete. Using email/password for now.</div>';
+    status.innerHTML = '<div style="color:#ff9090;font-size:13px;">\u2717 Client ID not configured</div>';
     return;
   }
-  if(typeof google === 'undefined' || !google.accounts){
-    status.innerHTML = '<div style="color:#ff9090;font-size:13px;">Google library not loaded. Check your internet connection.</div>';
+  if(typeof google === 'undefined' || !google.accounts || !google.accounts.id){
+    status.innerHTML = '<div style="color:#ff9090;font-size:13px;">\u2717 Google library not loaded yet. Wait a moment and try again.<br><small>' + dbg + '</small></div>';
+    // Try to reload the script
+    var existing = document.querySelector('script[src*="gsi/client"]');
+    if(!existing){
+      var s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.async = true; s.defer = true;
+      document.head.appendChild(s);
+      status.innerHTML += '<br><div style="color:var(--muted);font-size:11px;">Loading Google library... try again in 3 seconds.</div>';
+    }
     return;
   }
   try {
     google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
       callback: async function(response){
-        if(!response.credential){
-          status.innerHTML = '<span style="color:#ff9090;">\u2717 Sign-in cancelled</span>';
+        console.log('GIS callback:', response);
+        if(!response || !response.credential){
+          status.innerHTML = '<span style="color:#ff9090;">\u2717 No credential returned</span>';
           return;
         }
         try {
+          status.innerHTML = '<span style="color:var(--muted);font-size:13px;">Completing sign-in...</span>';
           var credential = firebase.auth.GoogleAuthProvider.credential(response.credential);
           var result = await fbAuth.signInWithCredential(credential);
           status.innerHTML = '<span style="color:var(--fiber);">\u2713 Signed in as ' + result.user.email + '</span>';
@@ -3431,25 +3450,38 @@ function doGoogleSignInGIS(){
             await handlePostSignup(result.user);
           }
         } catch(err){
-          status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (err.message||'Sign-in failed') + '</span>';
+          console.error('signInWithCredential error:', err);
+          status.innerHTML = '<span style="color:#ff9090;">\u2717 Firebase: ' + (err.code||err.message||'unknown') + '</span>';
         }
       },
       auto_select: false,
-      cancel_on_tap_outside: true
+      cancel_on_tap_outside: true,
+      use_fedcm_for_prompt: true
     });
-    // Use prompt (FedCM / One Tap) - works in PWAs
-    google.accounts.id.prompt(function(notification){
-      if(notification.isNotDisplayed() || notification.isSkippedMoment()){
-        // Fallback: show rendered button
-        status.innerHTML = '<div style="color:var(--muted);font-size:13px;margin-bottom:8px;">Use the Google button below:</div><div id="gis-button-holder"></div>';
-        google.accounts.id.renderButton(
-          document.getElementById('gis-button-holder'),
-          {theme:'filled_blue', size:'large', type:'standard', shape:'pill', text:'signin_with', width:'280'}
-        );
+    
+    // Always render a visible button as the primary UX (more reliable than One Tap)
+    status.innerHTML = '<div style="color:var(--muted);font-size:13px;margin-bottom:10px;">Tap the Google button:</div><div id="gis-button-holder" style="display:flex;justify-content:center;"></div>';
+    setTimeout(function(){
+      var holder = document.getElementById('gis-button-holder');
+      if(holder){
+        google.accounts.id.renderButton(holder, {
+          theme: 'filled_blue', 
+          size: 'large', 
+          type: 'standard', 
+          shape: 'pill', 
+          text: 'continue_with', 
+          width: 280
+        });
       }
+    }, 100);
+    
+    // Also try One Tap as a bonus
+    google.accounts.id.prompt(function(notification){
+      console.log('GIS notification:', notification);
     });
   } catch(e){
-    status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (e.message||'Setup failed') + '</span>';
+    console.error('GIS init error:', e);
+    status.innerHTML = '<span style="color:#ff9090;">\u2717 Setup failed: ' + (e.message||'unknown error') + '</span>';
   }
 }
 
