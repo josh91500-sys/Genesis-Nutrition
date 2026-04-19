@@ -1468,6 +1468,23 @@ function setViewMode(mode, btn){
   renderNutrientResults();
 }
 
+
+// Open an article about a food - Healthline first, Google search fallback
+function openFoodArticle(foodName){
+  // Clean food name - remove parenthetical notes like "(cooked)", "(raw)"
+  var cleanName = foodName.replace(/\([^)]*\)/g, '').replace(/,.*/, '').trim();
+  
+  // Build a Google search URL that prefers healthline.com
+  // Using 'I'm feeling lucky' style won't work on mobile reliably, so use regular search
+  // The query "healthline.com <food> nutrition" will surface healthline articles first
+  // If no healthline exists, top result will usually be a reputable health source
+  var query = 'healthline ' + cleanName + ' nutrition benefits';
+  var url = 'https://www.google.com/search?q=' + encodeURIComponent(query);
+  
+  // Try to open in new tab - works in browsers, opens browser from PWA
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
 function renderNutrientResults(){
   const nutrient = NUTRIENTS.find(n=>n.key===selectedNutrient);
   const el = document.getElementById('nutrient-results');
@@ -1513,7 +1530,10 @@ function renderNutrientResults(){
           <span class="fmacro" style="color:var(--fat)">F ${viewMode==='serving'?(f.fat*(f.serving/100)).toFixed(0):f.fat.toFixed(0)}g</span>
           ${f.verified?'<span class="verified-badge">\u2713 USDA</span>':''}
         </div>
-        <button class="food-card-add" onclick='addFromDB(${JSON.stringify(f)})'>\uff0b Add to Today</button>
+        <div style="display:flex;gap:6px;">
+          <button class="food-card-add" style="flex:1;" onclick='addFromDB(${JSON.stringify(f)})'>\uff0b Add to Today</button>
+          <button onclick='openFoodArticle(${JSON.stringify(f.name)})' style="flex:0 0 auto;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:var(--r1);padding:10px 14px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;" title="Learn about this food">&#x1F4D6;</button>
+        </div>
       </div>`;
     }).join('');
 }
