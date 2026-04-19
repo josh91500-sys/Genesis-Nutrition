@@ -1401,16 +1401,27 @@ let brandSearchCache = [];
 
 // ═══ CNF (CANADIAN NUTRIENT FILE) - 5,690 FOODS × 152 NUTRIENTS ═══
 var CNF_BASE = 'https://food-nutrition.canada.ca/api/canadian-nutrient-file';
-// Full nutrient map: key (internal name) -> CNF nutrient_name_id
-// These are pulled from Health Canada's /nutrientname API.
+// Full nutrient map: key (internal name) -> CNF nutrient_name_id.
+// IMPORTANT: These must be `nutrient_name_id` values (what the /nutrientamount
+// endpoint returns), NOT `nutrient_code`. For most nutrients these match, but
+// for 6 "newer" nutrients added later (vita RAE, vitd D2+D3, folate DFE,
+// omega3 total, omega6 total, choline total) the name_id differs from code.
 var CNF_NUTRIENT_IDS = {
   // Macros
   protein:203, fiber:291, carbs:205, fat:204, sugar:269,
-  satfat:606, omega3:902, omega6:903,
+  satfat:606,
+  omega3:868,       // FIX: was 902 (nutrient_code); name_id is 868
+  omega6:869,       // FIX: was 903 (nutrient_code); name_id is 869
   // Vitamins
-  vita:320, vitc:401, vitd:328, vite:323, vitk:430,
+  vita:814,         // FIX: was 320 (nutrient_code for RAE); name_id is 814
+  vitc:401,
+  vitd:339,         // FIX: was 328 (nutrient_code for D2+D3); name_id is 339
+  vite:323, vitk:430,
   thiamin:404, riboflavin:405, niacin:406, vitb6:415,
-  folate:435, vitb12:418, choline:421, pantothenic:410,
+  folate:815,       // FIX: was 435 (nutrient_code for DFE); name_id is 815
+  vitb12:418,
+  choline:862,      // FIX: was 421 (nutrient_code); name_id is 862
+  pantothenic:410,
   // Minerals
   calcium:301, iron:303, magnesium:304, phosphorus:305,
   potassium:306, sodium:307, zinc:309, copper:312,
