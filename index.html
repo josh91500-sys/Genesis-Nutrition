@@ -268,6 +268,7 @@ select option{background:var(--bg2);}
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 var firebaseConfig = {
   apiKey: "AIzaSyDIA3sUL2Of9bRVDzud0H9jbMVtMC_JAac",
@@ -3367,19 +3368,16 @@ async function doGoogleSignIn(){
   var status = document.getElementById('auth-status');
   status.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:8px;"><div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><span style="color:var(--muted);font-size:13px;">Opening Google...</span></div>';
   
-  // Detect if app is running as installed PWA
   var isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
   
   if(isStandalone){
-    // PWAs can't reliably use redirect OR popup - direct user to browser
-    status.innerHTML = '<div style="color:var(--sugar);font-size:13px;line-height:1.5;">\u26A0\uFE0F Google Sign-In doesn\'t work inside installed PWAs yet.<br><br>Please use email/password here, or sign in with Google in your browser first at:<br><strong style="color:var(--accent2);">genesisnutrition.netlify.app</strong></div>';
-    return;
+    // Use Google Identity Services (works in PWAs)
+    return doGoogleSignInGIS();
   }
   
   try {
     var provider = new firebase.auth.GoogleAuthProvider();
     provider.setCustomParameters({prompt:'select_account'});
-    // Always try popup first - works on desktop and mobile browsers
     var result = await fbAuth.signInWithPopup(provider);
     status.innerHTML = '<span style="color:var(--fiber);">\u2713 Signed in as ' + result.user.email + '</span>';
     if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
@@ -3387,7 +3385,6 @@ async function doGoogleSignIn(){
     }
   } catch(e){
     console.error('Popup failed, trying redirect:', e);
-    // Popup failed - try redirect as fallback
     if(e.code === 'auth/popup-blocked' || e.code === 'auth/cancelled-popup-request'){
       try {
         var provider2 = new firebase.auth.GoogleAuthProvider();
@@ -3403,6 +3400,56 @@ async function doGoogleSignIn(){
     if(e.code === 'auth/popup-closed-by-user') msg = 'Sign in cancelled.';
     if(e.code === 'auth/unauthorized-domain') msg = 'Domain not authorized. Add genesisnutrition.netlify.app in Firebase Auth settings.';
     status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + msg + '</span>';
+  }
+}
+
+// Google Identity Services (GIS) flow - works inside PWAs
+var GOOGLE_CLIENT_ID = '273557707832-4pto6k85q1i5i56m5kthmc16l2r2920r.apps.googleusercontent.com';
+function doGoogleSignInGIS(){
+  var status = document.getElementById('auth-status');
+  if(!GOOGLE_CLIENT_ID){
+    status.innerHTML = '<div style="color:var(--sugar);font-size:13px;line-height:1.5;">Google Sign-In setup incomplete. Using email/password for now.</div>';
+    return;
+  }
+  if(typeof google === 'undefined' || !google.accounts){
+    status.innerHTML = '<div style="color:#ff9090;font-size:13px;">Google library not loaded. Check your internet connection.</div>';
+    return;
+  }
+  try {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: async function(response){
+        if(!response.credential){
+          status.innerHTML = '<span style="color:#ff9090;">\u2717 Sign-in cancelled</span>';
+          return;
+        }
+        try {
+          var credential = firebase.auth.GoogleAuthProvider.credential(response.credential);
+          var result = await fbAuth.signInWithCredential(credential);
+          status.innerHTML = '<span style="color:var(--fiber);">\u2713 Signed in as ' + result.user.email + '</span>';
+          if(result.additionalUserInfo && result.additionalUserInfo.isNewUser){
+            await handlePostSignup(result.user);
+          }
+        } catch(err){
+          status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (err.message||'Sign-in failed') + '</span>';
+        }
+      },
+      auto_select: false,
+      cancel_on_tap_outside: true
+    });
+    // Use prompt (FedCM / One Tap) - works in PWAs
+    google.accounts.id.prompt(function(notification){
+      if(notification.isNotDisplayed() || notification.isSkippedMoment()){
+        // Fallback: show rendered button
+        status.innerHTML = '<div style="color:var(--muted);font-size:13px;margin-bottom:8px;">Use the Google button below:</div><div id="gis-button-holder"></div>';
+        google.accounts.id.renderButton(
+          document.getElementById('gis-button-holder'),
+          {theme:'filled_blue', size:'large', type:'standard', shape:'pill', text:'signin_with', width:'280'}
+        );
+      }
+    });
+  } catch(e){
+    status.innerHTML = '<span style="color:#ff9090;">\u2717 ' + (e.message||'Setup failed') + '</span>';
   }
 }
 
