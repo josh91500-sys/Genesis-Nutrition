@@ -1473,15 +1473,9 @@ function setViewMode(mode, btn){
 function openFoodArticle(foodName){
   // Clean food name - remove parenthetical notes like "(cooked)", "(raw)"
   var cleanName = foodName.replace(/\([^)]*\)/g, '').replace(/,.*/, '').trim();
-  
-  // Build a Google search URL that prefers healthline.com
-  // Using 'I'm feeling lucky' style won't work on mobile reliably, so use regular search
-  // The query "healthline.com <food> nutrition" will surface healthline articles first
-  // If no healthline exists, top result will usually be a reputable health source
+  // Use Google I'm Feeling Lucky (btnI=1) - jumps straight to top result
   var query = 'healthline ' + cleanName + ' nutrition benefits';
-  var url = 'https://www.google.com/search?q=' + encodeURIComponent(query);
-  
-  // Try to open in new tab - works in browsers, opens browser from PWA
+  var url = 'https://www.google.com/search?btnI=1&q=' + encodeURIComponent(query);
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
