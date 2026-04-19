@@ -1473,9 +1473,9 @@ function setViewMode(mode, btn){
 function openFoodArticle(foodName){
   // Clean food name - remove parenthetical notes like "(cooked)", "(raw)"
   var cleanName = foodName.replace(/\([^)]*\)/g, '').replace(/,.*/, '').trim();
-  // Use Google I'm Feeling Lucky (btnI=1) - jumps straight to top result
-  var query = 'healthline ' + cleanName + ' nutrition benefits';
-  var url = 'https://www.google.com/search?btnI=1&q=' + encodeURIComponent(query);
+  // DuckDuckGo bang !ducky does "I'm Feeling Lucky" without interstitial redirect
+  var query = '!ducky healthline ' + cleanName + ' nutrition benefits';
+  var url = 'https://duckduckgo.com/?q=' + encodeURIComponent(query);
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
