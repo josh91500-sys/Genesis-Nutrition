@@ -992,15 +992,24 @@ async function doDescribeLookup(){
   status.textContent='Looking up nutrition data...';
   document.getElementById('describe-preview').innerHTML='';
 
-  const prompt = `Look up accurate nutrition data for: "${input}"
+  const prompt = `You are a nutrition database that ALWAYS returns results. Look up: "${input}"
 
-Use USDA FoodData Central values when possible. Be precise and accurate - do not guess.
+Source priority (use the BEST available for this specific food):
+1. RESTAURANT CHAIN ITEMS (Texas Roadhouse, McDonald's, Chipotle, Olive Garden, etc.) → Use the chain's official published nutrition guide values. These are public data. Set source to "Texas Roadhouse Nutrition Guide" (or whichever chain).
+2. PACKAGED/BRANDED PRODUCTS → Use the product's published nutrition label. Set source to "Product Label".
+3. GENERIC WHOLE FOODS (chicken breast, broccoli, brown rice) → Use USDA FoodData Central. Set source to "USDA FoodData Central".
+4. HOMEMADE/PREPARED DISHES (scrambled eggs, pasta with marinara) → Use reasonable estimates based on typical recipe. Set source to "Recipe estimate".
+5. FALLBACK → If you can't find exact data, provide your best estimate. Set source to "AI estimate — verify with source".
+
+NEVER refuse to return values. NEVER return zeros for everything. Always provide reasonable numbers.
+
+For "${input}" specifically: if it mentions a chain restaurant, use that chain's official nutrition values. Restaurant nutrition info is freely published and publicly available.
 
 Return ONLY a JSON object:
 {
-  "name": "descriptive food name",
-  "serving_desc": "natural serving description e.g. 2 large eggs, 1 cup",
-  "serving_g": 100,
+  "name": "descriptive food name including restaurant if applicable",
+  "serving_desc": "natural serving description e.g. 1 entree, 6 oz piece, 2 large eggs",
+  "serving_g": 0,
   "cal": 0,
   "protein": 0,
   "carbs": 0,
@@ -1013,31 +1022,44 @@ Return ONLY a JSON object:
   "iron": 0,
   "calcium": 0,
   "vitd": 0,
-  "source": "USDA FoodData Central" or "Estimated"
+  "source": "Texas Roadhouse Nutrition Guide" or similar specific source name
 }
 
-All values for the described serving. sodium/potassium/calcium in mg. vitc/iron in mg. vitd in mcg.`;
+Units: sodium/potassium/calcium in mg. vitc/iron in mg. vitd in mcg.`;
 
   try {
-    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:500,messages:[{role:'user',content:prompt}]});
+    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:600,messages:[{role:'user',content:prompt}]});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
     const text = data.content?.[0]?.text||'';
     const match = text.match(/\{[\s\S]*\}/);
     if(!match) throw new Error('No data');
     const food = JSON.parse(match[0]);
+    // Guard against Claude returning all zeros (refusal pattern)
+    if((food.cal||0) === 0 && (food.protein||0) === 0 && (food.carbs||0) === 0 && (food.fat||0) === 0){
+      throw new Error('zero-response');
+    }
     status.textContent='';
     showFoodPreview(food, 'describe-preview');
   } catch(e){
-    status.textContent='✗ Could not find data. Try being more specific.';
+    if(e.message === 'zero-response'){
+      status.innerHTML = '<span style="color:#ff9090;">✗ Couldn\'t find nutrition data. Try the <strong>AI Search</strong> or <strong>Brand Search</strong> tab instead.</span>';
+    } else {
+      status.innerHTML = '<span style="color:#ff9090;">✗ Lookup failed. Try again or use <strong>AI Search</strong> tab.</span>';
+    }
   }
   btn.disabled=false;
   btn.innerHTML='🤖 Look Up Nutrition';
 }
 
+// Global store for preview foods — avoids HTML-attribute-quoting nightmares
+var _previewFoodStore = {};
 function showFoodPreview(food, containerId){
   const el = document.getElementById(containerId);
   const isUSDA = food.source&&food.source.toLowerCase().includes('usda');
+  // Stash the food with a stable ID and reference it from the button
+  const pid = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+  _previewFoodStore[pid] = food;
   el.innerHTML = `
     <div class="ai-preview" style="margin-top:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
@@ -1054,8 +1076,14 @@ function showFoodPreview(food, containerId){
         <div class="preview-item"><div class="preview-val">${Math.round(food.sodium||0)}mg</div><div class="preview-key">sodium</div></div>
       </div>
       ${!isUSDA?'<div style="font-size:11px;color:var(--sugar);margin-top:10px;">⚠️ AI estimate — verify with food label for accuracy</div>':''}
-      <button class="btn-primary" style="margin-top:12px;" onclick="addPreviewFood(${JSON.stringify(food).replace(/'/g,"&#39;")})">＋ Add to Log</button>
+      <button class="btn-primary" style="margin-top:12px;" onclick="addPreviewFoodById('${pid}')">＋ Add to Log</button>
     </div>`;
+}
+
+function addPreviewFoodById(pid){
+  const food = _previewFoodStore[pid];
+  if(!food){ showToast('Could not find food data — try again'); return; }
+  addPreviewFood(food);
 }
 
 function addPreviewFood(food){
@@ -2155,17 +2183,22 @@ Return ONLY JSON: {"meals":[{"meal":"Breakfast","foods":[{"name":"food","cal":0,
     if(!match) throw new Error();
     const plan = JSON.parse(match[0]);
     status.textContent='';
-    result.innerHTML = plan.meals.map(m=>`
-      <div style="margin-top:12px;background:var(--bg4);border-radius:var(--r1);overflow:hidden;">
+    result.innerHTML = plan.meals.map(m=>{
+      return `<div style="margin-top:12px;background:var(--bg4);border-radius:var(--r1);overflow:hidden;">
         <div style="padding:10px 14px;font-weight:700;font-size:13px;border-bottom:1px solid var(--border);">${mealEmoji(m.meal)} ${m.meal} · ${Math.round(m.foods.reduce((a,f)=>a+f.cal,0))} kcal</div>
-        ${m.foods.map(f=>`<div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;">
+        ${m.foods.map(f=>{
+          const pid = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+          _previewFoodStore[pid] = {...f, source:"AI Meal Plan"};
+          return `<div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;">
           <div><div style="font-size:13px;font-weight:500;">${f.name}</div><div style="font-size:11px;color:var(--muted);">P ${f.protein}g · C ${f.carbs}g · F ${f.fat}g</div></div>
           <div style="display:flex;align-items:center;gap:8px;">
             <span style="font-size:13px;font-weight:700;">${Math.round(f.cal)} kcal</span>
-            <button onclick='addPreviewFood(${JSON.stringify({...f,source:"AI Meal Plan"})})' style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;">＋</button>
+            <button onclick="addPreviewFoodById('${pid}')" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;">＋</button>
           </div>
-        </div>`).join('')}
-      </div>`).join('')+
+        </div>`;
+        }).join('')}
+      </div>`;
+    }).join('') +
       `<div style="margin-top:12px;text-align:center;font-size:12px;color:var(--muted);">Total: ${Math.round(plan.totals.cal)} kcal · P ${Math.round(plan.totals.protein)}g</div>`;
   } catch(e){
     status.textContent='✗ Failed to generate. Try again.';
