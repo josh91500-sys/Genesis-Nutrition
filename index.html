@@ -4082,7 +4082,7 @@ function renderFastingTimer(){
     // No meal logged yet — still show the "since midnight" counter so it's useful on fresh days
     var mH = Math.floor(hoursSinceMidnight);
     var mM = Math.floor((hoursSinceMidnight - mH) * 60);
-    var mProgress = Math.min(100, (hoursSinceMidnight / 24) * 100);
+    var mProgress = Math.min(100, (hoursSinceMidnight / target) * 100);
     el.innerHTML = '<button onclick="showFastingMenu()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--text);">'
       +'<span style="font-size:22px;">⏱️</span>'
       +'<div style="flex:1;text-align:left;">'
@@ -4090,7 +4090,7 @@ function renderFastingTimer(){
       +'<div style="font-size:13px;font-weight:700;">Fasting Timer</div>'
       +'<div style="font-size:11px;color:var(--muted);">Tap to start</div>'
       +'</div>'
-      +'<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--muted);margin-top:4px;margin-bottom:2px;"><span>Since midnight</span><span>'+mH+'h '+mM+'m / 24h</span></div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--muted);margin-top:4px;margin-bottom:2px;"><span>Since midnight</span><span>'+mH+'h '+mM+'m / '+target+'h</span></div>'
       +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+mProgress+'%;background:#94a3b8;border-radius:99px;"></div></div>'
       +'</div></button>';
     return;
@@ -4103,10 +4103,13 @@ function renderFastingTimer(){
   var achieved = hoursSince >= target;
   var color = achieved ? 'var(--fiber)' : hoursSince > target*0.75 ? 'var(--sugar)' : 'var(--accent2)';
 
-  // Second line: since midnight today
-  var mH = Math.floor(hoursSinceMidnight);
-  var mM = Math.floor((hoursSinceMidnight - mH) * 60);
-  var mProgress = Math.min(100, (hoursSinceMidnight / 24) * 100);
+  // Second line: fasting hours CHARGED to today (never reaches past midnight).
+  // If last meal was today → equals hoursSince (bars match).
+  // If last meal was yesterday → capped at hoursSinceMidnight.
+  var hoursChargedToday = Math.min(hoursSince, hoursSinceMidnight);
+  var mH = Math.floor(hoursChargedToday);
+  var mM = Math.floor((hoursChargedToday - mH) * 60);
+  var mProgress = Math.min(100, (hoursChargedToday / target) * 100);
 
   el.innerHTML = '<button onclick="showFastingMenu()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--text);">'
     +'<span style="font-size:22px;">'+(achieved?'🎉':'⏱️')+'</span>'
@@ -4118,8 +4121,8 @@ function renderFastingTimer(){
     +'</div>'
     +'<div style="font-size:10px;color:var(--muted);margin-bottom:3px;">Since last meal</div>'
     +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:'+progress+'%;background:'+color+';border-radius:99px;"></div></div>'
-    // Line 2: since midnight today
-    +'<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--muted);margin-bottom:2px;"><span>Since midnight</span><span>'+mH+'h '+mM+'m / 24h</span></div>'
+    // Line 2: charged to today (caps at midnight)
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--muted);margin-bottom:2px;"><span>Since midnight</span><span>'+mH+'h '+mM+'m / '+target+'h</span></div>'
     +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+mProgress+'%;background:#94a3b8;border-radius:99px;"></div></div>'
     +'</div></button>';
 }
