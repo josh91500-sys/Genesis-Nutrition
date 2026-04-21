@@ -1121,74 +1121,64 @@ async function doDescribeLookup(){
   const status = document.getElementById('describe-status');
   btn.disabled=true;
   btn.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
-  status.textContent='Looking up nutrition data...';
   document.getElementById('describe-preview').innerHTML='';
 
-  const prompt = `You are a nutrition database that ALWAYS returns results. Look up: "${input}"
+  // Define the AI fallback as an inner function — called only if CNF is skipped or missed
+  async function aiLookup(){
+    const prompt = `You are a nutrition database that ALWAYS returns results. Look up: "${input}"
 
 Source priority (use the BEST available for this specific food):
 1. RESTAURANT CHAIN ITEMS (Texas Roadhouse, McDonald's, Chipotle, Olive Garden, etc.) → Use the chain's official published nutrition guide values. These are public data. Set source to "Texas Roadhouse Nutrition Guide" (or whichever chain).
 2. PACKAGED/BRANDED PRODUCTS → Use the product's published nutrition label. Set source to "Product Label".
-3. GENERIC WHOLE FOODS (chicken breast, broccoli, brown rice) → Use USDA FoodData Central. Set source to "USDA FoodData Central".
+3. GENERIC WHOLE FOODS (chicken breast, broccoli, brown rice, carrots) → Use USDA FoodData Central. Set source to "USDA FoodData Central". Whole foods often have rich micronutrient profiles — include Vitamin A for orange/leafy vegetables, Vitamin C for citrus/peppers, B12 for animal products, iron for meats/legumes, etc.
 4. HOMEMADE/PREPARED DISHES (scrambled eggs, pasta with marinara) → Use reasonable estimates based on typical recipe. Set source to "Recipe estimate".
 5. FALLBACK → If you can't find exact data, provide your best estimate. Set source to "AI estimate — verify with source".
 
-NEVER refuse to return values. NEVER return zeros for everything. Always provide reasonable numbers.
+NEVER refuse to return values. NEVER return zeros for the macros. Always provide reasonable numbers for macros (cal/protein/carbs/fat).
 
 For "${input}" specifically: if it mentions a chain restaurant, use that chain's official nutrition values. Restaurant nutrition info is freely published and publicly available.
 
-Return ONLY a JSON object:
-{
-  "name": "descriptive food name including restaurant if applicable",
-  "serving_desc": "natural serving description e.g. 1 entree, 6 oz piece, 2 large eggs",
-  "serving_g": 0,
-  "cal": 0,
-  "protein": 0,
-  "carbs": 0,
-  "fat": 0,
-  "fiber": 0,
-  "sugar": 0,
-  "sodium": 0,
-  "potassium": 0,
-  "vitc": 0,
-  "iron": 0,
-  "calcium": 0,
-  "vitd": 0,
-  "source": "Texas Roadhouse Nutrition Guide" or similar specific source name
-}
+Return ONLY a JSON object matching this schema (all values for the serving size described):
+${getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true})}
 
-Units: sodium/potassium/calcium in mg. vitc/iron in mg. vitd in mcg.`;
-
-  try {
-    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:600,messages:[{role:'user',content:prompt}]});
+${getAINutrientUnitsNote()}`;
+    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:prompt}]});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
     const text = data.content?.[0]?.text||'';
     const match = text.match(/\{[\s\S]*\}/);
     if(!match) throw new Error('No data');
     const food = JSON.parse(match[0]);
-    // Guard against Claude returning all zeros (refusal pattern)
     if((food.cal||0) === 0 && (food.protein||0) === 0 && (food.carbs||0) === 0 && (food.fat||0) === 0){
       throw new Error('zero-response');
     }
-    status.textContent='';
-    showFoodPreview(food, 'describe-preview');
-  } catch(e){
-    if(e.message === 'zero-response'){
-      status.innerHTML = '<span style="color:#ff9090;">✗ Couldn\'t find nutrition data. Try the <strong>AI Search</strong> or <strong>Brand Search</strong> tab instead.</span>';
-    } else {
-      status.innerHTML = '<span style="color:#ff9090;">✗ Lookup failed. Try again or use <strong>AI Search</strong> tab.</span>';
-    }
+    return food;
   }
-  btn.disabled=false;
-  btn.innerHTML='🤖 Look Up Nutrition';
+
+  // Try CNF first, then AI
+  lookupWithCnfFirst(
+    input,
+    aiLookup,
+    function(food){ showFoodPreview(food, 'describe-preview'); },
+    status
+  ).finally(function(){
+    btn.disabled=false;
+    btn.innerHTML='🤖 Look Up Nutrition';
+  });
 }
 
 // Global store for preview foods — avoids HTML-attribute-quoting nightmares
 var _previewFoodStore = {};
 function showFoodPreview(food, containerId){
   const el = document.getElementById(containerId);
-  const isUSDA = food.source&&food.source.toLowerCase().includes('usda');
+  const srcLower = (food.source||'').toLowerCase();
+  const isCNF = srcLower.includes('canadian nutrient file') || srcLower.includes('cnf');
+  const isUSDA = srcLower.includes('usda');
+  const isLabel = srcLower.includes('label') || srcLower.includes('nutrition guide');
+  // Choose badge class + text
+  var badgeClass = (isCNF || isUSDA || isLabel) ? 'verified-badge' : 'ai-badge';
+  var badgeText = isCNF ? '🇨🇦 CNF' : isUSDA ? '✓ USDA' : isLabel ? '✓ Label' : '🤖 AI Est.';
+  var badgeStyle = isCNF ? 'background:rgba(255,107,107,.15);color:#ff9090;' : '';
   // Stash the food with a stable ID and reference it from the button
   const pid = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
   _previewFoodStore[pid] = food;
@@ -1196,7 +1186,7 @@ function showFoodPreview(food, containerId){
     <div class="ai-preview" style="margin-top:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <div class="ai-preview-name">${food.name}</div>
-        <span class="${isUSDA?'verified-badge':'ai-badge'}">${isUSDA?'✓ USDA':'🤖 AI Est.'}</span>
+        <span class="${badgeClass}" style="${badgeStyle}">${badgeText}</span>
       </div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Per serving: ${food.serving_desc||food.serving_g+'g'}</div>
 
@@ -1212,7 +1202,7 @@ function showFoodPreview(food, containerId){
       <div class="preview-grid" id="pg-${pid}">
         ${renderPreviewGridHTML(food, 1)}
       </div>
-      ${!isUSDA?'<div style="font-size:11px;color:var(--sugar);margin-top:10px;">⚠️ AI estimate — verify with food label for accuracy</div>':''}
+      ${(!isUSDA && !isCNF && !isLabel)?'<div style="font-size:11px;color:var(--sugar);margin-top:10px;">⚠️ AI estimate — verify with food label for accuracy</div>':''}
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button class="btn-primary" style="flex:2;margin-top:0;" onclick="addPreviewFoodById('${pid}')">＋ Add to Log</button>
         <button class="btn-secondary" style="flex:1;margin-top:0;background:var(--bg4);border:1px solid var(--border2);" onclick="showAddToRecipeForPreview('${pid}')">🍳 To Recipe</button>
@@ -1295,17 +1285,27 @@ function addPreviewFood(food){
   const meal = document.getElementById('food-meal').value;
   const log = loadDayLog(dayOffset);
   const eatenAt = getEatenAtTimestamp();
-  log.foods.push({
-    meal, name:food.name, cal:food.cal, protein:food.protein||0,
-    carbs:food.carbs||0, fat:food.fat||0, fiber:food.fiber||0,
-    sugar:food.sugar||0, sodium:food.sodium||0, potassium:food.potassium||0,
-    vitc:food.vitc||0, iron:food.iron||0, calcium:food.calcium||0, vitd:food.vitd||0,
-    serving:food.serving_g||100,
-    verified: food.source&&food.source.toLowerCase().includes('usda'),
-    ai_sourced: !food.source||!food.source.toLowerCase().includes('usda'),
+  var srcLower = (food.source||'').toLowerCase();
+  var isCNF = srcLower.indexOf('canadian nutrient file') !== -1 || srcLower.indexOf('cnf') !== -1;
+  var isUSDA = srcLower.indexOf('usda') !== -1;
+  var isLabel = srcLower.indexOf('label') !== -1 || srcLower.indexOf('nutrition guide') !== -1;
+  var entry = {
+    meal: meal,
+    name: food.name,
+    serving: food.serving_g||100,
+    verified: isCNF || isUSDA || isLabel,
+    ai_sourced: !(isCNF || isUSDA || isLabel),
+    cnf_sourced: isCNF,
+    cnf_code: food.cnf_code || null,
+    source: food.source || null,
     eaten_at: eatenAt,
-    id:Date.now()
+    id: Date.now()
+  };
+  // Copy every tracked nutrient field so CNF's expanded data flows to the log
+  (typeof ALL_NUTRIENT_KEYS !== 'undefined' ? ALL_NUTRIENT_KEYS : ['cal','protein','carbs','fat','fiber','sugar','sodium','potassium','vitc','iron','calcium','vitd']).forEach(function(k){
+    entry[k] = parseFloat(food[k]) || 0;
   });
+  log.foods.push(entry);
   saveDayLog(log, dayOffset);
   // Anchor fasting timer to the actual eating time
   if(dayOffset === 0) localStorage.setItem('gn_last_eaten_at', eatenAt);
@@ -1325,9 +1325,12 @@ async function handleScan(input){
   reader.onload = async e=>{
     const b64 = e.target.result.split(',')[1];
     try {
-      const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:600,messages:[{role:'user',content:[
+      const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:[
         {type:'image',source:{type:'base64',media_type:file.type,data:b64}},
-        {type:'text',text:'Read this nutrition label exactly as printed. Return ONLY JSON: {"name":"product name","serving_desc":"serving size label","serving_g":0,"cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"source":"Food Label"}'}
+        {type:'text',text:'Read this nutrition label exactly as printed. Return ONLY JSON matching this schema (use 0 for any nutrient not shown on the label):\n'
+          + getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true}) + '\n'
+          + getAINutrientUnitsNote() + '\n'
+          + 'Set "source":"Food Label".'}
       ]}]});
       const data = await res.json();
       const text = data.content?.[0]?.text||'';
@@ -1812,6 +1815,178 @@ function filterCnfByKeywords(list, keywords){
   return matches;
 }
 
+// Score CNF foods by how well they match a user query.
+// Splits the query into words, finds the ones that appear in the CNF food description,
+// and scores by count of matching words with bonuses for rarer words and shorter names.
+function searchCnfForQuery(query){
+  if(!_cnfFoodList || !query) return [];
+  // Strip punctuation, split into words ≥3 chars (skip common words)
+  var stopWords = ['the','and','for','with','from','raw','cooked','fresh','frozen','a','an','of'];
+  var words = (query||'')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(function(w){ return w.length >= 3 && stopWords.indexOf(w) === -1; });
+  if(!words.length) return [];
+  var scored = [];
+  _cnfFoodList.forEach(function(f){
+    var descLower = f.desc.toLowerCase();
+    var matchCount = 0;
+    words.forEach(function(w){
+      if(descLower.indexOf(w) !== -1) matchCount++;
+    });
+    if(matchCount === 0) return;
+    // Prefer foods where ALL query words appear
+    var coverage = matchCount / words.length;
+    // Shorter descriptions score slightly higher (more specific match)
+    var lengthBonus = Math.max(0, 1 - (descLower.length / 200));
+    scored.push({
+      food: f,
+      score: matchCount * 10 + coverage * 5 + lengthBonus
+    });
+  });
+  scored.sort(function(a,b){ return b.score - a.score; });
+  return scored.slice(0, 6).map(function(s){ return s.food; });
+}
+
+// Fetch full CNF food data (nutrients + serving size) and shape it for showFoodPreview.
+// Returns a promise resolving to a food object with per-serving values.
+async function fetchCnfFoodAsPreview(cnfFood){
+  var results = await Promise.all([
+    fetchCnfNutrients(cnfFood.code),
+    fetchCnfServingSize(cnfFood.code)
+  ]);
+  var n = results[0], s = results[1];
+  if(!n) return null;
+  var servingG = (s && s.serving) ? s.serving : 100;
+  var servingLabel = (s && s.serving_label) ? s.serving_label : (servingG + 'g');
+  // CNF values are per 100g; scale to the serving size
+  var mult = servingG / 100;
+  var food = {
+    name: cnfFood.desc,
+    serving_desc: servingLabel,
+    serving_g: servingG,
+    cal: (n.cal || 0) * mult,
+    source: '🇨🇦 Canadian Nutrient File',
+    cnf_code: cnfFood.code
+  };
+  // Every tracked nutrient gets filled from CNF data
+  ALL_NUTRIENT_KEYS.forEach(function(k){
+    if(k === 'cal') return;
+    food[k] = (n[k] || 0) * mult;
+  });
+  return food;
+}
+
+// Show a bottom sheet asking the user which CNF match to use.
+// onPick(cnfFood) fires when user picks one. onSkip() fires on "Use AI estimate" / Cancel.
+function showCnfDisambiguationSheet(query, matches, onPick, onSkip){
+  // Stash callbacks — we can't pass functions through onclick attributes
+  window._cnfDisambigCallbacks = {pick:onPick, skip:onSkip, matches:matches};
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'cnf-disambig-sheet';
+  var matchHtml = matches.map(function(m, i){
+    return '<button onclick="pickCnfDisambiguation('+i+')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:var(--r2);padding:12px 14px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:600;cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;width:100%;">'
+      + '<span style="font-size:18px;flex-shrink:0;">🇨🇦</span>'
+      + '<div style="flex:1;min-width:0;"><div style="white-space:normal;line-height:1.35;">'+m.desc+'</div>'
+      + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">CNF code '+m.code+'</div></div>'
+      + '</button>';
+  }).join('');
+  modal.innerHTML = '<div class="modal-sheet">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">🇨🇦 Is this your food?</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Health Canada has detailed micronutrient data for '+matches.length+' possible match'+(matches.length===1?'':'es')+' for <strong>"'+query+'"</strong>. Pick one for the most accurate data, or skip to use AI.</div>'
+    + '<div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;">'+matchHtml+'</div>'
+    + '<button class="btn-secondary" style="margin-top:14px;" onclick="skipCnfDisambiguation()">None of these · use AI estimate</button>'
+    + '</div>';
+  document.body.appendChild(modal);
+}
+
+function pickCnfDisambiguation(idx){
+  var cb = window._cnfDisambigCallbacks;
+  if(!cb) return;
+  var chosen = cb.matches[idx];
+  var sheet = document.getElementById('cnf-disambig-sheet');
+  if(sheet) sheet.remove();
+  window._cnfDisambigCallbacks = null;
+  if(cb.pick) cb.pick(chosen);
+}
+
+function skipCnfDisambiguation(){
+  var cb = window._cnfDisambigCallbacks;
+  var sheet = document.getElementById('cnf-disambig-sheet');
+  if(sheet) sheet.remove();
+  window._cnfDisambigCallbacks = null;
+  if(cb && cb.skip) cb.skip();
+}
+
+// Orchestrator: tries CNF first, falls back to AI (via callback) if user skips or no matches.
+// query: user's search string
+// aiFallback: async function() that does the AI lookup and returns a food (or throws)
+// onResult: callback receiving the final food object
+// statusEl: element to update with status messages
+async function lookupWithCnfFirst(query, aiFallback, onResult, statusEl){
+  try {
+    // Ensure CNF food list is loaded (cheap after first fetch — it's cached)
+    if(statusEl) statusEl.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Checking Canadian Nutrient File…</div>';
+    if(!_cnfFoodList) await fetchCnfFoodList();
+    var cnfMatches = searchCnfForQuery(query);
+    if(cnfMatches.length){
+      if(statusEl) statusEl.textContent = '';
+      showCnfDisambiguationSheet(
+        query,
+        cnfMatches,
+        async function(chosen){
+          // User picked a CNF match — fetch full data
+          if(statusEl) statusEl.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Fetching CNF nutrient data…</div>';
+          try {
+            var food = await fetchCnfFoodAsPreview(chosen);
+            if(!food) throw new Error('CNF fetch returned null');
+            if(statusEl) statusEl.textContent = '';
+            onResult(food);
+          } catch(e){
+            // CNF fetch failed — fall back to AI
+            if(statusEl) statusEl.innerHTML = '<div style="font-size:11px;color:var(--muted);">CNF fetch failed, trying AI…</div>';
+            try {
+              var aiFood = await aiFallback();
+              onResult(aiFood);
+            } catch(ee){
+              if(statusEl) statusEl.innerHTML = '<span style="color:#ff9090;">✗ Lookup failed. Try a different phrasing.</span>';
+            }
+          }
+        },
+        async function(){
+          // User said none of the CNF matches fit — try AI
+          if(statusEl) statusEl.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Looking up via AI…</div>';
+          try {
+            var aiFood = await aiFallback();
+            if(statusEl) statusEl.textContent = '';
+            onResult(aiFood);
+          } catch(e){
+            if(statusEl) statusEl.innerHTML = '<span style="color:#ff9090;">✗ Lookup failed. Try a different phrasing.</span>';
+          }
+        }
+      );
+      return;
+    }
+    // No CNF matches — straight to AI
+    if(statusEl) statusEl.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">No CNF match, using AI…</div>';
+    var aiFood = await aiFallback();
+    if(statusEl) statusEl.textContent = '';
+    onResult(aiFood);
+  } catch(e){
+    // CNF list load failed entirely — try AI
+    try {
+      var aiFood2 = await aiFallback();
+      onResult(aiFood2);
+    } catch(ee){
+      if(statusEl) statusEl.innerHTML = '<span style="color:#ff9090;">✗ Lookup failed. Try again.</span>';
+    }
+  }
+}
+
+
 // Cache + fetch serving-size measures. Returns grams per reasonable serving.
 var _cnfServingCache = {};
 async function fetchCnfServingSize(foodCode){
@@ -2130,13 +2305,16 @@ async function doAISearch(){
     +'ALWAYS return 5-8 results showing different sizes/preparations/options.\n'
     +'Example for "egg": hard boiled egg, scrambled egg (1 egg), fried egg, 2 scrambled eggs, egg white, poached egg.\n'
     +'For restaurant items use official nutrition guide values.\n'
-    +'For general foods use USDA FoodData Central values.\n'
+    +'For general foods use USDA FoodData Central values — include rich micronutrient data where known (Vitamin A in carrots, B12 in beef, etc.).\n'
     +'Return ONLY a JSON array, no markdown, no other text:\n'
-    +'[{"name":"specific descriptive name","serving_label":"e.g. 1 large hard boiled egg (50g)","serving_g":50,"cal":78,"protein":6,"carbs":0.6,"fat":5.3,"fiber":0,"sugar":0.6,"sodium":62,"potassium":63,"vitc":0,"iron":0.6,"calcium":25,"vitd":1.1,"source":"USDA FoodData Central","source_url":"https://fdc.nal.usda.gov/fdc-app.html#/?query=hard+boiled+egg"}]\n'
+    +'[{"name":"specific descriptive name","serving_label":"e.g. 1 large hard boiled egg (50g)","serving_g":50,'
+    + getAINutrientSchemaFields().map(function(k){ return '"'+k+'":0'; }).join(',')
+    + ',"source":"USDA FoodData Central","source_url":"https://fdc.nal.usda.gov/fdc-app.html#/?query=example"}]\n'
+    + getAINutrientUnitsNote() + '\n'
     +'source field values: "USDA FoodData Central" or "Official Nutrition Guide" or "Estimated — verify with source"';
 
   try {
-    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:prompt}]});
+    const res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:4000,messages:[{role:'user',content:prompt}]});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
     const text = data.content?.[0]?.text||'';
@@ -2474,6 +2652,45 @@ async function callClaude(body){
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(body)
   });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// AI NUTRIENT SCHEMA — used by every single-food AI lookup (describe,
+// barcode, AI search, scan label, recipe-ingredient). Asks Claude for the
+// full set of nutrients the app can track. Centralized so we can expand
+// what the AI returns in one place.
+// ══════════════════════════════════════════════════════════════════════
+function getAINutrientSchemaFields(opts){
+  opts = opts || {};
+  var fields = [
+    // macros
+    'cal','protein','carbs','fat','fiber','sugar','satfat','omega3','omega6',
+    // vitamins
+    'vita','vitc','vitd','vite','vitk','thiamin','riboflavin','niacin','vitb6',
+    'folate','vitb12','choline','pantothenic',
+    // minerals
+    'calcium','iron','magnesium','phosphorus','potassium','sodium','zinc','copper',
+    'manganese','selenium'
+  ];
+  return fields;
+}
+function getAINutrientSchemaJSON(opts){
+  opts = opts || {};
+  // Build a JSON object shape string with every field set to 0
+  var parts = [];
+  if(opts.includeName !== false) parts.push('"name":"descriptive food name"');
+  if(opts.includeServingDesc) parts.push('"serving_desc":"natural serving description"');
+  if(opts.includeServingG) parts.push('"serving_g":0');
+  getAINutrientSchemaFields().forEach(function(k){ parts.push('"'+k+'":0'); });
+  if(opts.includeSource) parts.push('"source":"data source name"');
+  return '{' + parts.join(',') + '}';
+}
+function getAINutrientUnitsNote(){
+  return 'UNITS: cal=kcal; protein/carbs/fat/fiber/sugar/satfat/omega3/omega6=g; '
+    + 'vita/vitd/vitk/folate/vitb12/selenium=µg (micrograms); '
+    + 'all other vitamins and minerals=mg (milligrams except where noted). '
+    + 'IMPORTANT: Return 0 for any nutrient you don\'t know or can\'t reliably estimate. '
+    + 'DO include vitamin A for orange/leafy vegetables, vitamin C for citrus/peppers, B12 for animal products, etc. — these are well-known.';
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3055,7 +3272,7 @@ async function lookupUPCCode(upc){
   } catch(e){
     try {
       status.textContent='Looking up...';
-      var res=await callClaude({model:'claude-sonnet-4-20250514',max_tokens:400,messages:[{role:'user',content:'Nutrition facts for UPC '+upc+'. Return ONLY JSON: {"name":"name","serving_desc":"serving","serving_g":100,"cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0,"source":"lookup"}'}]});
+      var res=await callClaude({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:'Nutrition facts for UPC '+upc+'. Return ONLY JSON:\n'+getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true})+'\n'+getAINutrientUnitsNote()}]});
       var data=await res.json();
       var text=(data.content&&data.content[0]&&data.content[0].text)||'';
       var match=text.match(/\{[\s\S]*\}/);
@@ -3188,7 +3405,10 @@ function saveSubGoals(){
 // ═════════════════════════════════════════════════════════════════════
 
 // All nutrient keys tracked across the app (matches FOOD_DB schema)
-var RECIPE_NUTRIENT_KEYS = ['cal','protein','carbs','fat','fiber','sugar','sodium','potassium','vitc','iron','calcium','vitd'];
+// Recipe ingredient schema matches ALL_NUTRIENT_KEYS (the full 30-nutrient set)
+// so recipes carry vitamin A, E, K, B-vitamins, magnesium, zinc etc. through
+// to their summed totals and to logged food entries.
+var RECIPE_NUTRIENT_KEYS = (typeof ALL_NUTRIENT_KEYS !== 'undefined') ? ALL_NUTRIENT_KEYS.slice() : ['cal','protein','carbs','fat','fiber','sugar','sodium','potassium','vitc','iron','calcium','vitd'];
 
 // Working state for the recipe-in-progress
 var _recipeDraft = null; // {name, ingredients:[{name, qtyG, scale, perHundred:{...}}]}
@@ -3513,10 +3733,10 @@ async function recipeSearchIngredientsAI(){
   var resultsEl = document.getElementById('rc-ing-results');
   resultsEl.innerHTML = '<div style="padding:10px;text-align:center;"><div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Looking up '+query+'...</div></div>';
   try {
-    var prompt = 'Per-100g nutrition values for: "'+query+'".\nReturn ONLY a JSON object:\n'
-      +'{"name":"clean name","cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0}\n'
-      +'All values per 100g. sodium/potassium/calcium in mg. vitc/iron in mg. vitd in mcg. Use USDA values when possible.';
-    var res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:500,messages:[{role:'user',content:prompt}]});
+    var prompt = 'Per-100g nutrition values for: "'+query+'".\nReturn ONLY a JSON object matching this schema:\n'
+      + getAINutrientSchemaJSON({includeName:true}).replace('"name":"descriptive food name"', '"name":"clean name"') + '\n'
+      + 'All values per 100g. ' + getAINutrientUnitsNote() + '\nUse USDA FoodData Central values when possible. Include Vitamin A for carrots/sweet potatoes/leafy greens, B12 for animal products, etc.';
+    var res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:prompt}]});
     if(!res.ok) throw new Error('HTTP '+res.status);
     var data = await res.json();
     var text = (data.content && data.content[0] && data.content[0].text) || '';
