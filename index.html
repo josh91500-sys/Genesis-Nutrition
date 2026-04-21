@@ -579,15 +579,24 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
     <div class="modal-handle"></div>
     <div class="modal-title">Log Food</div>
 
-    <!-- Meal selector -->
-    <div class="input-group">
-      <label class="input-label">Meal</label>
-      <select id="food-meal">
-        <option value="Breakfast">🌅 Breakfast</option>
-        <option value="Lunch">☀️ Lunch</option>
-        <option value="Dinner" selected>🌙 Dinner</option>
-        <option value="Snacks">🍎 Snack</option>
-      </select>
+    <!-- Meal + time selectors -->
+    <div class="input-row">
+      <div class="input-group">
+        <label class="input-label">Meal</label>
+        <select id="food-meal">
+          <option value="Breakfast">🌅 Breakfast</option>
+          <option value="Lunch">☀️ Lunch</option>
+          <option value="Dinner" selected>🌙 Dinner</option>
+          <option value="Snacks">🍎 Snack</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label class="input-label">Time eaten</label>
+        <div style="display:flex;gap:4px;">
+          <input type="time" id="food-time" style="flex:1;">
+          <button onclick="setFoodTimeToNow()" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:var(--r1);padding:0 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;" title="Set to now">Now</button>
+        </div>
+      </div>
     </div>
 
     <!-- Mode selector -->
@@ -698,6 +707,13 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
     <div class="input-row">
       <div class="input-group"><label class="input-label">Sodium (mg)</label><input type="number" id="ef-sodium"></div>
       <div class="input-group"><label class="input-label">Sugar (g)</label><input type="number" id="ef-sugar" step="0.1"></div>
+    </div>
+    <div class="input-group">
+      <label class="input-label">Time eaten</label>
+      <div style="display:flex;gap:4px;">
+        <input type="time" id="ef-time" style="flex:1;">
+        <button onclick="var t=new Date();document.getElementById('ef-time').value=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:var(--r1);padding:0 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">Now</button>
+      </div>
     </div>
     <button class="btn-primary" onclick="saveEditFood()">Save Changes</button>
     <button class="btn-secondary" style="margin-top:8px;background:#ff6b6b22;color:#ff9090;border-color:#ff6b6b44;" onclick="deleteEditFood()">&#x1F5D1; Delete Food</button>
@@ -882,16 +898,26 @@ function renderNutrition(){
           <button class="meal-add" onclick="openAddFood('${meal}')">＋</button>
         </div>
       </div>
-      ${foods.length ? foods.map((f,i)=>`
+      ${foods.length ? foods.map((f,i)=>{
+        // Compute display time from eaten_at (or id fallback)
+        var ts = parseInt(f.eaten_at || f.id || 0);
+        var timeStr = '';
+        if(ts > 0){
+          var d = new Date(ts);
+          var pad = function(n){ return String(n).padStart(2,'0'); };
+          timeStr = pad(d.getHours())+':'+pad(d.getMinutes());
+        }
+        return `
         <div class="food-item" onclick="openEditFood('${meal}',${i})" style="cursor:pointer;">
           <div class="food-info">
-            <div class="food-name">${f.name}</div>
+            <div class="food-name">${f.name}${timeStr?' <span style="font-size:10px;color:var(--muted2);font-weight:400;">· '+timeStr+'</span>':''}</div>
             <div class="food-meta">P ${(f.protein||0).toFixed(0)}g · C ${(f.carbs||0).toFixed(0)}g · F ${(f.fat||0).toFixed(0)}g${f.verified?' · <span class="verified-badge">✓ Verified</span>':f.ai_sourced?' · <span class="ai-badge">🤖 AI</span>':''}</div>
             <div style="font-size:10px;color:var(--fiber);margin-top:2px;">&#x1F525; TEF ~${calcTEF(f)} kcal &middot; Net ~${calcNetCal(f)} kcal</div>
           </div>
           <div class="food-cal">${Math.round(f.cal||0)}</div>
           <button class="food-del" onclick="event.stopPropagation();deleteFood('${meal}',${i})">×</button>
-        </div>`).join('') : `<div class="meal-empty">Nothing logged yet</div>`}`;
+        </div>`;
+      }).join('') : `<div class="meal-empty">Nothing logged yet</div>`}`;
   });
 }
 
@@ -962,6 +988,8 @@ function reAddFood(idx){
 // ══════════════════════════════════════════════════════════════════════
 function openAddFood(meal){
   if(meal) document.getElementById('food-meal').value = meal;
+  // Default time-eaten to the current time. User can edit or tap "Now" anytime.
+  setFoodTimeToNow();
   document.getElementById('add-modal').classList.add('open');
   setMode('describe', document.getElementById('mode-describe'));
 }
@@ -972,6 +1000,32 @@ function closeAddFood(){
   document.getElementById('describe-preview').innerHTML='';
   document.getElementById('scan-status').textContent='';
   document.getElementById('scan-preview').innerHTML='';
+}
+
+// Set the time-eaten input to the current local time (HH:MM)
+function setFoodTimeToNow(){
+  var el = document.getElementById('food-time');
+  if(!el) return;
+  var now = new Date();
+  var pad = function(n){ return String(n).padStart(2,'0'); };
+  el.value = pad(now.getHours())+':'+pad(now.getMinutes());
+}
+
+// Read the time-eaten input and return a ms-epoch timestamp anchored to
+// the day being logged (dayOffset). If the input is empty, returns Date.now().
+function getEatenAtTimestamp(){
+  var el = document.getElementById('food-time');
+  var val = el ? (el.value||'').trim() : '';
+  if(!val) return Date.now();
+  var parts = val.split(':');
+  if(parts.length !== 2) return Date.now();
+  var hh = parseInt(parts[0]), mm = parseInt(parts[1]);
+  if(isNaN(hh) || isNaN(mm)) return Date.now();
+  // Anchor to the day being logged
+  var d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(hh, mm, 0, 0);
+  return d.getTime();
 }
 
 function setMode(mode, el){
@@ -1089,6 +1143,7 @@ function addPreviewFoodById(pid){
 function addPreviewFood(food){
   const meal = document.getElementById('food-meal').value;
   const log = loadDayLog(dayOffset);
+  const eatenAt = getEatenAtTimestamp();
   log.foods.push({
     meal, name:food.name, cal:food.cal, protein:food.protein||0,
     carbs:food.carbs||0, fat:food.fat||0, fiber:food.fiber||0,
@@ -1097,9 +1152,12 @@ function addPreviewFood(food){
     serving:food.serving_g||100,
     verified: food.source&&food.source.toLowerCase().includes('usda'),
     ai_sourced: !food.source||!food.source.toLowerCase().includes('usda'),
+    eaten_at: eatenAt,
     id:Date.now()
   });
   saveDayLog(log, dayOffset);
+  // Anchor fasting timer to the actual eating time
+  if(dayOffset === 0) localStorage.setItem('gn_last_eaten_at', eatenAt);
   closeAddFood();
   renderNutrition();
   showToast('✓ '+food.name+' added');
@@ -1140,6 +1198,7 @@ function addManualFood(){
   if(!name) return;
   const meal = document.getElementById('food-meal').value;
   const log = loadDayLog(dayOffset);
+  const eatenAt = getEatenAtTimestamp();
   log.foods.push({
     meal, name,
     cal:parseFloat(document.getElementById('m-cal').value)||0,
@@ -1149,9 +1208,11 @@ function addManualFood(){
     fiber:parseFloat(document.getElementById('m-fiber').value)||0,
     sugar:0, sodium:0, potassium:0, vitc:0, iron:0, calcium:0, vitd:0,
     serving:parseFloat(document.getElementById('m-serving').value)||100,
+    eaten_at: eatenAt,
     id:Date.now()
   });
   saveDayLog(log, dayOffset);
+  if(dayOffset === 0) localStorage.setItem('gn_last_eaten_at', eatenAt);
   closeAddFood();
   renderNutrition();
   showToast('✓ '+name+' added');
@@ -2298,6 +2359,18 @@ function openEditFood(meal,idx){
     if(el) el.value = k==='meal'?(food.meal||meal):(food[k]||0);
   });
   document.getElementById('ef-name').value=food.name||'';
+  // Populate time-eaten field from stored eaten_at (or fall back to id/now)
+  var timeEl = document.getElementById('ef-time');
+  if(timeEl){
+    var ts = parseInt(food.eaten_at || food.id || 0);
+    if(ts > 0){
+      var d = new Date(ts);
+      var pad = function(n){ return String(n).padStart(2,'0'); };
+      timeEl.value = pad(d.getHours())+':'+pad(d.getMinutes());
+    } else {
+      timeEl.value = '';
+    }
+  }
   document.getElementById('edit-food-modal').classList.add('open');
 }
 function closeEditFood(){
@@ -2317,6 +2390,22 @@ function saveEditFood(){
   food.fiber=parseFloat(document.getElementById('ef-fiber').value)||0;
   food.sodium=parseFloat(document.getElementById('ef-sodium').value)||0;
   food.sugar=parseFloat(document.getElementById('ef-sugar').value)||0;
+  // Update eaten_at from time picker (anchored to the day being edited)
+  var timeVal = (document.getElementById('ef-time').value||'').trim();
+  if(timeVal){
+    var parts = timeVal.split(':');
+    if(parts.length === 2){
+      var hh = parseInt(parts[0]), mm = parseInt(parts[1]);
+      if(!isNaN(hh) && !isNaN(mm)){
+        var d = new Date();
+        d.setDate(d.getDate() + dayOffset);
+        d.setHours(hh, mm, 0, 0);
+        food.eaten_at = d.getTime();
+        // If editing a today food, also keep the fasting anchor fresh
+        if(dayOffset === 0) localStorage.setItem('gn_last_eaten_at', food.eaten_at);
+      }
+    }
+  }
   saveDayLog(log,dayOffset); closeEditFood(); renderNutrition();
   showToast('✓ '+food.name+' updated');
 }
@@ -3192,38 +3281,74 @@ function renderFastingTimer(){
   var el = document.getElementById('fasting-timer-bar');
   if(!el) return;
   var lastEatenTime = getLastEatenTime();
+  var now = Date.now();
+  // Midnight this morning (local time)
+  var startOfToday = new Date(); startOfToday.setHours(0,0,0,0);
+  var hoursSinceMidnight = (now - startOfToday.getTime()) / 3600000;
+  var target = parseInt(localStorage.getItem('gn_fasting_target')||'16');
+
   if(!lastEatenTime){
-    el.innerHTML = '<button onclick="showFastingMenu()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;color:var(--text);"><span style="font-size:22px;">⏱️</span><div style="flex:1;text-align:left;"><div style="font-size:14px;font-weight:700;">Fasting Timer</div><div style="font-size:11px;color:var(--muted);">Tap to start tracking</div></div><span style="color:var(--accent2);font-size:18px;">›</span></button>';
+    // No meal logged yet — still show the "since midnight" counter so it's useful on fresh days
+    var mH = Math.floor(hoursSinceMidnight);
+    var mM = Math.floor((hoursSinceMidnight - mH) * 60);
+    var mProgress = Math.min(100, (hoursSinceMidnight / 24) * 100);
+    el.innerHTML = '<button onclick="showFastingMenu()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--text);">'
+      +'<span style="font-size:22px;">⏱️</span>'
+      +'<div style="flex:1;text-align:left;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">'
+      +'<div style="font-size:13px;font-weight:700;">Fasting Timer</div>'
+      +'<div style="font-size:11px;color:var(--muted);">Tap to start</div>'
+      +'</div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--muted);margin-top:4px;margin-bottom:2px;"><span>Since midnight</span><span>'+mH+'h '+mM+'m / 24h</span></div>'
+      +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+mProgress+'%;background:#94a3b8;border-radius:99px;"></div></div>'
+      +'</div></button>';
     return;
   }
-  var now = Date.now();
+
   var hoursSince = (now - lastEatenTime) / 3600000;
   var h = Math.floor(hoursSince);
   var m = Math.floor((hoursSince - h) * 60);
-  var target = parseInt(localStorage.getItem('gn_fasting_target')||'16');
   var progress = Math.min(100, (hoursSince / target) * 100);
   var achieved = hoursSince >= target;
   var color = achieved ? 'var(--fiber)' : hoursSince > target*0.75 ? 'var(--sugar)' : 'var(--accent2)';
+
+  // Second line: since midnight today
+  var mH = Math.floor(hoursSinceMidnight);
+  var mM = Math.floor((hoursSinceMidnight - mH) * 60);
+  var mProgress = Math.min(100, (hoursSinceMidnight / 24) * 100);
+
   el.innerHTML = '<button onclick="showFastingMenu()" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--text);">'
     +'<span style="font-size:22px;">'+(achieved?'🎉':'⏱️')+'</span>'
     +'<div style="flex:1;text-align:left;">'
-    +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">'
+    // Line 1: since last meal
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">'
     +'<div style="font-size:14px;font-weight:700;">Fasting: '+h+'h '+m+'m</div>'
     +'<div style="font-size:11px;color:'+color+';font-weight:700;">'+(achieved?'✓ Goal!':Math.round(hoursSince*10)/10+'/'+target+'h')+'</div>'
     +'</div>'
-    +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+progress+'%;background:'+color+';border-radius:99px;"></div></div>'
+    +'<div style="font-size:10px;color:var(--muted);margin-bottom:3px;">Since last meal</div>'
+    +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;margin-bottom:8px;"><div style="height:100%;width:'+progress+'%;background:'+color+';border-radius:99px;"></div></div>'
+    // Line 2: since midnight today
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--muted);margin-bottom:2px;"><span>Since midnight</span><span>'+mH+'h '+mM+'m / 24h</span></div>'
+    +'<div style="height:4px;background:var(--bg5);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+mProgress+'%;background:#94a3b8;border-radius:99px;"></div></div>'
     +'</div></button>';
 }
 function getLastEatenTime(){
+  // 1. Explicit anchor (set whenever a food is added to today's log)
+  var anchor = parseInt(localStorage.getItem('gn_last_eaten_at')||'0');
+  // 2. Walk through recent days and find the most recent eaten_at / id across foods
+  var foodMax = 0;
   for(var i=0; i<=3; i++){
     var log = loadDayLog(-i);
     if(log.foods && log.foods.length){
-      var last = log.foods[log.foods.length-1];
-      if(last.eaten_at) return last.eaten_at;
-      if(last.id) return last.id;
+      log.foods.forEach(function(f){
+        var t = parseInt(f.eaten_at || f.id || 0);
+        if(t > foodMax) foodMax = t;
+      });
     }
   }
-  return null;
+  // Prefer the most recent of the two sources (so editing a food updates it)
+  var best = Math.max(anchor, foodMax);
+  return best > 0 ? best : null;
 }
 function showFastingMenu(){
   var target = parseInt(localStorage.getItem('gn_fasting_target')||'16');
