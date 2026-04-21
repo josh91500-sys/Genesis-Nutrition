@@ -1182,14 +1182,19 @@ function showFoodPreview(food, containerId){
         <div class="ai-preview-name">${food.name}</div>
         <span class="${isUSDA?'verified-badge':'ai-badge'}">${isUSDA?'✓ USDA':'🤖 AI Est.'}</span>
       </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">${food.serving_desc||food.serving_g+'g serving'}</div>
-      <div class="preview-grid">
-        <div class="preview-item"><div class="preview-val">${Math.round(food.cal)}</div><div class="preview-key">kcal</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--protein)">${(food.protein||0).toFixed(1)}g</div><div class="preview-key">protein</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--carbs)">${(food.carbs||0).toFixed(1)}g</div><div class="preview-key">carbs</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--fat)">${(food.fat||0).toFixed(1)}g</div><div class="preview-key">fat</div></div>
-        <div class="preview-item"><div class="preview-val" style="color:var(--fiber)">${(food.fiber||0).toFixed(1)}g</div><div class="preview-key">fiber</div></div>
-        <div class="preview-item"><div class="preview-val">${Math.round(food.sodium||0)}mg</div><div class="preview-key">sodium</div></div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Per serving: ${food.serving_desc||food.serving_g+'g'}</div>
+
+      <!-- Servings adjuster -->
+      <div style="display:flex;align-items:center;gap:8px;background:var(--bg4);border:1px solid var(--border2);border-radius:10px;padding:8px 10px;margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Servings</div>
+        <div style="flex:1;"></div>
+        <button onclick="adjustPreviewServings('${pid}',-0.5)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:8px;width:32px;height:32px;font-size:16px;font-weight:700;cursor:pointer;">−</button>
+        <input type="number" id="psv-${pid}" value="1" min="0.25" max="20" step="0.25" oninput="updatePreviewServings('${pid}',this.value)" style="width:70px;text-align:center;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:6px;font-size:14px;font-weight:700;color:var(--text);outline:none;">
+        <button onclick="adjustPreviewServings('${pid}',0.5)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:8px;width:32px;height:32px;font-size:16px;font-weight:700;cursor:pointer;">+</button>
+      </div>
+
+      <div class="preview-grid" id="pg-${pid}">
+        ${renderPreviewGridHTML(food, 1)}
       </div>
       ${!isUSDA?'<div style="font-size:11px;color:var(--sugar);margin-top:10px;">⚠️ AI estimate — verify with food label for accuracy</div>':''}
       <div style="display:flex;gap:8px;margin-top:12px;">
@@ -1197,22 +1202,77 @@ function showFoodPreview(food, containerId){
         <button class="btn-secondary" style="flex:1;margin-top:0;background:var(--bg4);border:1px solid var(--border2);" onclick="showAddToRecipeForPreview('${pid}')">🍳 To Recipe</button>
       </div>
     </div>`;
+  // Initialize multiplier cache
+  if(!window._previewServings) window._previewServings = {};
+  window._previewServings[pid] = 1;
+}
+
+function renderPreviewGridHTML(food, mult){
+  mult = mult || 1;
+  return '<div class="preview-item"><div class="preview-val">'+Math.round((food.cal||0)*mult)+'</div><div class="preview-key">kcal</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--protein)">'+((food.protein||0)*mult).toFixed(1)+'g</div><div class="preview-key">protein</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--carbs)">'+((food.carbs||0)*mult).toFixed(1)+'g</div><div class="preview-key">carbs</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--fat)">'+((food.fat||0)*mult).toFixed(1)+'g</div><div class="preview-key">fat</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--fiber)">'+((food.fiber||0)*mult).toFixed(1)+'g</div><div class="preview-key">fiber</div></div>'
+    + '<div class="preview-item"><div class="preview-val">'+Math.round((food.sodium||0)*mult)+'mg</div><div class="preview-key">sodium</div></div>';
+}
+
+function updatePreviewServings(pid, val){
+  var mult = parseFloat(val) || 1;
+  if(mult < 0.25) mult = 0.25;
+  if(mult > 20) mult = 20;
+  if(!window._previewServings) window._previewServings = {};
+  window._previewServings[pid] = mult;
+  var food = _previewFoodStore[pid];
+  var grid = document.getElementById('pg-'+pid);
+  if(grid && food){ grid.innerHTML = renderPreviewGridHTML(food, mult); }
+}
+
+function adjustPreviewServings(pid, delta){
+  var input = document.getElementById('psv-'+pid);
+  if(!input) return;
+  var current = parseFloat(input.value) || 1;
+  var next = Math.max(0.25, Math.min(20, current + delta));
+  input.value = next;
+  updatePreviewServings(pid, next);
 }
 
 // Helper: route previewFoodStore item into the recipe picker sheet
 function showAddToRecipeForPreview(pid){
   var food = _previewFoodStore[pid];
   if(!food){ showToast('Preview expired — try again'); return; }
+  // Apply the current servings multiplier so the recipe ingredient reflects
+  // what the user actually intends (e.g. 1.5 servings = 1.5× values, 1.5× grams)
+  var mult = (window._previewServings && window._previewServings[pid]) || 1;
+  var scaled = scalePreviewFood(food, mult);
   // Close the add-food modal so the recipe sheet is on top and visible
   var addModal = document.getElementById('add-modal');
   if(addModal) addModal.classList.remove('open');
-  showAddToRecipeSheet(food);
+  showAddToRecipeSheet(scaled);
 }
 
 function addPreviewFoodById(pid){
   const food = _previewFoodStore[pid];
   if(!food){ showToast('Could not find food data — try again'); return; }
-  addPreviewFood(food);
+  const mult = (window._previewServings && window._previewServings[pid]) || 1;
+  const scaled = scalePreviewFood(food, mult);
+  addPreviewFood(scaled);
+}
+
+// Produce a scaled copy of a preview food by the servings multiplier.
+// Scales nutrient values AND serving_g so downstream consumers (log entry,
+// recipe ingredient converter) see the full actual portion.
+function scalePreviewFood(food, mult){
+  if(!mult || mult === 1) return food;
+  var out = Object.assign({}, food);
+  ['cal','protein','carbs','fat','fiber','sugar','sodium','potassium','vitc','iron','calcium','vitd'].forEach(function(k){
+    if(typeof food[k] === 'number') out[k] = food[k] * mult;
+  });
+  if(typeof food.serving_g === 'number') out.serving_g = food.serving_g * mult;
+  // Adjust display name so logged entry shows "(1.5 servings)" — makes the log readable
+  var servingsLabel = (mult === Math.floor(mult) ? String(mult) : mult.toFixed(2).replace(/\.?0+$/,''));
+  out.name = food.name + ' (' + servingsLabel + ' serving' + (mult===1?'':'s') + ')';
+  return out;
 }
 
 function addPreviewFood(food){
@@ -3013,6 +3073,7 @@ function renderRecipesSubPage(el){
         + '</div>'
         + '<div style="display:flex;gap:6px;flex-shrink:0;">'
         + (ingCount>0?'<button onclick="toggleRecipeIngredients('+i+')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" title="View ingredients">▼</button>':'')
+        + '<button onclick="editRecipe('+i+')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" title="Edit recipe">✏️</button>'
         + (isEmpty?'':'<button onclick="addRecipeToLog('+i+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Log</button>')
         + '<button onclick="deleteRecipe('+i+')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">×</button>'
         + '</div></div>'
@@ -3051,8 +3112,9 @@ function toggleRecipeIngredients(idx){
 }
 
 function showCreateRecipe(){
-  // Reset draft
+  // Reset draft and edit-mode flag
   _recipeDraft = {name:'', ingredients:[]};
+  _recipeEditIdx = null;
   var formEl = document.getElementById('recipe-create-form');
   if(!formEl) return;
   formEl.innerHTML = '<div class="card" id="recipe-form-card">'
@@ -3067,8 +3129,83 @@ function showCreateRecipe(){
     + '</div>'
     + '<div id="recipe-mode-combine">'+renderCombineModeHTML()+'</div>'
     + '<div id="recipe-mode-manual" style="display:none;">'+renderManualModeHTML()+'</div>'
-    + '<button class="btn-secondary" style="margin-top:12px;" onclick="_recipeDraft=null;document.getElementById(\'recipe-create-form\').innerHTML=\'\'">Cancel</button>'
+    + '<button class="btn-secondary" style="margin-top:12px;" onclick="_recipeDraft=null;_recipeEditIdx=null;document.getElementById(\'recipe-create-form\').innerHTML=\'\'">Cancel</button>'
     + '</div>';
+}
+
+// Track which saved recipe we're editing (null = creating a new one)
+var _recipeEditIdx = null;
+
+// Open an existing recipe in edit mode, reusing the combine-mode UI
+function editRecipe(idx){
+  var recipes = loadRecipes();
+  var r = recipes[idx];
+  if(!r){ showToast('Recipe not found'); return; }
+  // If this is a pure-manual recipe (totals but no ingredients and no manualBase),
+  // snapshot its current totals as manualBase so they're preserved through edits.
+  var hasTotals = !!(r.cal || r.protein || r.carbs || r.fat);
+  var hasIngredients = (r.ingredients && r.ingredients.length) > 0;
+  if(hasTotals && !hasIngredients && !r.manualBase){
+    r.manualBase = {};
+    RECIPE_NUTRIENT_KEYS.forEach(function(k){ r.manualBase[k] = r[k] || 0; });
+    recipes[idx] = r;
+    saveRecipes(recipes);
+  }
+  _recipeEditIdx = idx;
+  // Load existing ingredients into the draft. Deep-copy to avoid mutating stored data
+  // until Save is tapped.
+  _recipeDraft = {
+    name: r.name || '',
+    ingredients: (r.ingredients || []).map(function(ing){
+      return {
+        name: ing.name,
+        qtyG: ing.qtyG,
+        perHundred: Object.assign({}, ing.perHundred || {})
+      };
+    })
+  };
+  var formEl = document.getElementById('recipe-create-form');
+  if(!formEl) return;
+  // Build the form — similar to showCreateRecipe but with "Edit" titling and the
+  // existing ingredient list pre-populated. We use a combine-only view for edits
+  // (the manual-base is preserved invisibly by saveRecipe when _recipeEditIdx is set).
+  var hasManualBase = !!(r.manualBase && Object.keys(r.manualBase).some(function(k){ return r.manualBase[k] > 0; }));
+  formEl.innerHTML = '<div class="card" id="recipe-form-card">'
+    + '<div class="card-title">✏️ Edit Recipe</div>'
+    + '<div class="input-group">'
+    + '<label class="input-label">Recipe Name</label>'
+    + '<input type="text" id="rc-name" value="'+(r.name||'').replace(/"/g,'&quot;')+'" oninput="_recipeDraft.name=this.value">'
+    + '</div>'
+    + '<div id="recipe-mode-combine">'+renderCombineModeHTML()+'</div>'
+    + (hasManualBase ? '<div style="margin-top:8px;padding:10px;background:var(--bg4);border:1px solid var(--border2);border-radius:var(--r1);">'
+      + '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">Manual Base Totals</div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:6px;">This recipe was originally saved with typed totals (~'+Math.round(r.manualBase.cal||0)+' kcal). These are added on top of your ingredients.</div>'
+      + '<button onclick="clearRecipeManualBase()" style="background:none;border:1px solid var(--border2);color:var(--accent2);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;">Clear base · use ingredients only</button>'
+      + '</div>' : '')
+    + '<button class="btn-secondary" style="margin-top:12px;" onclick="_recipeDraft=null;_recipeEditIdx=null;document.getElementById(\'recipe-create-form\').innerHTML=\'\'">Cancel</button>'
+    + '</div>';
+  // Scroll the form into view
+  setTimeout(function(){
+    if(formEl && formEl.scrollIntoView) formEl.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 50);
+}
+
+// Clear the manual-base from the recipe being edited (if present)
+function clearRecipeManualBase(){
+  if(_recipeEditIdx === null){ return; }
+  if(!confirm('Clear the manual-base totals? After saving, this recipe will show ONLY the sum of its ingredients.')) return;
+  var recipes = loadRecipes();
+  var r = recipes[_recipeEditIdx];
+  if(!r) return;
+  delete r.manualBase;
+  // Recompute totals from ingredients only (use the draft's current ingredients)
+  var totals = sumRecipeTotals(_recipeDraft.ingredients);
+  RECIPE_NUTRIENT_KEYS.forEach(function(k){ r[k] = totals[k]; });
+  recipes[_recipeEditIdx] = r;
+  saveRecipes(recipes);
+  showToast('✓ Manual base cleared');
+  // Re-open the edit view so the UI reflects the change
+  editRecipe(_recipeEditIdx);
 }
 
 function setRecipeMode(mode){
@@ -3271,13 +3408,36 @@ function saveRecipe(){
   if(!_recipeDraft){ showToast('No draft'); return; }
   var name = (document.getElementById('rc-name').value||'').trim();
   if(!name){ showToast('Enter a recipe name'); return; }
-  // Empty recipes are allowed — user may want to build it up from search/scans later
-  var totals = sumRecipeTotals(_recipeDraft.ingredients);
+  var ingTotals = sumRecipeTotals(_recipeDraft.ingredients);
   var recipes = loadRecipes();
-  var newRecipe = Object.assign({name:name, ingredients:_recipeDraft.ingredients, created:Date.now()}, totals);
+
+  if(_recipeEditIdx !== null){
+    // UPDATE EXISTING RECIPE
+    var r = recipes[_recipeEditIdx];
+    if(!r){ showToast('Recipe not found'); _recipeEditIdx = null; return; }
+    r.name = name;
+    r.ingredients = _recipeDraft.ingredients;
+    // Totals = manual base (if any) + sum of current ingredients
+    RECIPE_NUTRIENT_KEYS.forEach(function(k){
+      var base = (r.manualBase && r.manualBase[k]) || 0;
+      r[k] = Math.round((base + (ingTotals[k]||0)) * 10) / 10;
+    });
+    recipes[_recipeEditIdx] = r;
+    saveRecipes(recipes);
+    _recipeDraft = null;
+    _recipeEditIdx = null;
+    showToast('✓ Recipe updated');
+    renderRecipesSubPage(document.getElementById('sub-page-content'));
+    return;
+  }
+
+  // CREATE NEW RECIPE
+  // Empty recipes are allowed — user may want to build it up from search/scans later
+  var newRecipe = Object.assign({name:name, ingredients:_recipeDraft.ingredients, created:Date.now()}, ingTotals);
   recipes.push(newRecipe);
   saveRecipes(recipes);
   _recipeDraft = null;
+  _recipeEditIdx = null;
   var emptyNote = newRecipe.ingredients.length ? '' : ' (empty — add ingredients from barcode/search anytime)';
   showToast('✓ Recipe saved!'+emptyNote);
   renderRecipesSubPage(document.getElementById('sub-page-content'));
