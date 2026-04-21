@@ -952,16 +952,33 @@ function renderNutrition(){
           var pad = function(n){ return String(n).padStart(2,'0'); };
           timeStr = pad(d.getHours())+':'+pad(d.getMinutes());
         }
+        // If this food came from a recipe, prep an expandable ingredients pane
+        var hasIngredients = f.recipe_ingredients && f.recipe_ingredients.length > 0;
+        var rowId = meal + '_' + i;
+        var ingredientsBlock = '';
+        if(hasIngredients){
+          ingredientsBlock = '<div id="logged-ing-'+rowId+'" style="display:none;padding:10px 16px;background:var(--bg4);border-top:1px solid var(--border);font-size:12px;">'
+            + '<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Ingredients</div>'
+            + f.recipe_ingredients.map(function(ing){
+                var ingCal = (ing.perHundred && ing.perHundred.cal ? ing.perHundred.cal : 0) * ((ing.qtyG||0)/100);
+                return '<div style="display:flex;justify-content:space-between;padding:3px 0;">'
+                  + '<span>'+ing.name+' · '+ing.qtyG+'g</span>'
+                  + '<span style="color:var(--muted);">'+Math.round(ingCal)+' kcal</span>'
+                  + '</div>';
+              }).join('')
+            + '</div>';
+        }
         return `
         <div class="food-item" onclick="openEditFood('${meal}',${i})" style="cursor:pointer;">
           <div class="food-info">
             <div class="food-name">${f.name}${timeStr?' <span style="font-size:10px;color:var(--muted2);font-weight:400;">· '+timeStr+'</span>':''}</div>
-            <div class="food-meta">P ${(f.protein||0).toFixed(0)}g · C ${(f.carbs||0).toFixed(0)}g · F ${(f.fat||0).toFixed(0)}g${f.verified?' · <span class="verified-badge">✓ Verified</span>':f.ai_sourced?' · <span class="ai-badge">🤖 AI</span>':''}</div>
+            <div class="food-meta">P ${(f.protein||0).toFixed(0)}g · C ${(f.carbs||0).toFixed(0)}g · F ${(f.fat||0).toFixed(0)}g${f.verified?' · <span class="verified-badge">✓ Verified</span>':f.ai_sourced?' · <span class="ai-badge">🤖 AI</span>':''}${hasIngredients?' · <span style="color:var(--accent2);">🍳 Recipe</span>':''}</div>
             <div style="font-size:10px;color:var(--fiber);margin-top:2px;">&#x1F525; TEF ~${calcTEF(f)} kcal &middot; Net ~${calcNetCal(f)} kcal</div>
           </div>
           <div class="food-cal">${Math.round(f.cal||0)}</div>
+          ${hasIngredients?'<button onclick="event.stopPropagation();toggleLoggedIngredients(\''+rowId+'\')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:6px;padding:4px 7px;font-size:11px;cursor:pointer;margin-right:4px;" title="View ingredients">▼</button>':''}
           <button class="food-del" onclick="event.stopPropagation();deleteFood('${meal}',${i})">×</button>
-        </div>`;
+        </div>${ingredientsBlock}`;
       }).join('') : `<div class="meal-empty">Nothing logged yet</div>`}`;
   });
 }
@@ -2884,46 +2901,381 @@ function saveSubGoals(){
 // ══════════════════════════════════════════════════════════════════════
 // RECIPES SUB PAGE
 // ══════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════
+// RECIPES — ingredient-combining system with full macro/micro support
+// ═════════════════════════════════════════════════════════════════════
+
+// All nutrient keys tracked across the app (matches FOOD_DB schema)
+var RECIPE_NUTRIENT_KEYS = ['cal','protein','carbs','fat','fiber','sugar','sodium','potassium','vitc','iron','calcium','vitd'];
+
+// Working state for the recipe-in-progress
+var _recipeDraft = null; // {name, ingredients:[{name, qtyG, scale, perHundred:{...}}]}
+
+function loadRecipes(){ try{return JSON.parse(localStorage.getItem('gn_recipes')||'[]');}catch(e){return [];} }
+function saveRecipes(list){ localStorage.setItem('gn_recipes', JSON.stringify(list)); }
+
+// Sum all ingredients into a single nutrient total object
+function sumRecipeTotals(ingredients){
+  var total = {};
+  RECIPE_NUTRIENT_KEYS.forEach(function(k){ total[k] = 0; });
+  (ingredients||[]).forEach(function(ing){
+    var factor = (ing.qtyG || 0) / 100; // per-100g base × grams-used/100
+    RECIPE_NUTRIENT_KEYS.forEach(function(k){
+      total[k] += (ing.perHundred && ing.perHundred[k] ? ing.perHundred[k] : 0) * factor;
+    });
+  });
+  RECIPE_NUTRIENT_KEYS.forEach(function(k){ total[k] = Math.round(total[k]*10)/10; });
+  return total;
+}
+
 function renderRecipesSubPage(el){
-  var recipes=JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  el.innerHTML='<div class="card"><div class="card-title">👨‍🍳 My Recipes</div>'
-    +'<button class="btn-primary" style="margin-bottom:12px;" onclick="showCreateRecipe()">+ Create Recipe</button>'
-    +(recipes.length?recipes.map(function(r,i){
-      return '<div style="padding:12px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">'
-        +'<div><div style="font-size:14px;font-weight:600;">'+r.name+'</div><div style="font-size:11px;color:var(--muted);">'+Math.round(r.cal)+' kcal</div></div>'
-        +'<div style="display:flex;gap:6px;">'
-        +'<button onclick="addRecipeToLog('+i+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Log</button>'
-        +'<button onclick="deleteRecipe('+i+')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">×</button></div></div>';
-    }).join(''):'<div style="font-size:13px;color:var(--muted);">No recipes yet.</div>')
-    +'</div><div id="recipe-create-form"></div>';
+  var recipes = loadRecipes();
+  var html = '<div class="card"><div class="card-title">👨‍🍳 My Recipes</div>'
+    + '<button class="btn-primary" style="margin-bottom:12px;" onclick="showCreateRecipe()">+ Create Recipe</button>';
+  if(recipes.length){
+    html += recipes.map(function(r,i){
+      var ingCount = (r.ingredients && r.ingredients.length) || 0;
+      var ingLabel = ingCount > 0 ? ' · ' + ingCount + ' ingredient' + (ingCount===1?'':'s') : '';
+      return '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+        + '<div style="flex:1;min-width:0;">'
+        + '<div style="font-size:14px;font-weight:600;">'+r.name+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);">'+Math.round(r.cal||0)+' kcal · P '+Math.round(r.protein||0)+'g · C '+Math.round(r.carbs||0)+'g · F '+Math.round(r.fat||0)+'g'+ingLabel+'</div>'
+        + '</div>'
+        + '<div style="display:flex;gap:6px;flex-shrink:0;">'
+        + (ingCount>0?'<button onclick="toggleRecipeIngredients('+i+')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" title="View ingredients">▼</button>':'')
+        + '<button onclick="addRecipeToLog('+i+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Log</button>'
+        + '<button onclick="deleteRecipe('+i+')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">×</button>'
+        + '</div></div>'
+        + '<div id="recipe-ing-'+i+'" style="display:none;margin-top:8px;padding:10px;background:var(--bg4);border-radius:8px;font-size:12px;"></div>'
+        + '</div>';
+    }).join('');
+  } else {
+    html += '<div style="font-size:13px;color:var(--muted);">No recipes yet.</div>';
+  }
+  html += '</div><div id="recipe-create-form"></div>';
+  el.innerHTML = html;
 }
+
+function toggleRecipeIngredients(idx){
+  var pane = document.getElementById('recipe-ing-'+idx);
+  if(!pane) return;
+  var recipes = loadRecipes();
+  var r = recipes[idx];
+  if(!r) return;
+  if(pane.style.display === 'none'){
+    if(!r.ingredients || !r.ingredients.length){
+      pane.innerHTML = '<div style="color:var(--muted);">No ingredient breakdown saved (manual-entry recipe).</div>';
+    } else {
+      pane.innerHTML = r.ingredients.map(function(ing){
+        var cal = (ing.perHundred && ing.perHundred.cal ? ing.perHundred.cal : 0) * (ing.qtyG/100);
+        return '<div style="display:flex;justify-content:space-between;padding:4px 0;">'
+          + '<span>'+ing.name+' · '+ing.qtyG+'g</span>'
+          + '<span style="color:var(--muted);">'+Math.round(cal)+' kcal</span>'
+          + '</div>';
+      }).join('');
+    }
+    pane.style.display = 'block';
+  } else {
+    pane.style.display = 'none';
+  }
+}
+
 function showCreateRecipe(){
-  document.getElementById('recipe-create-form').innerHTML='<div class="card"><div class="card-title">New Recipe</div>'
-    +'<div class="input-group"><label class="input-label">Recipe Name</label><input type="text" id="rc-name" placeholder="My Protein Bowl"></div>'
-    +'<div class="input-row"><div class="input-group"><label class="input-label">Calories</label><input type="number" id="rc-cal" placeholder="0"></div><div class="input-group"><label class="input-label">Protein (g)</label><input type="number" id="rc-protein" placeholder="0"></div></div>'
-    +'<div class="input-row"><div class="input-group"><label class="input-label">Carbs (g)</label><input type="number" id="rc-carbs" placeholder="0"></div><div class="input-group"><label class="input-label">Fat (g)</label><input type="number" id="rc-fat" placeholder="0"></div></div>'
-    +'<button class="btn-primary" onclick="saveRecipe()">Save Recipe</button>'
-    +'<button class="btn-secondary" style="margin-top:8px;" onclick="document.getElementById(\'recipe-create-form\').innerHTML=\'\'">Cancel</button></div>';
+  // Reset draft
+  _recipeDraft = {name:'', ingredients:[]};
+  var formEl = document.getElementById('recipe-create-form');
+  if(!formEl) return;
+  formEl.innerHTML = '<div class="card" id="recipe-form-card">'
+    + '<div class="card-title">New Recipe</div>'
+    + '<div class="input-group">'
+    + '<label class="input-label">Recipe Name</label>'
+    + '<input type="text" id="rc-name" placeholder="e.g. Morning Shake, Chicken Bowl" oninput="_recipeDraft.name=this.value">'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;background:var(--bg4);border-radius:10px;padding:3px;margin-bottom:12px;">'
+    + '<button class="view-btn active" id="rm-combine" onclick="setRecipeMode(\'combine\')">Combine Ingredients</button>'
+    + '<button class="view-btn" id="rm-manual" onclick="setRecipeMode(\'manual\')">Quick Manual</button>'
+    + '</div>'
+    + '<div id="recipe-mode-combine">'+renderCombineModeHTML()+'</div>'
+    + '<div id="recipe-mode-manual" style="display:none;">'+renderManualModeHTML()+'</div>'
+    + '<button class="btn-secondary" style="margin-top:12px;" onclick="_recipeDraft=null;document.getElementById(\'recipe-create-form\').innerHTML=\'\'">Cancel</button>'
+    + '</div>';
 }
+
+function setRecipeMode(mode){
+  document.getElementById('rm-combine').classList.toggle('active', mode==='combine');
+  document.getElementById('rm-manual').classList.toggle('active', mode==='manual');
+  document.getElementById('recipe-mode-combine').style.display = mode==='combine' ? 'block' : 'none';
+  document.getElementById('recipe-mode-manual').style.display = mode==='manual' ? 'block' : 'none';
+}
+
+function renderCombineModeHTML(){
+  return '<div style="background:var(--bg4);border-radius:10px;padding:12px;margin-bottom:10px;">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Add Ingredient</div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:8px;">'
+    + '<input type="text" id="rc-ing-search" placeholder="e.g. whey protein, spinach" oninput="recipeSearchIngredients(this.value)" onkeydown="if(event.key===\'Enter\')recipeSearchIngredients(this.value,true)" style="flex:1;">'
+    + '<button onclick="recipeSearchIngredientsAI()" style="background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 12px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;" title="AI lookup">🤖</button>'
+    + '</div>'
+    + '<div id="rc-ing-results" style="max-height:240px;overflow-y:auto;"></div>'
+    + '</div>'
+    + '<div id="rc-ing-list" style="margin-bottom:10px;">'+renderRecipeIngredientList()+'</div>'
+    + '<div id="rc-totals" style="background:linear-gradient(135deg,rgba(99,87,255,.1),rgba(45,212,160,.08));border:1px solid var(--border2);border-radius:var(--r2);padding:12px;margin-bottom:10px;">'+renderRecipeTotalsHTML()+'</div>'
+    + '<button class="btn-primary" onclick="saveRecipe()">Save Recipe</button>';
+}
+
+function renderManualModeHTML(){
+  return '<div class="input-row">'
+    + '<div class="input-group"><label class="input-label">Calories</label><input type="number" id="rm-cal" placeholder="0" step="1"></div>'
+    + '<div class="input-group"><label class="input-label">Protein (g)</label><input type="number" id="rm-protein" placeholder="0" step="0.1"></div>'
+    + '</div>'
+    + '<div class="input-row">'
+    + '<div class="input-group"><label class="input-label">Carbs (g)</label><input type="number" id="rm-carbs" placeholder="0" step="0.1"></div>'
+    + '<div class="input-group"><label class="input-label">Fat (g)</label><input type="number" id="rm-fat" placeholder="0" step="0.1"></div>'
+    + '</div>'
+    + '<div class="input-row">'
+    + '<div class="input-group"><label class="input-label">Fiber (g)</label><input type="number" id="rm-fiber" placeholder="0" step="0.1"></div>'
+    + '<div class="input-group"><label class="input-label">Sugar (g)</label><input type="number" id="rm-sugar" placeholder="0" step="0.1"></div>'
+    + '</div>'
+    + '<div class="input-row">'
+    + '<div class="input-group"><label class="input-label">Sodium (mg)</label><input type="number" id="rm-sodium" placeholder="0"></div>'
+    + '<div class="input-group"><label class="input-label">Potassium (mg)</label><input type="number" id="rm-potassium" placeholder="0"></div>'
+    + '</div>'
+    + '<div class="input-row">'
+    + '<div class="input-group"><label class="input-label">Vit C (mg)</label><input type="number" id="rm-vitc" placeholder="0" step="0.1"></div>'
+    + '<div class="input-group"><label class="input-label">Iron (mg)</label><input type="number" id="rm-iron" placeholder="0" step="0.1"></div>'
+    + '</div>'
+    + '<div class="input-row">'
+    + '<div class="input-group"><label class="input-label">Calcium (mg)</label><input type="number" id="rm-calcium" placeholder="0"></div>'
+    + '<div class="input-group"><label class="input-label">Vit D (mcg)</label><input type="number" id="rm-vitd" placeholder="0" step="0.1"></div>'
+    + '</div>'
+    + '<button class="btn-primary" onclick="saveManualRecipe()">Save Recipe</button>';
+}
+
+function renderRecipeIngredientList(){
+  if(!_recipeDraft || !_recipeDraft.ingredients.length){
+    return '<div style="font-size:12px;color:var(--muted);text-align:center;padding:10px;">No ingredients added yet.</div>';
+  }
+  return '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Ingredients (' + _recipeDraft.ingredients.length + ')</div>'
+    + _recipeDraft.ingredients.map(function(ing, idx){
+      var cal = (ing.perHundred && ing.perHundred.cal ? ing.perHundred.cal : 0) * (ing.qtyG/100);
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">'
+        + '<div style="flex:1;min-width:0;">'
+        + '<div style="font-size:13px;font-weight:600;">'+ing.name+'</div>'
+        + '<div style="font-size:10px;color:var(--muted);">'+Math.round(cal)+' kcal · P '+Math.round((ing.perHundred.protein||0)*(ing.qtyG/100))+'g</div>'
+        + '</div>'
+        + '<input type="number" value="'+ing.qtyG+'" min="1" step="1" onchange="updateIngredientQty('+idx+',this.value)" style="width:70px;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:6px;color:var(--text);font-size:13px;text-align:center;outline:none;">'
+        + '<span style="font-size:11px;color:var(--muted);">g</span>'
+        + '<button onclick="removeIngredient('+idx+')" style="background:none;border:none;color:var(--muted2);font-size:18px;cursor:pointer;padding:0 4px;">×</button>'
+        + '</div>';
+    }).join('');
+}
+
+function renderRecipeTotalsHTML(){
+  var totals = sumRecipeTotals(_recipeDraft ? _recipeDraft.ingredients : []);
+  var hasContent = totals.cal > 0;
+  return '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Recipe Totals</div>'
+    + (hasContent
+      ? '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">'
+        + '<div style="background:var(--bg3);border-radius:6px;padding:6px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;">'+Math.round(totals.cal)+'</div><div style="font-size:9px;color:var(--muted);">kcal</div></div>'
+        + '<div style="background:var(--bg3);border-radius:6px;padding:6px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:var(--protein);">'+totals.protein.toFixed(1)+'g</div><div style="font-size:9px;color:var(--muted);">protein</div></div>'
+        + '<div style="background:var(--bg3);border-radius:6px;padding:6px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:var(--carbs);">'+totals.carbs.toFixed(1)+'g</div><div style="font-size:9px;color:var(--muted);">carbs</div></div>'
+        + '<div style="background:var(--bg3);border-radius:6px;padding:6px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:var(--fat);">'+totals.fat.toFixed(1)+'g</div><div style="font-size:9px;color:var(--muted);">fat</div></div>'
+        + '<div style="background:var(--bg3);border-radius:6px;padding:6px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;color:var(--fiber);">'+totals.fiber.toFixed(1)+'g</div><div style="font-size:9px;color:var(--muted);">fiber</div></div>'
+        + '<div style="background:var(--bg3);border-radius:6px;padding:6px;text-align:center;"><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800;">'+Math.round(totals.sodium)+'mg</div><div style="font-size:9px;color:var(--muted);">sodium</div></div>'
+        + '</div>'
+      : '<div style="font-size:12px;color:var(--muted);text-align:center;">Add ingredients to see totals</div>');
+}
+
+function refreshRecipeUI(){
+  var listEl = document.getElementById('rc-ing-list');
+  var totalsEl = document.getElementById('rc-totals');
+  if(listEl) listEl.innerHTML = renderRecipeIngredientList();
+  if(totalsEl) totalsEl.innerHTML = renderRecipeTotalsHTML();
+}
+
+// Search FOOD_DB by name (case-insensitive, matches partial words)
+function recipeSearchIngredients(query, showMore){
+  var resultsEl = document.getElementById('rc-ing-results');
+  if(!resultsEl) return;
+  var q = (query||'').trim().toLowerCase();
+  if(q.length < 2){ resultsEl.innerHTML = ''; return; }
+  // Search FOOD_DB
+  var matches = [];
+  (typeof FOOD_DB !== 'undefined' ? FOOD_DB : []).forEach(function(f){
+    if(f.name.toLowerCase().indexOf(q) !== -1) matches.push(f);
+  });
+  var limit = showMore ? 30 : 8;
+  if(!matches.length){
+    resultsEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;text-align:center;">No matches. Try 🤖 AI lookup for anything.</div>';
+    return;
+  }
+  resultsEl.innerHTML = matches.slice(0, limit).map(function(f, i){
+    return '<div onclick="addRecipeIngredient('+i+',\''+q.replace(/'/g,"\\'")+'\')" style="padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'transparent\'">'
+      + '<div><div style="font-size:12px;font-weight:500;">'+f.name+'</div>'
+      + '<div style="font-size:10px;color:var(--muted);">'+Math.round(f.cal)+' kcal / 100g · P '+f.protein+'g</div></div>'
+      + '<span style="color:var(--accent2);font-size:18px;">+</span>'
+      + '</div>';
+  }).join('') + (matches.length > limit ? '<div style="font-size:11px;color:var(--muted);text-align:center;padding:6px;">+'+ (matches.length-limit) +' more — press Enter to see all</div>' : '');
+  // Cache matches so click handler can find them
+  window._recipeSearchResults = matches;
+}
+
+function addRecipeIngredient(idx, q){
+  var f = window._recipeSearchResults && window._recipeSearchResults[idx];
+  if(!f) return;
+  // Default quantity = typical serving (f.serving ?? 100)
+  var qtyG = f.serving || 100;
+  var perHundred = {};
+  RECIPE_NUTRIENT_KEYS.forEach(function(k){ perHundred[k] = f[k] || 0; });
+  _recipeDraft.ingredients.push({
+    name: f.name,
+    qtyG: qtyG,
+    perHundred: perHundred
+  });
+  document.getElementById('rc-ing-search').value = '';
+  document.getElementById('rc-ing-results').innerHTML = '';
+  refreshRecipeUI();
+  showToast('+ '+f.name);
+}
+
+// AI-based ingredient lookup — for things not in FOOD_DB
+async function recipeSearchIngredientsAI(){
+  var queryEl = document.getElementById('rc-ing-search');
+  var query = (queryEl.value||'').trim();
+  if(!query){ showToast('Type an ingredient first'); return; }
+  var resultsEl = document.getElementById('rc-ing-results');
+  resultsEl.innerHTML = '<div style="padding:10px;text-align:center;"><div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Looking up '+query+'...</div></div>';
+  try {
+    var prompt = 'Per-100g nutrition values for: "'+query+'".\nReturn ONLY a JSON object:\n'
+      +'{"name":"clean name","cal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"vitc":0,"iron":0,"calcium":0,"vitd":0}\n'
+      +'All values per 100g. sodium/potassium/calcium in mg. vitc/iron in mg. vitd in mcg. Use USDA values when possible.';
+    var res = await callClaude({model:'claude-sonnet-4-20250514',max_tokens:500,messages:[{role:'user',content:prompt}]});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data = await res.json();
+    var text = (data.content && data.content[0] && data.content[0].text) || '';
+    var match = text.match(/\{[\s\S]*\}/);
+    if(!match) throw new Error('no data');
+    var ing = JSON.parse(match[0]);
+    if(!ing.cal && !ing.protein && !ing.carbs && !ing.fat){ throw new Error('zero-data'); }
+    // Store as pending single-result
+    var perHundred = {};
+    RECIPE_NUTRIENT_KEYS.forEach(function(k){ perHundred[k] = ing[k] || 0; });
+    window._recipeSearchResults = [{name:ing.name||query, cal:ing.cal||0, protein:ing.protein||0, serving:100}];
+    // Merge full perHundred onto the cached entry so add path works
+    window._recipeSearchResults[0]._perHundred = perHundred;
+    resultsEl.innerHTML = '<div onclick="addAIIngredient(0)" style="padding:10px;border:1px solid var(--accent2);border-radius:8px;cursor:pointer;background:rgba(99,87,255,.1);"><div style="font-size:13px;font-weight:700;color:var(--accent2);">🤖 '+(ing.name||query)+'</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">'+Math.round(ing.cal||0)+' kcal / 100g · P '+(ing.protein||0).toFixed(1)+'g · C '+(ing.carbs||0).toFixed(1)+'g · F '+(ing.fat||0).toFixed(1)+'g</div><div style="font-size:11px;color:var(--fiber);margin-top:4px;">Tap to add →</div></div>';
+  } catch(e){
+    resultsEl.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:8px;text-align:center;">✗ Lookup failed. Try a different phrasing.</div>';
+  }
+}
+
+function addAIIngredient(idx){
+  var r = window._recipeSearchResults && window._recipeSearchResults[idx];
+  if(!r) return;
+  _recipeDraft.ingredients.push({
+    name: r.name,
+    qtyG: 100,
+    perHundred: r._perHundred || {}
+  });
+  document.getElementById('rc-ing-search').value = '';
+  document.getElementById('rc-ing-results').innerHTML = '';
+  refreshRecipeUI();
+  showToast('+ '+r.name);
+}
+
+function updateIngredientQty(idx, val){
+  var n = parseFloat(val) || 0;
+  if(_recipeDraft && _recipeDraft.ingredients[idx]){
+    _recipeDraft.ingredients[idx].qtyG = n;
+    refreshRecipeUI();
+  }
+}
+
+function removeIngredient(idx){
+  if(!_recipeDraft) return;
+  _recipeDraft.ingredients.splice(idx, 1);
+  refreshRecipeUI();
+}
+
 function saveRecipe(){
-  var name=document.getElementById('rc-name').value.trim(); if(!name){showToast('Enter recipe name');return;}
-  var recipes=JSON.parse(localStorage.getItem('gn_recipes')||'[]');
-  recipes.push({name:name,cal:parseFloat(document.getElementById('rc-cal').value)||0,protein:parseFloat(document.getElementById('rc-protein').value)||0,carbs:parseFloat(document.getElementById('rc-carbs').value)||0,fat:parseFloat(document.getElementById('rc-fat').value)||0});
-  localStorage.setItem('gn_recipes',JSON.stringify(recipes));
-  showToast('✓ Recipe saved!'); renderRecipesSubPage(document.getElementById('sub-page-content'));
-}
-function addRecipeToLog(idx){
-  var recipes=JSON.parse(localStorage.getItem('gn_recipes')||'[]'),r=recipes[idx]; if(!r) return;
-  var log=loadDayLog(dayOffset);
-  log.foods.push({meal:'Snacks',name:r.name,cal:r.cal,protein:r.protein,carbs:r.carbs,fat:r.fat,fiber:0,sugar:0,sodium:0,potassium:0,vitc:0,iron:0,calcium:0,vitd:0,serving:100,id:Date.now()});
-  saveDayLog(log,dayOffset); showToast('✓ '+r.name+' added');
-}
-function deleteRecipe(idx){
-  var recipes=JSON.parse(localStorage.getItem('gn_recipes')||'[]'); recipes.splice(idx,1);
-  localStorage.setItem('gn_recipes',JSON.stringify(recipes));
+  if(!_recipeDraft){ showToast('No draft'); return; }
+  var name = (document.getElementById('rc-name').value||'').trim();
+  if(!name){ showToast('Enter a recipe name'); return; }
+  if(!_recipeDraft.ingredients.length){ showToast('Add at least one ingredient'); return; }
+  var totals = sumRecipeTotals(_recipeDraft.ingredients);
+  var recipes = loadRecipes();
+  var newRecipe = Object.assign({name:name, ingredients:_recipeDraft.ingredients, created:Date.now()}, totals);
+  recipes.push(newRecipe);
+  saveRecipes(recipes);
+  _recipeDraft = null;
+  showToast('✓ Recipe saved!');
   renderRecipesSubPage(document.getElementById('sub-page-content'));
 }
+
+function saveManualRecipe(){
+  var name = (document.getElementById('rc-name').value||'').trim();
+  if(!name){ showToast('Enter a recipe name'); return; }
+  var recipes = loadRecipes();
+  var r = {
+    name: name,
+    ingredients: [], // none — manual recipe
+    created: Date.now()
+  };
+  RECIPE_NUTRIENT_KEYS.forEach(function(k){
+    var el = document.getElementById('rm-'+k);
+    r[k] = el ? (parseFloat(el.value)||0) : 0;
+  });
+  if(!r.cal && !r.protein && !r.carbs && !r.fat){ showToast('Enter at least some nutrition'); return; }
+  recipes.push(r);
+  saveRecipes(recipes);
+  _recipeDraft = null;
+  showToast('✓ Recipe saved!');
+  renderRecipesSubPage(document.getElementById('sub-page-content'));
+}
+
+function addRecipeToLog(idx){
+  var recipes = loadRecipes();
+  var r = recipes[idx];
+  if(!r) return;
+  // Ask which meal
+  showMealPicker(r.name, function(meal){
+    var log = loadDayLog(dayOffset);
+    var eatenAt = Date.now();
+    var foodEntry = {
+      meal: meal,
+      name: r.name,
+      serving: 100,
+      eaten_at: eatenAt,
+      id: Date.now(),
+      verified: false,
+      ai_sourced: false,
+      recipe_ingredients: r.ingredients || [] // preserved for expansion in the log
+    };
+    RECIPE_NUTRIENT_KEYS.forEach(function(k){ foodEntry[k] = r[k] || 0; });
+    log.foods.push(foodEntry);
+    saveDayLog(log, dayOffset);
+    if(dayOffset === 0) localStorage.setItem('gn_last_eaten_at', eatenAt);
+    renderNutrition();
+    showToast('✓ '+r.name+' added to '+meal);
+  });
+}
+
+function deleteRecipe(idx){
+  if(!confirm('Delete this recipe permanently?')) return;
+  var recipes = loadRecipes();
+  recipes.splice(idx, 1);
+  saveRecipes(recipes);
+  renderRecipesSubPage(document.getElementById('sub-page-content'));
+}
+
+// Toggle expanded ingredients on a logged food row (called from the home meal sections)
+function toggleLoggedIngredients(mealId){
+  var pane = document.getElementById('logged-ing-'+mealId);
+  if(pane) pane.style.display = pane.style.display === 'none' ? 'block' : 'none';
+}
 </script>
+
+
 
 <script>
 // ══════════════════════════════════════════════════════════════════════
