@@ -1192,8 +1192,21 @@ function showFoodPreview(food, containerId){
         <div class="preview-item"><div class="preview-val">${Math.round(food.sodium||0)}mg</div><div class="preview-key">sodium</div></div>
       </div>
       ${!isUSDA?'<div style="font-size:11px;color:var(--sugar);margin-top:10px;">⚠️ AI estimate — verify with food label for accuracy</div>':''}
-      <button class="btn-primary" style="margin-top:12px;" onclick="addPreviewFoodById('${pid}')">＋ Add to Log</button>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn-primary" style="flex:2;margin-top:0;" onclick="addPreviewFoodById('${pid}')">＋ Add to Log</button>
+        <button class="btn-secondary" style="flex:1;margin-top:0;background:var(--bg4);border:1px solid var(--border2);" onclick="showAddToRecipeForPreview('${pid}')">🍳 To Recipe</button>
+      </div>
     </div>`;
+}
+
+// Helper: route previewFoodStore item into the recipe picker sheet
+function showAddToRecipeForPreview(pid){
+  var food = _previewFoodStore[pid];
+  if(!food){ showToast('Preview expired — try again'); return; }
+  // Close the add-food modal so the recipe sheet is on top and visible
+  var addModal = document.getElementById('add-modal');
+  if(addModal) addModal.classList.remove('open');
+  showAddToRecipeSheet(food);
 }
 
 function addPreviewFoodById(pid){
@@ -1938,8 +1951,13 @@ function renderNutrientResults(){
   var headerText = 'Top Foods — Most ' + nutrient.label + ' ' + viewLabel;
   headerText += cnfReady ? ' · USDA + 🇨🇦 CNF' : ' · USDA Verified';
 
+  // Reset the store for this render pass so stale entries get cleared
+  window._nutrientCardStore = {};
   var cardsHtml = scored.map((f,i)=>{
     const pct = (f.score/maxScore)*100;
+    // Stash this food for the To-Recipe button
+    var nid = 'n_' + i + '_' + Math.random().toString(36).slice(2,6);
+    window._nutrientCardStore[nid] = f;
     var sourceBadge = f.cnf
       ? '<span class="verified-badge" style="background:rgba(255,107,107,.15);color:#ff9090;">🇨🇦 CNF</span>'
       : (f.verified ? '<span class="verified-badge">✓ USDA</span>' : '');
@@ -1985,8 +2003,9 @@ function renderNutrientResults(){
         ${sourceBadge}
       </div>
       <div style="display:flex;gap:6px;">
-        <button class="food-card-add" style="flex:1;" onclick='addFromDB(${JSON.stringify(f).replace(/'/g,"&#39;")})'>＋ Add to Today</button>
-        <button onclick='openFoodArticle(${JSON.stringify(f.name)})' style="flex:0 0 auto;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:var(--r1);padding:10px 14px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;" title="Learn about this food">📖</button>
+        <button class="food-card-add" style="flex:1;" onclick="addNutrientCardToLog('${nid}')">＋ Add to Today</button>
+        <button onclick="addNutrientCardToRecipe('${nid}')" style="flex:0 0 auto;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:var(--r1);padding:10px 14px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;" title="Add to recipe">🍳</button>
+        <button onclick="openFoodArticle('${String(f.name).replace(/'/g,'\\\'')}')" style="flex:0 0 auto;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:var(--r1);padding:10px 14px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;" title="Learn about this food">📖</button>
       </div>
     </div>`;
   }).join('');
@@ -2095,9 +2114,35 @@ function renderAIResults(foods){
       + ' style="width:55px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:6px;color:var(--text);font-size:13px;text-align:center;outline:none;">'
       + '<span id="aical_'+idx+'" style="margin-left:auto;font-family:Syne,sans-serif;font-size:16px;font-weight:800;">'+Math.round(f.cal)+' kcal</span>'
       + '</div>'
-      + '<button class="food-card-add" style="margin-top:10px;" onclick="addAIFood('+idx+')">+ Add to Today</button>'
+      + '<div style="display:flex;gap:8px;margin-top:10px;">'
+      + '<button class="food-card-add" style="flex:2;" onclick="addAIFood('+idx+')">+ Add to Today</button>'
+      + '<button onclick="addAIFoodToRecipe('+idx+')" style="flex:1;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:10px;padding:10px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">🍳 To Recipe</button>'
+      + '</div>'
       + '</div>';
   }).join('');
+}
+
+// Route an AI-search result card into the recipe picker
+function addAIFoodToRecipe(idx){
+  var f = aiSearchResults && aiSearchResults[idx];
+  if(!f){ showToast('Result expired'); return; }
+  // AI search results have serving_g + per-serving values + source
+  // foodToIngredient will detect the source and scale correctly
+  showAddToRecipeSheet(f);
+}
+
+// Route a nutrient-ranking card (USDA FOOD_DB or CNF) to the log path
+function addNutrientCardToLog(nid){
+  var f = window._nutrientCardStore && window._nutrientCardStore[nid];
+  if(!f){ showToast('Result expired — try again'); return; }
+  addFromDB(f);
+}
+
+// Route a nutrient-ranking card into the recipe picker
+function addNutrientCardToRecipe(nid){
+  var f = window._nutrientCardStore && window._nutrientCardStore[nid];
+  if(!f){ showToast('Result expired — try again'); return; }
+  showAddToRecipeSheet(f);
 }
 
 function updateAICount(idx, count){
@@ -2209,11 +2254,28 @@ function renderBrandResults(products){
         <span style="font-size:12px;color:var(--muted);">× ${servingSize}</span>
         <span id="bcal_${idx}" style="font-family:'Syne',sans-serif;font-size:16px;font-weight:800;margin-left:auto;">${cal} kcal</span>
       </div>
-      <div style="padding:0 14px 14px;">
-        <button class="brand-add" data-idx="${idx}" data-name="${name}" data-cal="${cal}" data-protein="${protein}" data-carbs="${carbs}" data-fat="${fat}" data-fiber="${fiber}" data-sodium="${sodium}" data-serving="${servingG}" onclick="addBrandFood(this)">＋ Add to Today</button>
+      <div style="padding:0 14px 14px;display:flex;gap:8px;">
+        <button class="brand-add" style="flex:2;" data-idx="${idx}" data-name="${name}" data-cal="${cal}" data-protein="${protein}" data-carbs="${carbs}" data-fat="${fat}" data-fiber="${fiber}" data-sodium="${sodium}" data-serving="${servingG}" onclick="addBrandFood(this)">＋ Add to Today</button>
+        <button style="flex:1;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:10px;padding:10px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;" data-idx="${idx}" data-name="${name}" data-cal="${cal}" data-protein="${protein}" data-carbs="${carbs}" data-fat="${fat}" data-fiber="${fiber}" data-sodium="${sodium}" data-serving="${servingG}" onclick="addBrandFoodToRecipe(this)">🍳 To Recipe</button>
       </div>
     </div>`;
   }).join('');
+}
+
+// Route a brand-search card into the recipe picker
+function addBrandFoodToRecipe(btn){
+  var food = {
+    name: btn.dataset.name,
+    cal: parseFloat(btn.dataset.cal) || 0,
+    protein: parseFloat(btn.dataset.protein) || 0,
+    carbs: parseFloat(btn.dataset.carbs) || 0,
+    fat: parseFloat(btn.dataset.fat) || 0,
+    fiber: parseFloat(btn.dataset.fiber) || 0,
+    sodium: parseFloat(btn.dataset.sodium) || 0,
+    serving_g: parseFloat(btn.dataset.serving) || 100,
+    source: 'Product Label'
+  };
+  showAddToRecipeSheet(food);
 }
 
 function updateBrandCount(idx, cal, p, c, f, count){
@@ -2935,16 +2997,23 @@ function renderRecipesSubPage(el){
   if(recipes.length){
     html += recipes.map(function(r,i){
       var ingCount = (r.ingredients && r.ingredients.length) || 0;
-      var ingLabel = ingCount > 0 ? ' · ' + ingCount + ' ingredient' + (ingCount===1?'':'s') : '';
+      var isEmpty = ingCount === 0 && !(r.cal || r.protein || r.carbs || r.fat);
+      var subtitle;
+      if(isEmpty){
+        subtitle = '<span style="color:var(--accent2);">Empty — tap 🍳 on any food to fill in</span>';
+      } else {
+        var ingLabel = ingCount > 0 ? ' · ' + ingCount + ' ingredient' + (ingCount===1?'':'s') : '';
+        subtitle = Math.round(r.cal||0)+' kcal · P '+Math.round(r.protein||0)+'g · C '+Math.round(r.carbs||0)+'g · F '+Math.round(r.fat||0)+'g'+ingLabel;
+      }
       return '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
         + '<div style="flex:1;min-width:0;">'
         + '<div style="font-size:14px;font-weight:600;">'+r.name+'</div>'
-        + '<div style="font-size:11px;color:var(--muted);">'+Math.round(r.cal||0)+' kcal · P '+Math.round(r.protein||0)+'g · C '+Math.round(r.carbs||0)+'g · F '+Math.round(r.fat||0)+'g'+ingLabel+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);">'+subtitle+'</div>'
         + '</div>'
         + '<div style="display:flex;gap:6px;flex-shrink:0;">'
         + (ingCount>0?'<button onclick="toggleRecipeIngredients('+i+')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" title="View ingredients">▼</button>':'')
-        + '<button onclick="addRecipeToLog('+i+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Log</button>'
+        + (isEmpty?'':'<button onclick="addRecipeToLog('+i+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Log</button>')
         + '<button onclick="deleteRecipe('+i+')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;">×</button>'
         + '</div></div>'
         + '<div id="recipe-ing-'+i+'" style="display:none;margin-top:8px;padding:10px;background:var(--bg4);border-radius:8px;font-size:12px;"></div>'
@@ -3020,6 +3089,7 @@ function renderCombineModeHTML(){
     + '</div>'
     + '<div id="rc-ing-list" style="margin-bottom:10px;">'+renderRecipeIngredientList()+'</div>'
     + '<div id="rc-totals" style="background:linear-gradient(135deg,rgba(99,87,255,.1),rgba(45,212,160,.08));border:1px solid var(--border2);border-radius:var(--r2);padding:12px;margin-bottom:10px;">'+renderRecipeTotalsHTML()+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-align:center;">💡 You can also save empty and add ingredients later from barcode/AI/search results.</div>'
     + '<button class="btn-primary" onclick="saveRecipe()">Save Recipe</button>';
 }
 
@@ -3201,14 +3271,15 @@ function saveRecipe(){
   if(!_recipeDraft){ showToast('No draft'); return; }
   var name = (document.getElementById('rc-name').value||'').trim();
   if(!name){ showToast('Enter a recipe name'); return; }
-  if(!_recipeDraft.ingredients.length){ showToast('Add at least one ingredient'); return; }
+  // Empty recipes are allowed — user may want to build it up from search/scans later
   var totals = sumRecipeTotals(_recipeDraft.ingredients);
   var recipes = loadRecipes();
   var newRecipe = Object.assign({name:name, ingredients:_recipeDraft.ingredients, created:Date.now()}, totals);
   recipes.push(newRecipe);
   saveRecipes(recipes);
   _recipeDraft = null;
-  showToast('✓ Recipe saved!');
+  var emptyNote = newRecipe.ingredients.length ? '' : ' (empty — add ingredients from barcode/search anytime)';
+  showToast('✓ Recipe saved!'+emptyNote);
   renderRecipesSubPage(document.getElementById('sub-page-content'));
 }
 
@@ -3273,7 +3344,169 @@ function toggleLoggedIngredients(mealId){
   var pane = document.getElementById('logged-ing-'+mealId);
   if(pane) pane.style.display = pane.style.display === 'none' ? 'block' : 'none';
 }
+
+// ─────────────────────────────────────────────────────────────────
+// ADD-TO-RECIPE FLOW (from food preview / search result cards)
+// ─────────────────────────────────────────────────────────────────
+
+// Normalize any food-shaped object into a recipe ingredient.
+// Input foods come from different paths (AI describe = per-serving,
+// FOOD_DB = per-100g, brand search = per-serving, CNF = per-100g).
+// We normalize to {name, qtyG, perHundred} where perHundred is per-100g.
+function foodToIngredient(food){
+  // Try to figure out the serving size
+  var servingG = parseFloat(food.serving_g || food.serving || 0);
+  // If per-100g reference is implied (FOOD_DB, CNF), the food's top-level
+  // values ARE the per-100g values and servingG is just a default portion.
+  // If it's from a scanned label (serving_g present + source indicates label),
+  // the values are per-serving and we need to scale.
+  var isPerServing = !!(food.serving_g && food.source && (
+    String(food.source).toLowerCase().indexOf('label') !== -1 ||
+    String(food.source).toLowerCase().indexOf('usda') !== -1 ||
+    String(food.source).toLowerCase().indexOf('nutrition guide') !== -1 ||
+    String(food.source).toLowerCase().indexOf('estimate') !== -1 ||
+    String(food.source).toLowerCase().indexOf('recipe') !== -1
+  ));
+  var perHundred = {};
+  RECIPE_NUTRIENT_KEYS.forEach(function(k){
+    var v = parseFloat(food[k]) || 0;
+    if(isPerServing && servingG > 0){
+      // Scale per-serving → per-100g
+      perHundred[k] = v * (100 / servingG);
+    } else {
+      // Already per-100g
+      perHundred[k] = v;
+    }
+  });
+  // Default qty: if we know the serving size, use it; otherwise 100g
+  var qtyG = servingG > 0 ? servingG : 100;
+  return {
+    name: food.name || 'Ingredient',
+    qtyG: Math.round(qtyG * 10) / 10,
+    perHundred: perHundred
+  };
+}
+
+// Shows a picker: "Create new recipe" | existing recipes | current draft
+function showAddToRecipeSheet(food){
+  var recipes = loadRecipes();
+  var hasDraft = !!(_recipeDraft && document.getElementById('recipe-create-form') && document.getElementById('recipe-create-form').innerHTML);
+  // Cache food for the handler
+  window._pendingIngredientFood = food;
+  var options = '';
+  // Current draft (if any)
+  if(hasDraft){
+    var draftName = (_recipeDraft.name || 'Current draft').trim() || 'Current draft';
+    options += '<button onclick="addFoodToRecipe(\'draft\')" style="background:rgba(99,87,255,.15);border:1px solid var(--accent);color:var(--text);border-radius:var(--r2);padding:14px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">'
+      + '<span style="font-size:20px;">✏️</span>'
+      + '<div style="flex:1;"><div>Add to current draft</div><div style="font-size:11px;font-weight:400;color:var(--muted);">'+draftName+'</div></div>'
+      + '</button>';
+  }
+  // Create new
+  options += '<button onclick="addFoodToRecipe(\'new\')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:var(--r2);padding:14px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:600;cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">'
+    + '<span style="font-size:20px;">＋</span>'
+    + '<div style="flex:1;"><div>Create new recipe</div><div style="font-size:11px;color:var(--muted);">Start a new recipe with this food</div></div>'
+    + '</button>';
+  // Existing recipes
+  if(recipes.length){
+    options += '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:10px 0 4px;">Add to existing</div>';
+    options += recipes.map(function(r, i){
+      var ingCount = (r.ingredients && r.ingredients.length) || 0;
+      return '<button onclick="addFoodToRecipe('+i+')" style="background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:var(--r2);padding:12px 14px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:600;cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;">'
+        + '<span style="font-size:20px;">🍳</span>'
+        + '<div style="flex:1;"><div>'+r.name+'</div><div style="font-size:11px;font-weight:400;color:var(--muted);">'+Math.round(r.cal||0)+' kcal · '+ingCount+' ingredient'+(ingCount===1?'':'s')+'</div></div>'
+        + '</button>';
+    }).join('');
+  }
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'add-to-recipe-sheet';
+  modal.innerHTML = '<div class="modal-sheet">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">Add "'+ (food.name||'food') +'" to Recipe</div>'
+    + '<div style="display:flex;flex-direction:column;gap:8px;">'+options+'</div>'
+    + '<button class="btn-secondary" style="margin-top:14px;" onclick="document.getElementById(\'add-to-recipe-sheet\').remove()">Cancel</button>'
+    + '</div>';
+  document.body.appendChild(modal);
+}
+
+// target = 'draft' | 'new' | <existing recipe index number>
+function addFoodToRecipe(target){
+  var food = window._pendingIngredientFood;
+  if(!food){ showToast('No food selected'); return; }
+  var sheet = document.getElementById('add-to-recipe-sheet');
+  if(sheet) sheet.remove();
+  var ingredient = foodToIngredient(food);
+
+  if(target === 'draft'){
+    if(!_recipeDraft) _recipeDraft = {name:'', ingredients:[]};
+    _recipeDraft.ingredients.push(ingredient);
+    refreshRecipeUI();
+    showToast('✓ '+ingredient.name+' added to draft');
+    window._pendingIngredientFood = null;
+    return;
+  }
+
+  if(target === 'new'){
+    // Start a new draft and open the Recipes subpage with the form pre-populated
+    _recipeDraft = {name:'', ingredients:[ingredient]};
+    // Navigate to More → Recipes, open the create form
+    showPage('more', document.querySelector('.nav-btn:last-child'));
+    // Wait a tick for the page to render, then open the recipe flow
+    setTimeout(function(){
+      showSubPage('recipes');
+      setTimeout(function(){
+        showCreateRecipe();
+        // showCreateRecipe resets _recipeDraft — put ingredient back
+        _recipeDraft = {name:'', ingredients:[ingredient]};
+        refreshRecipeUI();
+        var nameEl = document.getElementById('rc-name');
+        if(nameEl) nameEl.focus();
+      }, 100);
+    }, 100);
+    showToast('✓ Name your new recipe');
+    window._pendingIngredientFood = null;
+    return;
+  }
+
+  // target is a numeric existing-recipe index
+  var idx = parseInt(target);
+  var recipes = loadRecipes();
+  var r = recipes[idx];
+  if(!r){ showToast('Recipe not found'); return; }
+  // Ensure recipe has an ingredients array (older manual recipes may not)
+  if(!r.ingredients) r.ingredients = [];
+
+  // Determine recipe mode BEFORE pushing (so we know its original shape):
+  //  - pure combine: ingredients array exists, manualBase not set → recompute from ingredients
+  //  - pure manual with typed totals: first time adding an ingredient → snapshot current totals as "manualBase"
+  //  - manual-with-ingredients: manualBase already set → add new ingredient on top of base + existing ingredients
+  //  - empty recipe: no ingredients, no typed totals → just ingredient sum
+  var hadTotals = !!(r.cal || r.protein || r.carbs || r.fat);
+  var firstAddition = r.ingredients.length === 0;
+  if(firstAddition && hadTotals && !r.manualBase){
+    // Snapshot the manual base so future additions preserve it
+    r.manualBase = {};
+    RECIPE_NUTRIENT_KEYS.forEach(function(k){ r.manualBase[k] = r[k] || 0; });
+  }
+
+  r.ingredients.push(ingredient);
+
+  // Recompute totals: manual base (if any) + sum of all ingredients
+  var ingTotals = sumRecipeTotals(r.ingredients);
+  RECIPE_NUTRIENT_KEYS.forEach(function(k){
+    var base = (r.manualBase && r.manualBase[k]) || 0;
+    r[k] = Math.round((base + (ingTotals[k]||0)) * 10) / 10;
+  });
+
+  recipes[idx] = r;
+  saveRecipes(recipes);
+  window._pendingIngredientFood = null;
+  showToast('✓ '+ingredient.name+' added to '+r.name+' · now '+Math.round(r.cal)+' kcal');
+}
 </script>
+
+
 
 
 
