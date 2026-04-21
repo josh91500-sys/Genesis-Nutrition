@@ -9,6 +9,8 @@
 <link rel="manifest" href="/manifest.json">
 <script src="https://js.stripe.com/v3/"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{
   --bg1:#0a0a12;--bg2:#111118;--bg3:#18181f;--bg4:#1f1f28;--bg5:#2a2a35;
@@ -448,6 +450,7 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
     <div class="hdr"><div class="hdr-row"><div><div class="page-title">Workout</div></div></div></div>
     <div class="search-tabs" style="margin-top:10px;flex-wrap:wrap;gap:4px;">
       <button class="search-tab active" id="wtab-log" onclick="setWorkoutTab('log')">&#x1F4CB; Log</button>
+      <button class="search-tab" id="wtab-cardio" onclick="setWorkoutTab('cardio')">&#x1F3C3; Cardio</button>
       <button class="search-tab" id="wtab-goals" onclick="setWorkoutTab('goals')">&#x1F3AF; Goals</button>
       <button class="search-tab" id="wtab-ai" onclick="setWorkoutTab('ai')">&#x1F916; AI Coach</button>
       <button class="search-tab" id="wtab-calendar" onclick="setWorkoutTab('calendar')">&#x1F4C5; Calendar</button>
@@ -489,6 +492,7 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
       <div id="calendar-content" style="margin-top:10px;"></div>
     </div>
     <div id="workout-weight-tab" style="display:none;padding-bottom:20px;"></div>
+    <div id="workout-cardio-tab" style="display:none;padding-bottom:20px;"></div>
   </div>
 
   <div class="page" id="page-more">
@@ -774,6 +778,46 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
   </div>
 </div>
 
+<!-- CARDIO LIVE TRACKER OVERLAY -->
+<div id="cardio-live-overlay" style="display:none;position:fixed;inset:0;background:var(--bg1);z-index:400;flex-direction:column;overflow-y:auto;">
+  <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2);">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="cardio-live-emoji" style="font-size:24px;">🏃</span>
+      <div>
+        <div id="cardio-live-activity" style="font-size:15px;font-weight:700;">Running</div>
+        <div id="cardio-live-gps-status" style="font-size:11px;color:var(--muted);">Acquiring GPS...</div>
+      </div>
+    </div>
+    <button id="cardio-live-close" onclick="cardioAbortTracking()" style="background:var(--bg4);border:1px solid var(--border2);color:var(--muted);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;">Cancel</button>
+  </div>
+  <div style="padding:24px 16px 16px;text-align:center;">
+    <div style="font-family:'Syne',sans-serif;font-size:64px;font-weight:800;line-height:1;" id="cardio-live-duration">00:00</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:6px;">duration</div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:0 16px 16px;">
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:12px;text-align:center;">
+      <div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;" id="cardio-live-distance">0.00</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;" id="cardio-live-distance-unit">mi</div>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:12px;text-align:center;">
+      <div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;" id="cardio-live-pace">--'--</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;" id="cardio-live-pace-unit">min/mi</div>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:12px;text-align:center;">
+      <div style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:var(--sugar);" id="cardio-live-cal">0</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;">kcal</div>
+    </div>
+  </div>
+  <div id="cardio-live-map" style="flex:1;min-height:300px;margin:0 16px;border-radius:var(--r2);overflow:hidden;border:1px solid var(--border);background:var(--bg3);"></div>
+  <div style="display:flex;gap:10px;padding:16px;padding-bottom:max(16px,env(safe-area-inset-bottom));">
+    <button id="cardio-live-pause-btn" onclick="cardioTogglePause()" style="flex:1;background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:var(--r2);padding:16px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;">⏸ Pause</button>
+    <button onclick="cardioStopTracking()" style="flex:1;background:#ff6b6b;border:none;color:#fff;border-radius:var(--r2);padding:16px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;">⏹ Stop</button>
+  </div>
+</div>
+
+<!-- CARDIO SUMMARY/DETAIL OVERLAY -->
+<div id="cardio-detail-overlay" style="display:none;position:fixed;inset:0;background:var(--bg1);z-index:400;overflow-y:auto;padding-bottom:40px;"></div>
+
 <div id="toast"></div>
 
 <script>
@@ -862,7 +906,8 @@ function renderNutrition(){
       <div style="font-size:12px;color:var(--fiber);">&#x1F525; Thermic Effect of Food</div>
       <div style="font-size:12px;font-weight:700;color:var(--fiber);">~${getTotalsTEF(log.foods)} kcal burned</div>
     </div>
-    <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:4px;">Net calories: ~${Math.round(t.cal - getTotalsTEF(log.foods))} kcal</div>
+    ${(function(){var cb=(typeof getTodayCardioBurn==='function')?getTodayCardioBurn():0;return cb>0?'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;background:rgba(245,158,11,.08);border-radius:8px;padding:7px 10px;"><div style="font-size:12px;color:var(--sugar);">&#x1F3C3; Cardio Workouts</div><div style="font-size:12px;font-weight:700;color:var(--sugar);">~'+Math.round(cb)+' kcal burned</div></div>':'';})()}
+    <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:4px;">Net calories: ~${Math.round(t.cal - getTotalsTEF(log.foods) - ((typeof getTodayCardioBurn==='function')?getTodayCardioBurn():0))} kcal</div>
     <div class="macro-row">
       ${[
         {key:'protein',label:'Protein',color:'var(--protein)'},
@@ -3026,12 +3071,13 @@ function buildHealthResultHTML(r){
 var workoutDayOffset=0, calView='month', calDate=new Date();
 
 function setWorkoutTab(tab){
-  ['log','goals','ai','calendar','weight'].forEach(function(t){
+  ['log','cardio','goals','ai','calendar','weight'].forEach(function(t){
     var btn=document.getElementById('wtab-'+t), el=document.getElementById('workout-'+t+'-tab');
     if(btn) btn.classList.toggle('active',t===tab);
     if(el) el.style.display=t===tab?'block':'none';
   });
   if(tab==='log') renderWorkout();
+  if(tab==='cardio') renderCardioTab();
   if(tab==='goals') renderWorkoutGoals();
   if(tab==='calendar') renderCalendar();
   if(tab==='weight') showWeightTracker(document.getElementById('workout-weight-tab'));
@@ -3716,7 +3762,8 @@ var _initialSyncDone = false;
 var SYNC_KEYS = [
   'gn_goals','gn_water_','gn_log_','gn_wlog_','gn_suplog_',
   'gn_weight_log','gn_wgoals','gn_wtemplates','gn_supplements',
-  'gn_measurements','gn_recipes','gn_health_profile','gn_fasting_target','gn_pro_paid'
+  'gn_measurements','gn_recipes','gn_health_profile','gn_fasting_target',
+  'gn_last_eaten_at','gn_cardio_log','gn_pro_paid'
 ];
 
 function setAuthMode(mode){
@@ -4114,6 +4161,568 @@ if(document.readyState === 'loading'){
     }, 2000);
   }
 })();
+</script>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// CARDIO GPS TRACKER
+// ══════════════════════════════════════════════════════════════════════
+
+// --- Activity definitions with MET values ---
+// MET = Metabolic Equivalent of Task. kcal = METs × weight_kg × hours.
+// For speed-variable activities we pick METs dynamically based on current pace.
+var CARDIO_ACTIVITIES = {
+  run:         {label:'Run',         emoji:'🏃', baseMET:9.8,  unitSystem:'pace', paceRef:5},
+  walk:        {label:'Walk',        emoji:'🚶', baseMET:3.8,  unitSystem:'pace', paceRef:3},
+  bike:        {label:'Bike',        emoji:'🚴', baseMET:7.5,  unitSystem:'speed'},
+  rollerblade: {label:'Rollerblade', emoji:'🛼', baseMET:7.5,  unitSystem:'speed'},
+  hike:        {label:'Hike',        emoji:'🥾', baseMET:6.0,  unitSystem:'pace', paceRef:3}
+};
+
+// Return METs for an activity given current speed in m/s.
+// Uses established activity-specific tables where possible; falls back to baseMET.
+function cardioMetsFor(activity, speedMps){
+  if(!speedMps || speedMps <= 0) return 1.5; // standing/paused: light movement
+  var mph = speedMps * 2.23694;
+  if(activity === 'run'){
+    // ACSM-style running MET curve, capped
+    if(mph < 4) return 6.0;
+    if(mph < 5) return 8.3;
+    if(mph < 6) return 9.8;
+    if(mph < 7) return 11.0;
+    if(mph < 8) return 12.8;
+    if(mph < 9) return 14.5;
+    return 16.0;
+  }
+  if(activity === 'walk'){
+    if(mph < 2) return 2.8;
+    if(mph < 2.5) return 3.0;
+    if(mph < 3) return 3.5;
+    if(mph < 3.5) return 4.3;
+    if(mph < 4) return 5.0;
+    return 6.3; // very brisk
+  }
+  if(activity === 'bike'){
+    if(mph < 10) return 4.0;   // leisurely
+    if(mph < 12) return 6.8;   // light effort
+    if(mph < 14) return 8.0;   // moderate
+    if(mph < 16) return 10.0;  // vigorous
+    if(mph < 20) return 12.0;  // fast
+    return 15.8;               // racing
+  }
+  if(activity === 'rollerblade'){
+    if(mph < 8)  return 5.0;
+    if(mph < 10) return 7.5;
+    if(mph < 13) return 9.8;
+    return 12.3;
+  }
+  if(activity === 'hike'){
+    if(mph < 2) return 4.5;
+    if(mph < 3) return 6.0;
+    if(mph < 4) return 7.3;
+    return 8.8;
+  }
+  return CARDIO_ACTIVITIES[activity] ? CARDIO_ACTIVITIES[activity].baseMET : 5.0;
+}
+
+// --- Persistence ---
+function loadCardioLog(){ try{return JSON.parse(localStorage.getItem('gn_cardio_log')||'[]');}catch(e){return [];} }
+function saveCardioLog(list){ localStorage.setItem('gn_cardio_log', JSON.stringify(list)); }
+
+// Total kcal burned across all cardio workouts that started on the currently-viewed day.
+// Respects the home screen's dayOffset so yesterday-view shows yesterday's cardio burn.
+function getTodayCardioBurn(){
+  try {
+    var targetKey = (typeof dateKey === 'function') ? dateKey(typeof dayOffset !== 'undefined' ? dayOffset : 0) : null;
+    var log = loadCardioLog();
+    var total = 0;
+    log.forEach(function(w){
+      // Prefer explicit date field; fall back to deriving from startedAt in local time
+      var k = w.date;
+      if(!k && w.startedAt){
+        var d = new Date(w.startedAt);
+        var pad = function(n){return String(n).padStart(2,'0');};
+        k = d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+      }
+      if(k === targetKey) total += (w.caloriesBurned || 0);
+    });
+    return total;
+  } catch(e){ return 0; }
+}
+
+// Get user weight in kg (from most recent weight log entry)
+function getUserWeightKg(){
+  var log = loadWeightLog();
+  if(log && log.length){
+    var lbs = log[log.length-1].weight;
+    if(lbs > 0) return lbs * 0.453592;
+  }
+  // Fall back to a prompt
+  var val = prompt('Enter your weight in lbs to calculate calories:');
+  var lbs = parseFloat(val);
+  if(lbs > 0){
+    var wl = loadWeightLog();
+    wl.push({date:dateKey(0), weight:lbs});
+    saveWeightLog(wl);
+    return lbs * 0.453592;
+  }
+  return 70; // Absolute fallback; ~155 lb default
+}
+
+// --- Haversine distance (meters between two lat/lng points) ---
+function cardioDistance(a, b){
+  var R = 6371000; // earth radius meters
+  var lat1 = a[0] * Math.PI/180, lat2 = b[0] * Math.PI/180;
+  var dLat = (b[0]-a[0]) * Math.PI/180;
+  var dLng = (b[1]-a[1]) * Math.PI/180;
+  var h = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1-h));
+}
+
+// --- Live tracker state ---
+var _cardio = null; // active tracking session
+// {activity, startedAt, points:[[lat,lng,ts,acc]], distanceM:0, durationSec:0,
+//  pausedSec:0, paused:false, lastPoint:null, watchId:null, timerId:null,
+//  wakeLock:null, weightKg, map:null, polyline:null, liveMarker:null, caloriesBurned:0}
+
+function renderCardioTab(){
+  var el = document.getElementById('workout-cardio-tab');
+  if(!el) return;
+  var log = loadCardioLog();
+  var totalKm = log.reduce(function(a,w){return a+(w.distanceM||0);},0)/1000;
+  var totalKcal = log.reduce(function(a,w){return a+(w.caloriesBurned||0);},0);
+  var totalMin = log.reduce(function(a,w){return a+(w.durationSec||0);},0)/60;
+  // Activity picker
+  var picker = '<div class="card"><div class="card-title">&#x1F3C3; Start a Workout</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">';
+  Object.keys(CARDIO_ACTIVITIES).forEach(function(key){
+    var a = CARDIO_ACTIVITIES[key];
+    picker += '<button onclick="cardioStartTracking(\''+key+'\')" style="background:var(--bg4);border:1px solid var(--border2);border-radius:var(--r2);padding:14px 6px;cursor:pointer;font-family:DM Sans,sans-serif;color:var(--text);">'
+      + '<div style="font-size:28px;margin-bottom:4px;">'+a.emoji+'</div>'
+      + '<div style="font-size:12px;font-weight:700;">'+a.label+'</div>'
+      + '</button>';
+  });
+  picker += '</div></div>';
+  // Summary stats
+  var stats = '<div class="card"><div class="card-title">&#x1F4CA; All-Time</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;">'
+    + '<div><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:var(--accent2);">'+log.length+'</div><div style="font-size:11px;color:var(--muted);">workouts</div></div>'
+    + '<div><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:var(--fiber);">'+totalKm.toFixed(1)+'</div><div style="font-size:11px;color:var(--muted);">km</div></div>'
+    + '<div><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:var(--sugar);">'+Math.round(totalKcal)+'</div><div style="font-size:11px;color:var(--muted);">kcal burned</div></div>'
+    + '</div></div>';
+  // History list
+  var history = '<div class="card"><div class="card-title">&#x1F4DC; History</div>';
+  if(!log.length){
+    history += '<div style="font-size:13px;color:var(--muted);text-align:center;padding:14px 0;">No cardio workouts yet. Pick an activity above to start.</div>';
+  } else {
+    history += log.slice().reverse().map(function(w){
+      var a = CARDIO_ACTIVITIES[w.activity] || {emoji:'🏃', label:w.activity};
+      var d = new Date(w.startedAt);
+      var dateStr = d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' · ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+      var km = (w.distanceM/1000), mi = km*0.621371;
+      var mins = Math.round(w.durationSec/60);
+      return '<div onclick="cardioShowDetail(\''+w.id+'\')" style="padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:12px;">'
+        + '<div style="font-size:26px;">'+a.emoji+'</div>'
+        + '<div style="flex:1;">'
+        + '<div style="font-size:14px;font-weight:700;">'+a.label+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);">'+dateStr+'</div>'
+        + '</div>'
+        + '<div style="text-align:right;">'
+        + '<div style="font-family:Syne,sans-serif;font-size:15px;font-weight:800;">'+mi.toFixed(2)+' mi</div>'
+        + '<div style="font-size:11px;color:var(--muted);">'+mins+' min · '+Math.round(w.caloriesBurned)+' kcal</div>'
+        + '</div></div>';
+    }).join('');
+  }
+  history += '</div>';
+  el.innerHTML = picker + stats + history;
+}
+
+async function cardioStartTracking(activity){
+  if(!CARDIO_ACTIVITIES[activity]){ showToast('Unknown activity'); return; }
+  if(!navigator.geolocation){ showToast('GPS not supported on this device'); return; }
+
+  var weightKg = getUserWeightKg();
+
+  // Initialize session state
+  _cardio = {
+    activity: activity,
+    startedAt: Date.now(),
+    endedAt: null,
+    points: [],
+    distanceM: 0,
+    durationSec: 0,
+    pausedSec: 0,
+    paused: false,
+    pauseStartedAt: 0,
+    lastPoint: null,
+    watchId: null,
+    timerId: null,
+    wakeLock: null,
+    weightKg: weightKg,
+    map: null,
+    polyline: null,
+    liveMarker: null,
+    caloriesBurned: 0,
+    currentSpeedMps: 0
+  };
+
+  // Show overlay
+  var a = CARDIO_ACTIVITIES[activity];
+  document.getElementById('cardio-live-emoji').textContent = a.emoji;
+  document.getElementById('cardio-live-activity').textContent = a.label;
+  document.getElementById('cardio-live-gps-status').textContent = 'Acquiring GPS...';
+  document.getElementById('cardio-live-duration').textContent = '00:00';
+  document.getElementById('cardio-live-distance').textContent = '0.00';
+  document.getElementById('cardio-live-pace').textContent = "--'--";
+  document.getElementById('cardio-live-cal').textContent = '0';
+  document.getElementById('cardio-live-pause-btn').textContent = '⏸ Pause';
+  var overlay = document.getElementById('cardio-live-overlay');
+  overlay.style.display = 'flex';
+
+  // Request wake lock (keeps screen on)
+  try {
+    if('wakeLock' in navigator){
+      _cardio.wakeLock = await navigator.wakeLock.request('screen');
+    }
+  } catch(e){ console.log('Wake lock failed:', e); }
+
+  // Initialize map (blank for now; we'll set view on first GPS fix)
+  setTimeout(function(){
+    try {
+      _cardio.map = L.map('cardio-live-map', {zoomControl:true, attributionControl:false}).setView([0,0], 2);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(_cardio.map);
+      _cardio.polyline = L.polyline([], {color:'#6357ff', weight:4, opacity:0.85}).addTo(_cardio.map);
+    } catch(e){ console.error('Map init failed:', e); }
+  }, 100);
+
+  // Start GPS watching
+  _cardio.watchId = navigator.geolocation.watchPosition(
+    cardioOnPosition,
+    cardioOnGpsError,
+    {enableHighAccuracy:true, maximumAge:2000, timeout:10000}
+  );
+
+  // Start duration timer (ticks every second)
+  _cardio.timerId = setInterval(cardioTick, 1000);
+}
+
+function cardioOnPosition(pos){
+  if(!_cardio || _cardio.paused) return;
+  var lat = pos.coords.latitude, lng = pos.coords.longitude;
+  var acc = pos.coords.accuracy || 999;
+  var ts = pos.timestamp || Date.now();
+
+  // Drop very inaccurate samples (> 50m) to reduce noise
+  if(acc > 50){
+    document.getElementById('cardio-live-gps-status').textContent = 'GPS weak (±' + Math.round(acc) + 'm)';
+    return;
+  }
+  document.getElementById('cardio-live-gps-status').textContent = 'GPS locked (±' + Math.round(acc) + 'm)';
+
+  var point = [lat, lng, ts, acc];
+  // First fix: center map
+  if(!_cardio.lastPoint){
+    _cardio.lastPoint = point;
+    _cardio.points.push(point);
+    if(_cardio.map){
+      _cardio.map.setView([lat, lng], 16);
+      _cardio.liveMarker = L.circleMarker([lat, lng], {radius:8, color:'#fff', fillColor:'#6357ff', fillOpacity:1, weight:3}).addTo(_cardio.map);
+    }
+    return;
+  }
+
+  // Calculate incremental distance
+  var segM = cardioDistance(_cardio.lastPoint, point);
+  // Reject tiny jitter (<2m) to reduce GPS noise accumulation
+  if(segM < 2) return;
+
+  var dtSec = Math.max(0.001, (ts - _cardio.lastPoint[2]) / 1000);
+  // Reject impossible speeds (>50 m/s ≈ 112 mph) — likely GPS glitch
+  var speedMps = segM / dtSec;
+  if(speedMps > 50) return;
+
+  _cardio.distanceM += segM;
+  _cardio.currentSpeedMps = speedMps;
+  _cardio.points.push(point);
+  _cardio.lastPoint = point;
+
+  // Update map
+  if(_cardio.polyline) _cardio.polyline.addLatLng([lat, lng]);
+  if(_cardio.liveMarker) _cardio.liveMarker.setLatLng([lat, lng]);
+  if(_cardio.map) _cardio.map.panTo([lat, lng], {animate:true, duration:0.5});
+
+  cardioUpdateLiveStats();
+}
+
+function cardioOnGpsError(err){
+  var msg = 'GPS error';
+  if(err.code === 1) msg = 'GPS permission denied';
+  else if(err.code === 2) msg = 'GPS unavailable';
+  else if(err.code === 3) msg = 'GPS timeout';
+  document.getElementById('cardio-live-gps-status').textContent = msg;
+}
+
+function cardioTick(){
+  if(!_cardio || _cardio.paused) return;
+  var elapsedMs = Date.now() - _cardio.startedAt - (_cardio.pausedSec * 1000);
+  _cardio.durationSec = Math.floor(elapsedMs / 1000);
+  cardioUpdateLiveStats();
+}
+
+function cardioUpdateLiveStats(){
+  if(!_cardio) return;
+  // Duration display
+  var s = _cardio.durationSec;
+  var hh = Math.floor(s/3600), mm = Math.floor((s%3600)/60), ss = s%60;
+  var durStr = hh > 0
+    ? hh + ':' + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0')
+    : String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+  document.getElementById('cardio-live-duration').textContent = durStr;
+
+  // Distance (miles)
+  var miles = (_cardio.distanceM / 1000) * 0.621371;
+  document.getElementById('cardio-live-distance').textContent = miles.toFixed(2);
+
+  // Pace: min/mi for run/walk/hike, mph for bike/rollerblade
+  var a = CARDIO_ACTIVITIES[_cardio.activity];
+  var paceEl = document.getElementById('cardio-live-pace');
+  var paceUnitEl = document.getElementById('cardio-live-pace-unit');
+  var distUnitEl = document.getElementById('cardio-live-distance-unit');
+  distUnitEl.textContent = 'mi';
+  if(a.unitSystem === 'pace'){
+    paceUnitEl.textContent = 'min/mi';
+    if(miles > 0.01 && _cardio.durationSec > 5){
+      var minPerMi = (_cardio.durationSec/60) / miles;
+      var pmm = Math.floor(minPerMi);
+      var pss = Math.floor((minPerMi - pmm) * 60);
+      paceEl.textContent = pmm + "'" + String(pss).padStart(2,'0') + '"';
+    } else paceEl.textContent = "--'--";
+  } else {
+    // Speed in mph
+    paceUnitEl.textContent = 'mph';
+    if(_cardio.durationSec > 5 && miles > 0.01){
+      var mph = miles / (_cardio.durationSec / 3600);
+      paceEl.textContent = mph.toFixed(1);
+    } else paceEl.textContent = '--';
+  }
+
+  // Calories — integrate using current MET value
+  // We compute it incrementally: kcal/sec = METs × weight_kg × (1/3600)
+  // Recompute from scratch using average METs for accuracy
+  var mets = cardioMetsFor(_cardio.activity, _cardio.currentSpeedMps);
+  // Use running average: pace derived from total distance/time gives a sensible avg MET
+  var avgSpeedMps = _cardio.distanceM / Math.max(1, _cardio.durationSec);
+  var avgMets = cardioMetsFor(_cardio.activity, avgSpeedMps);
+  // Favor the avg when we have enough data, otherwise baseline
+  var useMets = _cardio.distanceM > 50 ? avgMets : CARDIO_ACTIVITIES[_cardio.activity].baseMET;
+  _cardio.caloriesBurned = useMets * _cardio.weightKg * (_cardio.durationSec / 3600);
+  document.getElementById('cardio-live-cal').textContent = Math.round(_cardio.caloriesBurned);
+}
+
+function cardioTogglePause(){
+  if(!_cardio) return;
+  var btn = document.getElementById('cardio-live-pause-btn');
+  if(_cardio.paused){
+    // Resume
+    var pausedMs = Date.now() - _cardio.pauseStartedAt;
+    _cardio.pausedSec += pausedMs / 1000;
+    _cardio.paused = false;
+    _cardio.lastPoint = null; // force re-establishment of last point so we don't jump
+    btn.textContent = '⏸ Pause';
+    btn.style.background = 'var(--bg4)';
+  } else {
+    _cardio.paused = true;
+    _cardio.pauseStartedAt = Date.now();
+    btn.textContent = '▶ Resume';
+    btn.style.background = 'var(--sugar)';
+  }
+}
+
+function cardioStopTracking(){
+  if(!_cardio) return;
+  if(_cardio.distanceM < 10){
+    if(!confirm('Distance is very short. Save anyway?')){
+      // If no, treat as abort
+      cardioAbortTracking();
+      return;
+    }
+  }
+  cardioFinalizeAndShowSummary();
+}
+
+function cardioAbortTracking(){
+  if(!_cardio) return;
+  if(_cardio.distanceM > 10 || _cardio.durationSec > 30){
+    if(!confirm('Discard this workout? This cannot be undone.')) return;
+  }
+  cardioCleanup();
+  document.getElementById('cardio-live-overlay').style.display = 'none';
+  _cardio = null;
+  showToast('Workout discarded');
+}
+
+function cardioCleanup(){
+  if(!_cardio) return;
+  if(_cardio.watchId !== null){
+    try { navigator.geolocation.clearWatch(_cardio.watchId); } catch(e){}
+  }
+  if(_cardio.timerId){ clearInterval(_cardio.timerId); }
+  if(_cardio.wakeLock){
+    try { _cardio.wakeLock.release(); } catch(e){}
+  }
+  if(_cardio.map){
+    try { _cardio.map.remove(); } catch(e){}
+  }
+}
+
+function cardioFinalizeAndShowSummary(){
+  if(!_cardio) return;
+  _cardio.endedAt = Date.now();
+  cardioUpdateLiveStats(); // final tick
+
+  // Create saved workout object
+  var workout = {
+    id: 'c_' + _cardio.startedAt + '_' + Math.random().toString(36).slice(2,6),
+    activity: _cardio.activity,
+    startedAt: _cardio.startedAt,
+    endedAt: _cardio.endedAt,
+    durationSec: _cardio.durationSec,
+    pausedSec: Math.round(_cardio.pausedSec),
+    distanceM: _cardio.distanceM,
+    points: _cardio.points,
+    caloriesBurned: _cardio.caloriesBurned,
+    weightKgAtTime: _cardio.weightKg,
+    date: dateKey(0)
+  };
+
+  // Clean up live tracker
+  cardioCleanup();
+  document.getElementById('cardio-live-overlay').style.display = 'none';
+  _cardio = null;
+
+  // Show summary screen with Save / Discard buttons
+  cardioShowSummary(workout, true);
+}
+
+function cardioShowSummary(workout, isNew){
+  var overlay = document.getElementById('cardio-detail-overlay');
+  if(!overlay) return;
+  var a = CARDIO_ACTIVITIES[workout.activity] || {label:workout.activity, emoji:'🏃'};
+  var d = new Date(workout.startedAt);
+  var dateStr = d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'}) + ' · ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  var km = workout.distanceM/1000, mi = km*0.621371;
+  var mins = workout.durationSec / 60;
+  // Pace
+  var paceStr;
+  if(a.unitSystem === 'pace' || !a.unitSystem){
+    if(mi > 0.01){
+      var minPerMi = mins / mi;
+      var pmm = Math.floor(minPerMi);
+      var pss = Math.floor((minPerMi - pmm) * 60);
+      paceStr = pmm + "'" + String(pss).padStart(2,'0') + '" /mi';
+    } else paceStr = '—';
+  } else {
+    paceStr = mi > 0.01 ? (mi / (mins/60)).toFixed(1) + ' mph' : '—';
+  }
+
+  var headerButtons = isNew
+    ? '<button onclick="cardioSaveWorkout()" style="background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;">Save</button>'
+      + '<button onclick="cardioDiscardSummary()" style="background:var(--bg4);border:1px solid var(--border2);color:var(--muted);border-radius:10px;padding:10px 14px;font-size:13px;cursor:pointer;">Discard</button>'
+    : '<button onclick="cardioDeleteWorkout(\''+workout.id+'\')" style="background:#ff6b6b22;border:1px solid #ff6b6b44;color:#ff9090;border-radius:10px;padding:8px 14px;font-size:12px;cursor:pointer;margin-right:8px;">Delete</button>'
+      + '<button onclick="document.getElementById(\'cardio-detail-overlay\').style.display=\'none\'" style="background:none;border:1px solid var(--border2);color:var(--accent2);border-radius:10px;padding:8px 14px;font-size:12px;cursor:pointer;">Close</button>';
+
+  overlay.innerHTML = '<div style="padding:16px;">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">'
+    + '<div><div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;">'+a.emoji+' '+a.label+(isNew?' · Complete!':'')+'</div>'
+    + '<div style="font-size:12px;color:var(--muted);">'+dateStr+'</div></div>'
+    + '<div>'+headerButtons+'</div></div>'
+
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">'
+    + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
+    + '<div style="font-family:Syne,sans-serif;font-size:28px;font-weight:800;color:var(--fiber);">'+mi.toFixed(2)+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">miles</div></div>'
+    + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
+    + '<div style="font-family:Syne,sans-serif;font-size:28px;font-weight:800;color:var(--accent2);">'+Math.round(mins)+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">minutes</div></div>'
+    + '</div>'
+
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">'
+    + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
+    + '<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:var(--sugar);">'+Math.round(workout.caloriesBurned)+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">kcal burned</div></div>'
+    + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
+    + '<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;">'+paceStr+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">avg pace</div></div>'
+    + '</div>'
+
+    + '<div id="cardio-detail-map" style="height:360px;border-radius:var(--r2);overflow:hidden;border:1px solid var(--border);margin-bottom:16px;"></div>'
+
+    + '<div style="font-size:11px;color:var(--muted);text-align:center;">'+workout.points.length+' GPS points · paused '+Math.round(workout.pausedSec/60)+' min</div>'
+    + '</div>';
+
+  overlay.style.display = 'block';
+  overlay.scrollTop = 0;
+
+  // Render route map
+  setTimeout(function(){
+    if(workout.points.length < 2){
+      document.getElementById('cardio-detail-map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px;">Not enough GPS data for map</div>';
+      return;
+    }
+    try {
+      var map = L.map('cardio-detail-map', {zoomControl:true, attributionControl:false}).setView([workout.points[0][0], workout.points[0][1]], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
+      var latlngs = workout.points.map(function(p){ return [p[0], p[1]]; });
+      L.polyline(latlngs, {color:'#6357ff', weight:4, opacity:0.85}).addTo(map);
+      // Start/end markers
+      L.circleMarker(latlngs[0], {radius:7, color:'#fff', fillColor:'#2dd4a0', fillOpacity:1, weight:2}).addTo(map).bindTooltip('Start');
+      L.circleMarker(latlngs[latlngs.length-1], {radius:7, color:'#fff', fillColor:'#ff6b6b', fillOpacity:1, weight:2}).addTo(map).bindTooltip('End');
+      map.fitBounds(L.polyline(latlngs).getBounds(), {padding:[20,20]});
+    } catch(e){ console.error('Detail map failed:', e); }
+  }, 100);
+
+  // Stash the workout so Save button can grab it
+  window._pendingCardioWorkout = isNew ? workout : null;
+}
+
+function cardioSaveWorkout(){
+  var w = window._pendingCardioWorkout;
+  if(!w){ showToast('Nothing to save'); return; }
+  var log = loadCardioLog();
+  log.push(w);
+  saveCardioLog(log);
+  window._pendingCardioWorkout = null;
+  document.getElementById('cardio-detail-overlay').style.display = 'none';
+  renderCardioTab();
+  // Refresh home screen so updated cardio burn reflects in net calories
+  if(typeof renderNutrition === 'function') renderNutrition();
+  showToast('✓ Workout saved · ' + Math.round(w.caloriesBurned) + ' kcal');
+}
+
+function cardioDiscardSummary(){
+  if(!confirm('Discard this workout? This cannot be undone.')) return;
+  window._pendingCardioWorkout = null;
+  document.getElementById('cardio-detail-overlay').style.display = 'none';
+  showToast('Workout discarded');
+}
+
+function cardioShowDetail(id){
+  var log = loadCardioLog();
+  var w = log.find(function(x){ return x.id === id; });
+  if(!w){ showToast('Workout not found'); return; }
+  cardioShowSummary(w, false);
+}
+
+function cardioDeleteWorkout(id){
+  if(!confirm('Delete this workout permanently?')) return;
+  var log = loadCardioLog();
+  log = log.filter(function(x){ return x.id !== id; });
+  saveCardioLog(log);
+  document.getElementById('cardio-detail-overlay').style.display = 'none';
+  renderCardioTab();
+  if(typeof renderNutrition === 'function') renderNutrition();
+  showToast('Workout deleted');
+}
 </script>
 
 <script>
