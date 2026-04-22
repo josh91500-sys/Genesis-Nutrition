@@ -3651,12 +3651,24 @@ async function lookupUPCCode(upc){
       // (most fields try _serving first so this kicks in only when _serving missing)
       var isPerHundred = !pick('energy-kcal_serving','energy_serving','sodium_serving','proteins_serving');
       var scaleFactor = isPerHundred && sg !== 100 ? sg / 100 : 1;
+      var scaledCal = Math.round(cal * scaleFactor);
+
+      // If OFF returned the product but the calorie data is zero or missing,
+      // fall through to AI lookup using the product name we now know.
+      if(scaledCal === 0){
+        status.innerHTML = '<span style="color:var(--sugar);font-size:12px;">⚠️ Found "'+p.product_name+'" but nutrition is incomplete. Looking up with AI…</span>';
+        // Use product name (+ brand if available) for AI lookup — much more
+        // reliable than giving AI just a UPC code.
+        var aiQuery = p.product_name;
+        if(p.brands) aiQuery = p.brands + ' ' + aiQuery;
+        throw new Error('incomplete_data:' + aiQuery);
+      }
 
       showFoodPreview({
         name: p.product_name,
         serving_desc: p.serving_size || '1 serving',
         serving_g: sg,
-        cal: Math.round(cal * scaleFactor),
+        cal: scaledCal,
         protein: parseFloat((pick('proteins_serving','proteins_100g','proteins') * scaleFactor).toFixed(1)),
         carbs: parseFloat((pick('carbohydrates_serving','carbohydrates_100g','carbohydrates') * scaleFactor).toFixed(1)),
         fat: parseFloat((pick('fat_serving','fat_100g','fat') * scaleFactor).toFixed(1)),
@@ -3672,6 +3684,7 @@ async function lookupUPCCode(upc){
         vita: 0,
         source: 'Food Label ('+upc+')'
       }, 'barcode-preview');
+      status.textContent='';
 
       // Final check — if cal is STILL 0 after all fallbacks, the product
       // exists in OFF but has no nutrition data uploaded. Tell the user
@@ -3684,8 +3697,23 @@ async function lookupUPCCode(upc){
     } else throw new Error('not found');
   } catch(e){
     try {
-      if(!status.textContent.includes('incomplete')) status.textContent='Looking up...';
-      var res=await callClaude({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:'Nutrition facts for UPC '+upc+'. Return ONLY JSON:\n'+getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true})+'\n'+getAINutrientUnitsNote()}]});
+      // If the error message includes a product name (from the incomplete_data
+      // path), use the real product name for AI lookup instead of the raw UPC.
+      // UPC lookups via Claude are unreliable; product name lookups are accurate.
+      var aiQuery;
+      var errMsg = (e && e.message) || '';
+      if(errMsg.indexOf('incomplete_data:') === 0){
+        var productName = errMsg.substring('incomplete_data:'.length);
+        aiQuery = 'Nutrition facts for: ' + productName + ' (UPC ' + upc + '). Return ONLY JSON:\n'
+          + getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true}) + '\n'
+          + getAINutrientUnitsNote();
+      } else {
+        aiQuery = 'Nutrition facts for UPC ' + upc + '. Return ONLY JSON:\n'
+          + getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true}) + '\n'
+          + getAINutrientUnitsNote();
+        if(!status.textContent.includes('incomplete')) status.textContent='Looking up...';
+      }
+      var res=await callClaude({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:aiQuery}]});
       var data=await res.json();
       var text=(data.content&&data.content[0]&&data.content[0].text)||'';
       var match=text.match(/\{[\s\S]*\}/);
