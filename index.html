@@ -8733,5 +8733,344 @@ function getLatestWeight(){
   } catch(e){ return null; }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ACTIVITY FEED
+//
+// Friends see each other's activity events in a reverse-chronological feed.
+// Events respect privacy toggles: if "share workouts" is off, no workout
+// events appear in the feed. Each event is tiny (no calorie numbers, no
+// weight numbers) to avoid enabling unhealthy comparison behavior.
+//
+// Storage: activity/{uid}/feed/{entryId}
+//   entry: {type, ts, label, meta?}
+//   type: 'meal' | 'workout' | 'weight_goal' | 'recipe' | 'streak'
+//   Entries auto-expire after 7 days (cleaned up on next read).
+//
+// Rate limit: max 5 events per user per day (prevents spammy feeds).
+// ══════════════════════════════════════════════════════════════════════
+
+var ACTIVITY_MAX_PER_DAY = 5;
+var ACTIVITY_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;  // 7 days
+
+// Post an activity event to the current user's feed.
+// type: 'meal'|'workout'|'weight_goal'|'recipe'|'streak'
+// label: short text shown in the feed (no numbers for sensitive types)
+// Returns true if posted, false if rate-limited or privacy-blocked.
+async function postActivity(type, label, meta){
+  if(!_currentUser) return false;
+  // Privacy check: is the user sharing this type?
+  if(!isActivityTypeShared(type)) return false;
+  // Rate limit check: how many entries in the last 24h?
+  var todayCount = getTodayActivityCount();
+  if(todayCount >= ACTIVITY_MAX_PER_DAY){
+    console.log('[Activity] Rate limit reached for today, skipping:', type);
+    return false;
+  }
+  try {
+    var entry = {
+      type: type,
+      label: label || '',
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+      tsLocal: Date.now(),  // local timestamp for sorting before server fills in
+      meta: meta || null
+    };
+    await fbDb.collection('activity').doc(_currentUser.uid).collection('feed').add(entry);
+    // Update local count for rate limiting
+    bumpTodayActivityCount();
+    return true;
+  } catch(e){
+    console.error('[Activity] Post failed:', e);
+    return false;
+  }
+}
+
+// Is the user sharing this activity type based on their privacy toggles?
+function isActivityTypeShared(type){
+  var settings = loadPrivacySettings();
+  if(type === 'meal') return false;  // meals never in feed (too frequent, too sensitive)
+  if(type === 'workout') return !!settings.workoutsThisWeek;
+  if(type === 'weight_goal') return !!settings.weightTrend;  // milestone only, no number
+  if(type === 'recipe') return !!settings.publicRecipes;
+  if(type === 'streak') return !!settings.streakDays;
+  return false;
+}
+
+// Local rate-limit counter
+function getTodayActivityCount(){
+  try {
+    var raw = localStorage.getItem('gn_activity_today');
+    if(!raw) return 0;
+    var parsed = JSON.parse(raw);
+    if(parsed.date !== todayDateStr()) return 0;
+    return parsed.count || 0;
+  } catch(e){ return 0; }
+}
+
+function bumpTodayActivityCount(){
+  try {
+    var current = getTodayActivityCount();
+    localStorage.setItem('gn_activity_today', JSON.stringify({
+      date: todayDateStr(),
+      count: current + 1
+    }));
+  } catch(e){}
+}
+
+function todayDateStr(){
+  var d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
+// ── Feed loading — aggregates activity from all friends ─────────────
+
+async function loadActivityFeed(){
+  if(!_currentUser) return [];
+  try {
+    // Get friend list
+    var friendsSnap = await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').get();
+    if(friendsSnap.empty) return [];
+    var friendUids = [];
+    friendsSnap.forEach(function(d){ friendUids.push({uid:d.id, username:(d.data()||{}).username||''}); });
+
+    // Fetch last 20 entries from each friend (limited to keep reads sane)
+    var cutoff = Date.now() - ACTIVITY_EXPIRY_MS;
+    var allEntries = [];
+    await Promise.all(friendUids.map(async function(f){
+      try {
+        var snap = await fbDb.collection('activity').doc(f.uid).collection('feed')
+          .orderBy('tsLocal', 'desc').limit(20).get();
+        snap.forEach(function(doc){
+          var d = doc.data();
+          if((d.tsLocal||0) < cutoff) return;  // expired
+          allEntries.push({
+            id: doc.id,
+            uid: f.uid,
+            username: f.username,
+            type: d.type,
+            label: d.label,
+            meta: d.meta,
+            tsLocal: d.tsLocal || 0
+          });
+        });
+      } catch(e){
+        // Friend may have no feed yet or blocked — silently skip
+      }
+    }));
+    // Sort reverse-chronological
+    allEntries.sort(function(a,b){ return (b.tsLocal||0) - (a.tsLocal||0); });
+    return allEntries.slice(0, 50);  // show up to 50 across all friends
+  } catch(e){
+    console.error('[Activity] Load feed failed:', e);
+    return [];
+  }
+}
+
+// Format a relative time ("2h ago", "yesterday", "3d ago")
+function relTime(tsMs){
+  if(!tsMs) return '';
+  var diff = Date.now() - tsMs;
+  var mins = Math.floor(diff / 60000);
+  if(mins < 1) return 'just now';
+  if(mins < 60) return mins + 'm ago';
+  var hrs = Math.floor(mins / 60);
+  if(hrs < 24) return hrs + 'h ago';
+  var days = Math.floor(hrs / 24);
+  if(days === 1) return 'yesterday';
+  if(days < 7) return days + 'd ago';
+  return 'last week';
+}
+
+function renderActivityFeed(entries){
+  if(!entries || !entries.length){
+    return '<div style="font-size:12px;color:var(--muted);padding:10px;text-align:center;">No activity from friends yet.</div>';
+  }
+  return entries.map(function(e){
+    var icon = '📍';
+    if(e.type === 'workout') icon = '💪';
+    else if(e.type === 'weight_goal') icon = '🎯';
+    else if(e.type === 'recipe') icon = '🍳';
+    else if(e.type === 'streak') icon = '🔥';
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">'
+      + renderAvatar(e.username, 34)
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:13px;line-height:1.4;"><strong>@'+e.username+'</strong> '+e.label+'</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+icon+' '+relTime(e.tsLocal)+'</div>'
+      + '</div></div>';
+  }).join('');
+}
+
+// ── Notification banner — shown at top of app when relevant ─────────
+
+// Check for pending friend requests + recent friend activity, and show a
+// dismissible banner. Call on page load and after key navigations.
+async function checkFriendsBanner(){
+  if(!_currentUser) return;
+  var profile = loadUserProfile();
+  if(!profile.isAdult || !profile.username) return;  // no social for this user
+
+  var bannerEl = document.getElementById('friends-banner');
+  if(!bannerEl){
+    // Create it at top of screen
+    bannerEl = document.createElement('div');
+    bannerEl.id = 'friends-banner';
+    bannerEl.style.cssText = 'display:none;position:sticky;top:0;z-index:100;background:linear-gradient(90deg,rgba(99,87,255,.95),rgba(45,212,160,.9));color:#fff;padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+    // Insert into the screen wrapper, not body (so it sits inside the app layout)
+    var screen = document.querySelector('.screen') || document.body;
+    screen.insertBefore(bannerEl, screen.firstChild);
+  }
+
+  try {
+    // Pending requests count
+    var reqSnap = await fbDb.collection('friend_requests').doc(_currentUser.uid).collection('incoming').get();
+    var reqCount = reqSnap.size;
+
+    // New activity since last check
+    var lastCheck = parseInt(localStorage.getItem('gn_friends_last_check')||'0');
+    var newActivityCount = 0;
+    if(lastCheck > 0){
+      var feed = await loadActivityFeed();
+      newActivityCount = feed.filter(function(e){ return (e.tsLocal||0) > lastCheck; }).length;
+    }
+
+    // Unread messages count
+    var unreadMsgs = 0;
+    try { unreadMsgs = await countUnreadMessages(); } catch(e){}
+
+    // Build message
+    var parts = [];
+    if(reqCount > 0) parts.push(reqCount + ' friend request' + (reqCount===1?'':'s'));
+    if(unreadMsgs > 0) parts.push(unreadMsgs + ' new message' + (unreadMsgs===1?'':'s'));
+    if(newActivityCount > 0) parts.push(newActivityCount + ' new activit' + (newActivityCount===1?'y':'ies'));
+    if(parts.length === 0){
+      bannerEl.style.display = 'none';
+      return;
+    }
+    bannerEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<div style="flex:1;">👥 ' + parts.join(' · ') + '</div>'
+      + '<div style="font-size:11px;opacity:.85;">Tap to view</div>'
+      + '</div>';
+    bannerEl.onclick = function(){
+      // Navigate to Friends page
+      localStorage.setItem('gn_friends_last_check', Date.now().toString());
+      bannerEl.style.display = 'none';
+      showPage('more', document.querySelector('.nav-btn:last-child'));
+      setTimeout(function(){ showSubPage('friends'); }, 150);
+    };
+    bannerEl.style.display = 'block';
+  } catch(e){
+    console.error('[Banner] check failed:', e);
+    if(bannerEl) bannerEl.style.display = 'none';
+  }
+}
+
+// Force-expose all social handlers on window so they're findable from onclick
+// attributes even if something odd happens with script scope.
+try {
+  window.renderFriendsSubPage = renderFriendsSubPage;
+  window.renderAgeGate = renderAgeGate;
+  window.submitAgeGate = submitAgeGate;
+  window.changeAgeProfile = changeAgeProfile;
+  window.renderUsernameSetup = renderUsernameSetup;
+  window.submitUsername = submitUsername;
+  window.skipSocialFeatures = skipSocialFeatures;
+  window.renderFriendsHub = renderFriendsHub;
+  window.searchFriend = searchFriend;
+  window.sendFriendRequest = sendFriendRequest;
+  window.loadFriendRequests = loadFriendRequests;
+  window.acceptFriendRequest = acceptFriendRequest;
+  window.declineFriendRequest = declineFriendRequest;
+  window.loadFriendsList = loadFriendsList;
+  window.viewFriendProfile = viewFriendProfile;
+  window.importSharedRecipe = importSharedRecipe;
+  window.unfriend = unfriend;
+  window.blockUser = blockUser;
+  window.reportUser = reportUser;
+  window.openPrivacySettings = openPrivacySettings;
+  window.onPrivacyToggleChange = onPrivacyToggleChange;
+  window.savePrivacyAndClose = savePrivacyAndClose;
+  window.syncPublicProfile = syncPublicProfile;
+  window.postActivity = postActivity;
+  window.loadActivityFeed = loadActivityFeed;
+  window.renderActivityFeed = renderActivityFeed;
+  window.checkFriendsBanner = checkFriendsBanner;
+  window.loadAndRenderActivity = loadAndRenderActivity;
+  window.loadAndRenderFriendsRecipes = loadAndRenderFriendsRecipes;
+  window.importFriendsRecipe = importFriendsRecipe;
+  window.setLeaderboardMetric = setLeaderboardMetric;
+  window.loadAndRenderLeaderboard = loadAndRenderLeaderboard;
+  window.openConversation = openConversation;
+  window.showMessageGuidelines = showMessageGuidelines;
+  window.acceptMessageGuidelines = acceptMessageGuidelines;
+  window.renderConversationView = renderConversationView;
+  window.loadConversationMessages = loadConversationMessages;
+  window.sendMessage = sendMessage;
+  window.markConversationRead = markConversationRead;
+  window.reportMessage = reportMessage;
+  window.loadAndRenderConversations = loadAndRenderConversations;
+  window.countUnreadMessages = countUnreadMessages;
+  window.contentFilterViolations = contentFilterViolations;
+  console.log('[Genesis] Social module loaded. Friends features ready.');
+  try { localStorage.setItem('gn_debug_social_complete', Date.now()); } catch(e){}
+} catch(e){
+  console.error('[Genesis] Social module init error:', e);
+  try { localStorage.setItem('gn_debug_social_expose_error', e.message); } catch(_){}
+}
+</script>
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// SERVICE WORKER — offline support with aggressive update handling
+//
+// Strategy:
+//   1. Register sw.js on load
+//   2. On each load, call registration.update() to check for new SW versions
+//   3. When a new SW is waiting, activate it immediately (skipWaiting)
+//   4. Reload once after the new SW takes control so users always get fresh code
+//
+// IMPORTANT: sw.js must use versioned cache names (bump APP_VERSION there
+// each deploy). The companion sw.js file is generated alongside this HTML.
+// ══════════════════════════════════════════════════════════════════════
+if('serviceWorker' in navigator){
+  // One-time cleanup: if we previously unregistered the SW (v4 debug),
+  // clear the flag and re-register normally going forward.
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('/sw.js', {updateViaCache: 'none'})
+      .then(function(reg){
+        console.log('[Genesis] SW registered:', reg.scope);
+        // Force an update check every time the app loads
+        reg.update().catch(function(){});
+
+        // If a new worker is waiting, activate it right away
+        if(reg.waiting){ reg.waiting.postMessage({type:'SKIP_WAITING'}); }
+
+        // Watch for a new worker being installed
+        reg.addEventListener('updatefound', function(){
+          var newWorker = reg.installing;
+          if(!newWorker) return;
+          newWorker.addEventListener('statechange', function(){
+            if(newWorker.state === 'installed' && navigator.serviceWorker.controller){
+              // A new version is available AND there's an existing controller,
+              // meaning this is an update (not a first install).
+              console.log('[Genesis] New SW installed — activating');
+              newWorker.postMessage({type:'SKIP_WAITING'});
+            }
+          });
+        });
+      })
+      .catch(function(err){ console.log('[Genesis] SW registration failed:', err); });
+
+    // When the active SW changes, reload once so we're running the new app code.
+    var swReloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if(swReloaded) return;
+      swReloaded = true;
+      console.log('[Genesis] New SW activated — reloading page');
+      window.location.reload();
+    });
+  });
+}
+</script>
+
+</body>
+</html>
 
 
