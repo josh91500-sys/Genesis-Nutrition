@@ -3653,10 +3653,31 @@ function showSubPage(name){
   if(typeof fn === 'function'){
     try { fn(el); } catch(e){
       console.error('SubPage "'+name+'" render error:', e);
-      el.innerHTML = '<div class="card"><div class="card-title">'+name+'</div><div style="color:#ff9090;font-size:13px;">Error loading this page: '+(e.message||'unknown')+'. Try reloading.</div></div>';
+      el.innerHTML = '<div class="card"><div class="card-title">'+name+' — crashed while rendering</div>'
+        + '<div style="color:#ff9090;font-size:12px;font-family:monospace;word-break:break-word;white-space:pre-wrap;background:var(--bg4);padding:10px;border-radius:8px;">'
+        + 'Error: ' + (e.message||'unknown') + '\n\nStack:\n' + (e.stack||'(no stack)').substring(0,500)
+        + '</div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-top:8px;">Please take a screenshot and share this error.</div>'
+        + '</div>';
     }
   } else {
-    el.innerHTML = '<div class="card"><div class="card-title">'+name+'</div><div style="color:var(--muted);font-size:13px;">This page failed to load. Try reloading the app.</div></div>';
+    // Diagnostic message — tells us exactly what's missing
+    var diag = 'Page "' + name + '" handler is not registered.\n\n';
+    diag += 'Runtime checks:\n';
+    diag += '• renderFriendsSubPage type: ' + (typeof renderFriendsSubPage) + '\n';
+    diag += '• renderAgeGate type: ' + (typeof renderAgeGate) + '\n';
+    diag += '• PRIVACY_TOGGLES type: ' + (typeof PRIVACY_TOGGLES) + '\n';
+    diag += '• _currentUser: ' + (typeof _currentUser !== 'undefined' && _currentUser ? 'signed in' : 'null') + '\n';
+    diag += '• Build version: 2026-04-22 social-v2\n\n';
+    diag += 'If "renderFriendsSubPage" says "undefined", the social module did not load.\n';
+    diag += 'Most likely: browser cache is serving an old version of the app.\n\n';
+    diag += 'Fix:\n';
+    diag += '1. Close the app completely\n';
+    diag += '2. Clear Safari cache (Settings → Safari → Clear History & Website Data)\n';
+    diag += '3. Reopen app';
+    el.innerHTML = '<div class="card"><div class="card-title">⚠ Diagnostic</div>'
+      + '<div style="color:var(--muted);font-size:12px;font-family:monospace;word-break:break-word;white-space:pre-wrap;background:var(--bg4);padding:10px;border-radius:8px;">'
+      + diag + '</div></div>';
   }
   el.scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -6564,33 +6585,3 @@ function cardioShowSummary(workout, isNew){
       var map = L.map('cardio-detail-map', {zoomControl:true, attributionControl:false}).setView([workout.points[0][0], workout.points[0][1]], 15);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
       var latlngs = workout.points.map(function(p){ return [p[0], p[1]]; });
-      L.polyline(latlngs, {color:'#6357ff', weight:4, opacity:0.85}).addTo(map);
-      // Start/end markers
-      L.circleMarker(latlngs[0], {radius:7, color:'#fff', fillColor:'#2dd4a0', fillOpacity:1, weight:2}).addTo(map).bindTooltip('Start');
-      L.circleMarker(latlngs[latlngs.length-1], {radius:7, color:'#fff', fillColor:'#ff6b6b', fillOpacity:1, weight:2}).addTo(map).bindTooltip('End');
-      map.fitBounds(L.polyline(latlngs).getBounds(), {padding:[20,20]});
-    } catch(e){ console.error('Detail map failed:', e); }
-  }, 100);
-
-  // Stash the workout so Save button can grab it
-  window._pendingCardioWorkout = isNew ? workout : null;
-}
-
-function cardioSaveWorkout(){
-  var w = window._pendingCardioWorkout;
-  if(!w){ showToast('Nothing to save'); return; }
-  var log = loadCardioLog();
-  log.push(w);
-  saveCardioLog(log);
-  window._pendingCardioWorkout = null;
-  document.getElementById('cardio-detail-overlay').style.display = 'none';
-  renderCardioTab();
-  // Refresh home screen so updated cardio burn reflects in net calories
-  if(typeof renderNutrition === 'function') renderNutrition();
-  showToast('✓ Workout saved · ' + Math.round(w.caloriesBurned) + ' kcal');
-}
-
-function cardioDiscardSummary(){
-  if(!confirm('Discard this workout? This cannot be undone.')) return;
-  window._pendingCardioWorkout = null;
-  document.getElementById('cardio-detail-overlay')
