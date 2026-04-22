@@ -8661,6 +8661,18 @@ function computeLoggingStreak(){
   return streak;
 }
 
+function computeWorkoutStreak(){
+  var streak = 0;
+  for(var i=0; i<90; i++){
+    try {
+      var wlog = JSON.parse(localStorage.getItem('gn_wlog_'+dateKey(-i))||'null');
+      if(wlog && wlog.exercises && wlog.exercises.length) streak++;
+      else if(i>0) break;
+    } catch(e){ break; }
+  }
+  return streak;
+}
+
 function computeWorkoutsThisWeek(){
   var count = 0;
   var now = new Date();
@@ -9072,5 +9084,3 @@ if('serviceWorker' in navigator){
 
 </body>
 </html>
-
-
