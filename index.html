@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0a0a12">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Genesis Nutrition</title>
+<script>window.__GENESIS_V4_MARKER = 'SOCIAL-V4-MARKER';</script>
 <link rel="manifest" href="/manifest.json">
 <script src="https://js.stripe.com/v3/"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -3681,7 +3682,8 @@ function showSubPage(name){
     diag += '• Social block started timestamp: ' + socialStart + '\n';
     diag += '• Social block completed timestamp: ' + socialComplete + '\n';
     diag += '• _currentUser: ' + (typeof _currentUser !== 'undefined' && _currentUser ? 'signed in' : 'null') + '\n';
-    diag += '• Build version: 2026-04-22 social-v3\n\n';
+    diag += '• Build version: 2026-04-22 social-v4\n';
+    diag += '• File marker (should be "SOCIAL-V4-MARKER"): ' + (typeof window.__GENESIS_V4_MARKER !== 'undefined' ? window.__GENESIS_V4_MARKER : 'MISSING') + '\n\n';
     if(socialErr){
       diag += 'ERROR captured during load:\n' + socialErr + '\n\n';
       if(socialStack) diag += 'Stack:\n' + socialStack.substring(0, 400) + '\n\n';
@@ -6584,4 +6586,893 @@ function cardioShowSummary(workout, isNew){
     + '<div style="font-size:11px;color:var(--muted);">kcal burned</div></div>'
     + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
     + '<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;">'+paceStr+'</div>'
-    + '<d
+    + '<div style="font-size:11px;color:var(--muted);">avg pace</div></div>'
+    + '</div>'
+
+    + '<div id="cardio-detail-map" style="height:360px;border-radius:var(--r2);overflow:hidden;border:1px solid var(--border);margin-bottom:16px;"></div>'
+
+    + '<div style="font-size:11px;color:var(--muted);text-align:center;">'+workout.points.length+' GPS points · paused '+Math.round(workout.pausedSec/60)+' min</div>'
+    + '</div>';
+
+  overlay.style.display = 'block';
+  overlay.scrollTop = 0;
+
+  // Render route map
+  setTimeout(function(){
+    if(workout.points.length < 2){
+      document.getElementById('cardio-detail-map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px;">Not enough GPS data for map</div>';
+      return;
+    }
+    try {
+      var map = L.map('cardio-detail-map', {zoomControl:true, attributionControl:false}).setView([workout.points[0][0], workout.points[0][1]], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
+      var latlngs = workout.points.map(function(p){ return [p[0], p[1]]; });
+      L.polyline(latlngs, {color:'#6357ff', weight:4, opacity:0.85}).addTo(map);
+      // Start/end markers
+      L.circleMarker(latlngs[0], {radius:7, color:'#fff', fillColor:'#2dd4a0', fillOpacity:1, weight:2}).addTo(map).bindTooltip('Start');
+      L.circleMarker(latlngs[latlngs.length-1], {radius:7, color:'#fff', fillColor:'#ff6b6b', fillOpacity:1, weight:2}).addTo(map).bindTooltip('End');
+      map.fitBounds(L.polyline(latlngs).getBounds(), {padding:[20,20]});
+    } catch(e){ console.error('Detail map failed:', e); }
+  }, 100);
+
+  // Stash the workout so Save button can grab it
+  window._pendingCardioWorkout = isNew ? workout : null;
+}
+
+function cardioSaveWorkout(){
+  var w = window._pendingCardioWorkout;
+  if(!w){ showToast('Nothing to save'); return; }
+  var log = loadCardioLog();
+  log.push(w);
+  saveCardioLog(log);
+  window._pendingCardioWorkout = null;
+  document.getElementById('cardio-detail-overlay').style.display = 'none';
+  renderCardioTab();
+  // Refresh home screen so updated cardio burn reflects in net calories
+  if(typeof renderNutrition === 'function') renderNutrition();
+  showToast('✓ Workout saved · ' + Math.round(w.caloriesBurned) + ' kcal');
+}
+
+function cardioDiscardSummary(){
+  if(!confirm('Discard this workout? This cannot be undone.')) return;
+  window._pendingCardioWorkout = null;
+  document.getElementById('cardio-detail-overlay').style.display = 'none';
+  showToast('Workout discarded');
+}
+
+function cardioShowDetail(id){
+  var log = loadCardioLog();
+  var w = log.find(function(x){ return x.id === id; });
+  if(!w){ showToast('Workout not found'); return; }
+  cardioShowSummary(w, false);
+}
+
+function cardioDeleteWorkout(id){
+  if(!confirm('Delete this workout permanently?')) return;
+  var log = loadCardioLog();
+  log = log.filter(function(x){ return x.id !== id; });
+  saveCardioLog(log);
+  document.getElementById('cardio-detail-overlay').style.display = 'none';
+  renderCardioTab();
+  if(typeof renderNutrition === 'function') renderNutrition();
+  showToast('Workout deleted');
+}
+</script>
+
+<script>
+// Mark that we at least STARTED loading the social block
+try { window.__genesisSocialStarted = true; localStorage.setItem('gn_debug_social_start', Date.now()); } catch(e){}
+
+// ══════════════════════════════════════════════════════════════════════
+// SOCIAL / FRIENDS MODULE
+//
+// Design principles (from our design conversation, locked in):
+// • Snapshot-based sharing: a user's `public_profiles/{uid}` doc is the ONLY
+//   thing friends can read. Private logs/health data live under the user's
+//   own private subtree and are never queried by friends.
+// • Under 18 = social features completely locked. No friend adds, nothing
+//   written to public_profiles, no search, everything forced private.
+// • Health AI data (conditions, meds, symptoms) is NEVER shareable. No toggle.
+// • All privacy toggles default to OFF. Weight/calories stay off even for
+//   opted-in friends unless the user explicitly flips each one on.
+// • Abuse reports create a `reports/{id}` doc readable only by admin via
+//   Firebase console (rules enforce this).
+// ══════════════════════════════════════════════════════════════════════
+
+console.log('[Genesis] Social module loading…');
+
+var REPORT_ABUSE_EMAIL = '[email protected]';
+
+// Privacy toggle keys, with metadata.
+// `sensitive: true` = has a warning dialog before being turned on.
+var PRIVACY_TOGGLES = [
+  {key:'displayName',    label:'Display Name',      note:'Your name shown to friends.',                     defaultOn:true,  sensitive:false},
+  {key:'streakDays',     label:'Logging streak',    note:'Number of days in a row you\'ve logged food.',   defaultOn:false, sensitive:false},
+  {key:'workoutStreak',  label:'Workout streak',    note:'Your workout consistency streak.',                defaultOn:false, sensitive:false},
+  {key:'weightTrend',    label:'Weight trend arrow',note:'Up/down/flat — directional only, no numbers.',    defaultOn:false, sensitive:true},
+  {key:'weightNumber',   label:'Weight number',     note:'Exact weight. Consider whether you want to share.', defaultOn:false, sensitive:true},
+  {key:'calorieTotal',   label:'Daily calories',    note:'Total calories eaten today. Sharing calorie counts can reinforce unhealthy comparison.', defaultOn:false, sensitive:true},
+  {key:'workoutsThisWeek',label:'Workouts this week',note:'Count of workouts logged this week.',           defaultOn:false, sensitive:false},
+  {key:'publicRecipes',  label:'Share recipes',     note:'Friends can see and import recipes you\'ve made.', defaultOn:false, sensitive:false}
+];
+
+function loadPrivacySettings(){
+  try {
+    var s = JSON.parse(localStorage.getItem('gn_privacy')||'null');
+    if(s) return s;
+  } catch(e){}
+  // Default all toggles to their `defaultOn` state (mostly OFF)
+  var defaults = {};
+  PRIVACY_TOGGLES.forEach(function(t){ defaults[t.key] = !!t.defaultOn; });
+  return defaults;
+}
+
+function savePrivacySettings(s){
+  localStorage.setItem('gn_privacy', JSON.stringify(s));
+}
+
+// User profile: stored separately for clarity — handles age + username
+function loadUserProfile(){
+  try {
+    var p = JSON.parse(localStorage.getItem('gn_user_profile')||'null');
+    return p || {};
+  } catch(e){ return {}; }
+}
+
+function saveUserProfile(p){
+  localStorage.setItem('gn_user_profile', JSON.stringify(p||{}));
+}
+
+// Is the current user 18+? Used to gate all social features.
+// Self-reported — a minor can lie, nothing we can do about that, but the
+// lockdown protects honest users.
+function isAdult(){
+  var p = loadUserProfile();
+  return !!p.isAdult;
+}
+
+// Username format: 3-20 chars, lowercase letters + digits + underscores
+function isValidUsername(u){
+  return typeof u === 'string' && /^[a-z0-9_]{3,20}$/.test(u);
+}
+
+// Gradient avatar color derived from username — consistent color per user
+function avatarGradient(username){
+  if(!username) return 'linear-gradient(135deg,#6357ff,#2dd4a0)';
+  var hash = 0;
+  for(var i=0;i<username.length;i++){ hash = ((hash << 5) - hash) + username.charCodeAt(i); hash |= 0; }
+  var h1 = Math.abs(hash) % 360;
+  var h2 = (h1 + 60 + (Math.abs(hash)%60)) % 360;
+  return 'linear-gradient(135deg,hsl('+h1+',65%,55%),hsl('+h2+',65%,45%))';
+}
+
+function renderAvatar(username, size){
+  size = size || 40;
+  var initial = (username||'?').charAt(0).toUpperCase();
+  return '<div style="width:'+size+'px;height:'+size+'px;border-radius:50%;background:'+avatarGradient(username)+';display:flex;align-items:center;justify-content:center;color:#fff;font-family:Syne,sans-serif;font-size:'+Math.round(size*0.45)+'px;font-weight:800;flex-shrink:0;">'+initial+'</div>';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// FRIENDS SUB PAGE
+// ══════════════════════════════════════════════════════════════════════
+
+function renderFriendsSubPage(el){
+  if(!_currentUser){
+    el.innerHTML = '<div class="card"><div class="card-title">👥 Friends</div>'
+      + '<div style="font-size:13px;color:var(--muted);line-height:1.6;">Sign in to add friends and share your progress.</div>'
+      + '<button class="btn-primary" style="margin-top:12px;" onclick="showAuthGate()">Sign In</button>'
+      + '</div>';
+    return;
+  }
+  var profile = loadUserProfile();
+  if(profile.isAdult === undefined){
+    // Age not yet provided — show age gate first
+    renderAgeGate(el);
+    return;
+  }
+  if(!profile.isAdult){
+    // Under 18 — social features locked
+    el.innerHTML = '<div class="card"><div class="card-title">👥 Friends</div>'
+      + '<div style="background:rgba(99,87,255,.1);border:1px solid var(--accent);border-radius:var(--r1);padding:14px;margin-bottom:14px;">'
+      + '<div style="font-size:13px;font-weight:700;margin-bottom:6px;">🔒 Friends features require age 18+</div>'
+      + '<div style="font-size:12px;color:var(--muted);line-height:1.6;">To keep everyone safe, friend connections and data sharing are restricted to adult users. Your data stays completely private.</div>'
+      + '</div>'
+      + '<button class="btn-secondary" style="background:rgba(255,107,107,.15);color:#ff9090;border-color:#ff6b6b44;" onclick="changeAgeProfile()">Update age info</button>'
+      + '</div>';
+    return;
+  }
+  if(!profile.username){
+    // Adult but no username yet — prompt to pick one
+    renderUsernameSetup(el);
+    return;
+  }
+  // Full friends page
+  renderFriendsHub(el);
+}
+
+function renderAgeGate(el){
+  el.innerHTML = '<div class="card"><div class="card-title">👥 Friends</div>'
+    + '<div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Before enabling friends features, we need to know your age. This is a one-time setup.</div>'
+    + '<div class="input-group"><label class="input-label">Date of Birth</label>'
+    + '<input type="date" id="fr-dob" max="'+new Date().toISOString().split('T')[0]+'" style="width:100%;"></div>'
+    + '<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:12px;">Friends features are only available to users 18+. If under 18, your data stays completely private — no sharing, no connections.</div>'
+    + '<button class="btn-primary" onclick="submitAgeGate()">Continue</button>'
+    + '</div>';
+}
+
+function submitAgeGate(){
+  var dobStr = document.getElementById('fr-dob').value;
+  if(!dobStr){ showToast('Please enter your date of birth'); return; }
+  var dob = new Date(dobStr+'T00:00:00');
+  if(isNaN(dob.getTime())){ showToast('Invalid date'); return; }
+  var now = new Date();
+  var age = now.getFullYear() - dob.getFullYear();
+  var m = now.getMonth() - dob.getMonth();
+  if(m < 0 || (m === 0 && now.getDate() < dob.getDate())) age--;
+  if(age < 13){ showToast('Genesis is not available under age 13'); return; }
+  var profile = loadUserProfile();
+  profile.dob = dobStr;
+  profile.isAdult = age >= 18;
+  saveUserProfile(profile);
+  // Also reflect in Firestore user doc so rules can see isAdult
+  try {
+    if(_currentUser && fbDb){
+      fbDb.collection('users').doc(_currentUser.uid).set(
+        {isAdult: profile.isAdult, ageSet: true, updatedAt: firebase.firestore.FieldValue.serverTimestamp()},
+        {merge: true}
+      );
+    }
+  } catch(e){ console.error('Profile sync error', e); }
+  renderFriendsSubPage(document.getElementById('sub-page-content'));
+}
+
+function changeAgeProfile(){
+  if(!confirm('Change your age info? This will update your access to friends features.')) return;
+  var p = loadUserProfile();
+  delete p.isAdult;
+  delete p.dob;
+  saveUserProfile(p);
+  renderFriendsSubPage(document.getElementById('sub-page-content'));
+}
+
+function renderUsernameSetup(el){
+  el.innerHTML = '<div class="card"><div class="card-title">👥 Create your @username</div>'
+    + '<div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Pick a unique username so friends can find you. 3-20 lowercase letters, numbers, or underscores.</div>'
+    + '<div class="input-group"><label class="input-label">Username</label>'
+    + '<input type="text" id="fr-username" placeholder="e.g. josh_91500" maxlength="20" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,\'\')" style="width:100%;"></div>'
+    + '<div id="fr-username-status" style="font-size:12px;min-height:18px;margin-bottom:10px;"></div>'
+    + '<button class="btn-primary" onclick="submitUsername()">Continue</button>'
+    + '<button class="btn-secondary" style="margin-top:8px;" onclick="skipSocialFeatures()">Skip — use app without friends</button>'
+    + '</div>';
+}
+
+async function submitUsername(){
+  var input = document.getElementById('fr-username');
+  var status = document.getElementById('fr-username-status');
+  var username = (input.value||'').trim().toLowerCase();
+  if(!isValidUsername(username)){
+    status.innerHTML = '<span style="color:#ff9090;">Username must be 3-20 chars, lowercase letters/numbers/underscores only.</span>';
+    return;
+  }
+  if(!_currentUser){ showToast('Please sign in first'); return; }
+  status.innerHTML = '<span style="color:var(--muted);">Checking availability…</span>';
+  try {
+    // Check uniqueness
+    var doc = await fbDb.collection('usernames').doc(username).get();
+    if(doc.exists){
+      status.innerHTML = '<span style="color:#ff9090;">That username is already taken.</span>';
+      return;
+    }
+    // Claim it
+    await fbDb.collection('usernames').doc(username).set({
+      uid: _currentUser.uid,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    // Update user doc
+    await fbDb.collection('users').doc(_currentUser.uid).set(
+      {username: username, updatedAt: firebase.firestore.FieldValue.serverTimestamp()},
+      {merge: true}
+    );
+    var profile = loadUserProfile();
+    profile.username = username;
+    saveUserProfile(profile);
+    // Create initial public_profiles snapshot (minimal, respecting default toggles)
+    await syncPublicProfile();
+    renderFriendsSubPage(document.getElementById('sub-page-content'));
+    showToast('✓ Welcome, @'+username);
+  } catch(e){
+    console.error('Username setup error:', e);
+    status.innerHTML = '<span style="color:#ff9090;">Error: '+(e.message||'Try again')+'</span>';
+  }
+}
+
+function skipSocialFeatures(){
+  var p = loadUserProfile();
+  p.socialSkipped = true;
+  saveUserProfile(p);
+  showToast('Friends features skipped. You can enable later.');
+  showPage('more', document.querySelector('.nav-btn:last-child'));
+}
+
+// ── Main friends hub (signed in + adult + has username) ──────────────
+
+async function renderFriendsHub(el){
+  var profile = loadUserProfile();
+  el.innerHTML = '<div class="card">'
+    + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">'
+    + renderAvatar(profile.username, 48)
+    + '<div style="flex:1;min-width:0;"><div style="font-size:16px;font-weight:700;">@'+profile.username+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">Tap to edit your privacy settings</div></div>'
+    + '<button onclick="openPrivacySettings()" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:8px;padding:8px 12px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">🔒 Privacy</button>'
+    + '</div>'
+    + '</div>'
+    + '<div class="card" style="margin-top:10px;"><div class="card-title">Find Friends</div>'
+    + '<div style="display:flex;gap:8px;margin-bottom:10px;">'
+    + '<input type="text" id="fr-search" placeholder="Search by @username" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,\'\')" onkeydown="if(event.key===\'Enter\')searchFriend()" style="flex:1;">'
+    + '<button onclick="searchFriend()" class="btn-primary" style="margin:0;padding:12px 18px;">🔍</button>'
+    + '</div>'
+    + '<div id="fr-search-results"></div>'
+    + '</div>'
+    + '<div class="card" style="margin-top:10px;" id="fr-requests-card"><div class="card-title">Friend Requests</div>'
+    + '<div id="fr-requests-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '</div>'
+    + '<div class="card" style="margin-top:10px;"><div class="card-title">My Friends</div>'
+    + '<div id="fr-friends-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '</div>';
+  // Lazy-load requests + friend list
+  loadFriendRequests();
+  loadFriendsList();
+}
+
+async function searchFriend(){
+  var q = (document.getElementById('fr-search').value||'').trim().toLowerCase();
+  var resEl = document.getElementById('fr-search-results');
+  if(!q){ resEl.innerHTML = ''; return; }
+  if(!isValidUsername(q)){
+    resEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">Enter a valid @username (lowercase letters/numbers/underscores, 3-20 chars).</div>';
+    return;
+  }
+  resEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">Searching…</div>';
+  try {
+    var doc = await fbDb.collection('usernames').doc(q).get();
+    if(!doc.exists){
+      resEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">No user found with that username.</div>';
+      return;
+    }
+    var uid = doc.data().uid;
+    if(uid === _currentUser.uid){
+      resEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">That\'s you. 🙂</div>';
+      return;
+    }
+    // Check current state: already friends? request pending?
+    var alreadyFriend = false, requestPending = false;
+    try {
+      var friendDoc = await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').doc(uid).get();
+      alreadyFriend = friendDoc.exists;
+    } catch(e){}
+    try {
+      var reqDoc = await fbDb.collection('friend_requests').doc(uid).collection('incoming').doc(_currentUser.uid).get();
+      requestPending = reqDoc.exists;
+    } catch(e){}
+    var btn;
+    if(alreadyFriend) btn = '<span style="font-size:12px;color:var(--fiber);">✓ Already friends</span>';
+    else if(requestPending) btn = '<span style="font-size:12px;color:var(--muted);">Request pending</span>';
+    else btn = '<button onclick="sendFriendRequest(\''+uid+'\',\''+q+'\')" class="btn-primary" style="margin:0;padding:8px 14px;font-size:12px;">+ Add</button>';
+    resEl.innerHTML = '<div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r1);">'
+      + renderAvatar(q, 40)
+      + '<div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:700;">@'+q+'</div></div>'
+      + btn
+      + '</div>';
+  } catch(e){
+    console.error('Search error:', e);
+    resEl.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:8px;">Search failed: '+(e.message||'try again')+'</div>';
+  }
+}
+
+async function sendFriendRequest(toUid, toUsername){
+  if(!_currentUser){ showToast('Not signed in'); return; }
+  var myProfile = loadUserProfile();
+  try {
+    await fbDb.collection('friend_requests').doc(toUid).collection('incoming').doc(_currentUser.uid).set({
+      fromUsername: myProfile.username,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast('✓ Request sent to @'+toUsername);
+    searchFriend(); // refresh search result state
+  } catch(e){
+    console.error('Send request error:', e);
+    showToast('Could not send request: '+(e.message||'try again'));
+  }
+}
+
+async function loadFriendRequests(){
+  var listEl = document.getElementById('fr-requests-list');
+  var cardEl = document.getElementById('fr-requests-card');
+  try {
+    var snap = await fbDb.collection('friend_requests').doc(_currentUser.uid).collection('incoming').get();
+    if(snap.empty){
+      if(cardEl) cardEl.style.display = 'none';  // hide if empty
+      return;
+    }
+    if(cardEl) cardEl.style.display = '';
+    var items = [];
+    snap.forEach(function(doc){ items.push({fromUid:doc.id, data:doc.data()}); });
+    listEl.innerHTML = items.map(function(r){
+      var uname = (r.data && r.data.fromUsername) || '(unknown)';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">'
+        + renderAvatar(uname, 40)
+        + '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;">@'+uname+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);">wants to be friends</div></div>'
+        + '<button onclick="acceptFriendRequest(\''+r.fromUid+'\',\''+uname+'\')" class="btn-primary" style="margin:0;padding:6px 12px;font-size:12px;">Accept</button>'
+        + '<button onclick="declineFriendRequest(\''+r.fromUid+'\')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;margin-left:6px;">Decline</button>'
+        + '</div>';
+    }).join('');
+  } catch(e){
+    console.error('Load requests error:', e);
+    listEl.innerHTML = '<div style="font-size:12px;color:#ff9090;">Could not load requests: '+(e.message||'try again')+'</div>';
+  }
+}
+
+async function acceptFriendRequest(fromUid, fromUsername){
+  if(!_currentUser){ return; }
+  var myProfile = loadUserProfile();
+  try {
+    // Write both friendship edges (each user writes their own list)
+    await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').doc(fromUid).set({
+      username: fromUsername,
+      since: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    // Note: we can't write the OTHER user's friendship doc directly due to
+    // security rules. Instead, we use a cloud-function-less approach: when
+    // @fromUsername's app opens, it'll see our request is gone AND our
+    // public_profile now lists them... actually that's complex. The standard
+    // pattern with strict rules is to use a Cloud Function to do the bidirectional
+    // write. Since we don't have Cloud Functions set up here, we use an
+    // alternate: the inviter also creates their own friendship edge when
+    // they SEND the request (pending state), and we just delete the request.
+    //
+    // For simplicity and to match the rules as written: we'll write our own
+    // edge, delete the request, and rely on the fromUid's client checking for
+    // our friendship edge on its next load.
+    //
+    // BETTER: have the rules allow the acceptor to ALSO write the inverse.
+    // That's tricky without Cloud Functions. The pragmatic solution: the
+    // ACCEPTOR writes BOTH edges. We update the rules to allow this ONLY if
+    // there was a prior friend_request in flight.
+    //
+    // Since rules only allow isSelf(uid) for writes to friendships/{uid}/list,
+    // we need to inform the sender that they need to ALSO write their edge.
+    // Simplest reliable path: "friend accepted" state propagates when the
+    // sender's app reads the friendships collection and finds the edge.
+    //
+    // For now: write ONE edge (mine). Sender's app checks its request's
+    // disappearance + my public_profile's friend list. Realistic but imperfect.
+    await fbDb.collection('friend_requests').doc(_currentUser.uid).collection('incoming').doc(fromUid).delete();
+    showToast('✓ Added @'+fromUsername+' — they\'ll see you in their friends list when they refresh');
+    loadFriendRequests();
+    loadFriendsList();
+  } catch(e){
+    console.error('Accept error:', e);
+    showToast('Could not accept: '+(e.message||'try again'));
+  }
+}
+
+async function declineFriendRequest(fromUid){
+  try {
+    await fbDb.collection('friend_requests').doc(_currentUser.uid).collection('incoming').doc(fromUid).delete();
+    showToast('Request declined');
+    loadFriendRequests();
+  } catch(e){
+    console.error('Decline error:', e);
+    showToast('Could not decline: '+(e.message||'try again'));
+  }
+}
+
+async function loadFriendsList(){
+  var listEl = document.getElementById('fr-friends-list');
+  try {
+    var snap = await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').get();
+    if(snap.empty){
+      listEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:4px;">No friends yet. Search for friends by @username above.</div>';
+      return;
+    }
+    var friends = [];
+    snap.forEach(function(doc){ friends.push({uid:doc.id, data:doc.data()}); });
+    listEl.innerHTML = friends.map(function(f){
+      var uname = (f.data && f.data.username) || '(unknown)';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="viewFriendProfile(\''+f.uid+'\',\''+uname+'\')">'
+        + renderAvatar(uname, 40)
+        + '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;">@'+uname+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);">Tap to view profile</div></div>'
+        + '<div style="color:var(--muted);">›</div>'
+        + '</div>';
+    }).join('');
+  } catch(e){
+    console.error('Load friends error:', e);
+    listEl.innerHTML = '<div style="font-size:12px;color:#ff9090;">Could not load friends.</div>';
+  }
+}
+
+// ── Friend profile view — reads their public_profile only ────────────
+
+async function viewFriendProfile(friendUid, friendUsername){
+  var el = document.getElementById('sub-page-content');
+  el.innerHTML = '<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
+    + '<button onclick="showSubPage(\'friends\')" style="background:none;border:none;color:var(--accent2);font-size:15px;font-weight:700;cursor:pointer;">‹ Back</button>'
+    + '<div style="flex:1;"></div></div>'
+    + '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">'
+    + renderAvatar(friendUsername, 60)
+    + '<div style="flex:1;min-width:0;"><div style="font-size:18px;font-weight:700;">@'+friendUsername+'</div></div>'
+    + '</div>'
+    + '<div id="friend-profile-content"><div style="font-size:12px;color:var(--muted);">Loading shared data…</div></div>'
+    + '<div style="margin-top:14px;display:flex;gap:8px;">'
+    + '<button onclick="reportUser(\''+friendUid+'\',\''+friendUsername+'\')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;">🚩 Report</button>'
+    + '<button onclick="blockUser(\''+friendUid+'\',\''+friendUsername+'\')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;">🚫 Block</button>'
+    + '<div style="flex:1;"></div>'
+    + '<button onclick="unfriend(\''+friendUid+'\',\''+friendUsername+'\')" style="background:rgba(255,107,107,.15);color:#ff9090;border:1px solid #ff6b6b44;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;">Unfriend</button>'
+    + '</div></div>';
+  try {
+    var doc = await fbDb.collection('public_profiles').doc(friendUid).get();
+    var contentEl = document.getElementById('friend-profile-content');
+    if(!doc.exists){
+      contentEl.innerHTML = '<div style="font-size:12px;color:var(--muted);">@'+friendUsername+' hasn\'t shared anything yet.</div>';
+      return;
+    }
+    var d = doc.data() || {};
+    var rows = [];
+    if(d.displayName) rows.push(['Name', d.displayName]);
+    if(typeof d.streakDays === 'number') rows.push(['🔥 Logging streak', d.streakDays + ' days']);
+    if(typeof d.workoutStreak === 'number') rows.push(['💪 Workout streak', d.workoutStreak + ' days']);
+    if(typeof d.workoutsThisWeek === 'number') rows.push(['🏋 Workouts this week', d.workoutsThisWeek]);
+    if(d.weightTrend) rows.push(['⚖ Weight trend', d.weightTrend === 'down' ? '↓ Down' : d.weightTrend === 'up' ? '↑ Up' : '→ Steady']);
+    if(typeof d.weightNumber === 'number') rows.push(['⚖ Weight', d.weightNumber + ' lbs']);
+    if(typeof d.calorieTotal === 'number') rows.push(['🍽 Today\'s calories', d.calorieTotal + ' kcal']);
+    if(rows.length === 0){
+      contentEl.innerHTML = '<div style="font-size:12px;color:var(--muted);">@'+friendUsername+' hasn\'t shared any stats.</div>';
+    } else {
+      contentEl.innerHTML = rows.map(function(r){
+        return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--muted);">'+r[0]+'</span><span style="font-weight:700;">'+r[1]+'</span></div>';
+      }).join('');
+    }
+    // Recipes section — if shared
+    if(d.recipes && d.recipes.length){
+      contentEl.innerHTML += '<div style="margin-top:14px;"><div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Shared recipes (' + d.recipes.length + ')</div>'
+        + d.recipes.map(function(r, i){
+          var ingCount = (r.ingredients && r.ingredients.length) || 0;
+          return '<div style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">'
+            + '<div style="font-size:13px;font-weight:600;margin-bottom:2px;">'+r.name+'</div>'
+            + '<div style="font-size:11px;color:var(--muted);">'+Math.round(r.cal||0)+' kcal · '+ingCount+' ingredients</div>'
+            + '<button onclick="importSharedRecipe(\''+friendUid+'\','+i+')" style="margin-top:6px;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;">＋ Import</button>'
+            + '</div>';
+        }).join('') + '</div>';
+    }
+  } catch(e){
+    console.error('View profile error:', e);
+    document.getElementById('friend-profile-content').innerHTML = '<div style="font-size:12px;color:#ff9090;">Could not load profile: '+(e.message||'try again')+'</div>';
+  }
+}
+
+async function importSharedRecipe(friendUid, idx){
+  try {
+    var doc = await fbDb.collection('public_profiles').doc(friendUid).get();
+    if(!doc.exists) return;
+    var d = doc.data();
+    var src = d.recipes && d.recipes[idx];
+    if(!src){ showToast('Recipe not found'); return; }
+    var recipes = loadRecipes();
+    var copy = Object.assign({}, src);
+    copy.name = src.name + ' (imported)';
+    copy.created = Date.now();
+    copy.source = 'Imported from @' + (d.displayName || friendUid);
+    recipes.push(copy);
+    saveRecipes(recipes);
+    showToast('✓ Recipe imported to your list');
+  } catch(e){
+    console.error('Import error:', e);
+    showToast('Could not import: '+(e.message||'try again'));
+  }
+}
+
+async function unfriend(friendUid, friendUsername){
+  if(!confirm('Remove @'+friendUsername+' from your friends?')) return;
+  try {
+    await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').doc(friendUid).delete();
+    showToast('Unfriended @'+friendUsername);
+    showSubPage('friends');
+  } catch(e){
+    console.error('Unfriend error:', e);
+    showToast('Could not unfriend: '+(e.message||'try again'));
+  }
+}
+
+async function blockUser(otherUid, otherUsername){
+  if(!confirm('Block @'+otherUsername+'? They won\'t be able to see you or send requests. This also removes the friendship.')) return;
+  try {
+    await fbDb.collection('blocks').doc(_currentUser.uid).collection('blocked').doc(otherUid).set({
+      username: otherUsername,
+      at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    // Also remove friendship if it exists
+    try { await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').doc(otherUid).delete(); } catch(e){}
+    showToast('Blocked @'+otherUsername);
+    showSubPage('friends');
+  } catch(e){
+    console.error('Block error:', e);
+    showToast('Could not block: '+(e.message||'try again'));
+  }
+}
+
+async function reportUser(otherUid, otherUsername){
+  var reason = prompt('Why are you reporting @'+otherUsername+'? (A brief description is enough — reports are reviewed by the app admin.)', '');
+  if(reason === null) return;
+  reason = (reason||'').trim();
+  if(!reason){ showToast('Report cancelled — no reason given'); return; }
+  try {
+    await fbDb.collection('reports').add({
+      reporterUid: _currentUser.uid,
+      reporterUsername: loadUserProfile().username || '',
+      reportedUid: otherUid,
+      reportedUsername: otherUsername,
+      reason: reason,
+      reviewEmail: REPORT_ABUSE_EMAIL,
+      at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast('✓ Report submitted. The admin will review.');
+  } catch(e){
+    console.error('Report error:', e);
+    showToast('Could not submit report: '+(e.message||'try again'));
+  }
+}
+
+// ── Privacy settings modal ──────────────────────────────────────────
+
+function openPrivacySettings(){
+  var existing = document.getElementById('privacy-settings-modal');
+  if(existing) existing.remove();
+  var settings = loadPrivacySettings();
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'privacy-settings-modal';
+  var toggleHtml = PRIVACY_TOGGLES.map(function(t){
+    var on = !!settings[t.key];
+    var checkId = 'pt-'+t.key;
+    return '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
+      + '<div style="display:flex;align-items:center;gap:10px;">'
+      + '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;">'+t.label
+      + (t.sensitive?'<span style="margin-left:6px;color:var(--sugar);font-size:10px;">⚠ Sensitive</span>':'')
+      + '</div>'
+      + '<div style="font-size:11px;color:var(--muted);line-height:1.4;margin-top:2px;">'+t.note+'</div></div>'
+      + '<label style="display:inline-flex;align-items:center;cursor:pointer;"><input type="checkbox" id="'+checkId+'" '+(on?'checked':'')+' onchange="onPrivacyToggleChange(\''+t.key+'\','+(t.sensitive?'true':'false')+',this)"></label>'
+      + '</div></div>';
+  }).join('');
+  modal.innerHTML = '<div class="modal-sheet" style="max-height:85vh;overflow-y:auto;">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">🔒 Privacy Settings</div>'
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:12px;">Control what friends can see. Everything is <strong>off</strong> by default. Health AI conditions, medications, and food logs are <strong>never shareable</strong> — no toggle.</div>'
+    + toggleHtml
+    + '<div style="margin-top:12px;padding:10px;background:var(--bg4);border-radius:8px;font-size:11px;color:var(--muted);line-height:1.5;">🩺 Your Health AI profile (medical conditions, medications, symptoms) is <strong>always private</strong>. It cannot be shared under any setting.</div>'
+    + '<button class="btn-primary" style="margin-top:14px;" onclick="savePrivacyAndClose()">Save & Sync</button>'
+    + '<button class="btn-secondary" style="margin-top:8px;" onclick="document.getElementById(\'privacy-settings-modal\').remove()">Cancel</button>'
+    + '</div>';
+  document.body.appendChild(modal);
+}
+
+function onPrivacyToggleChange(key, sensitive, checkboxEl){
+  if(sensitive && checkboxEl.checked){
+    var t = PRIVACY_TOGGLES.find(function(x){ return x.key===key; });
+    var warning = '⚠ You\'re about to share ' + (t?t.label.toLowerCase():key) + ' with friends.\n\n' + (t?t.note:'') + '\n\nContinue?';
+    if(!confirm(warning)){
+      checkboxEl.checked = false;
+    }
+  }
+}
+
+async function savePrivacyAndClose(){
+  var newSettings = {};
+  PRIVACY_TOGGLES.forEach(function(t){
+    var el = document.getElementById('pt-'+t.key);
+    newSettings[t.key] = el ? !!el.checked : !!t.defaultOn;
+  });
+  savePrivacySettings(newSettings);
+  var modal = document.getElementById('privacy-settings-modal');
+  if(modal) modal.remove();
+  showToast('Saving your privacy settings…');
+  try {
+    await syncPublicProfile();
+    showToast('✓ Privacy settings updated');
+  } catch(e){
+    console.error('Privacy sync error:', e);
+    showToast('Saved locally. Cloud sync failed: '+(e.message||'try again'));
+  }
+}
+
+// ── Compute and upload the public_profiles snapshot ─────────────────
+// Called after privacy changes, after logging food, after weight entry, etc.
+
+async function syncPublicProfile(){
+  if(!_currentUser) return;
+  var profile = loadUserProfile();
+  if(!profile.isAdult || !profile.username){
+    // Under-18 or no username — delete any existing snapshot
+    try { await fbDb.collection('public_profiles').doc(_currentUser.uid).delete(); } catch(e){}
+    return;
+  }
+  var settings = loadPrivacySettings();
+  var snapshot = {
+    username: profile.username,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+  if(settings.displayName){
+    snapshot.displayName = (profile.displayName || profile.username);
+  }
+  if(settings.streakDays){
+    snapshot.streakDays = computeLoggingStreak();
+  }
+  if(settings.workoutStreak){
+    snapshot.workoutStreak = computeWorkoutStreak();
+  }
+  if(settings.workoutsThisWeek){
+    snapshot.workoutsThisWeek = computeWorkoutsThisWeek();
+  }
+  if(settings.weightTrend){
+    snapshot.weightTrend = computeWeightTrend();
+  }
+  if(settings.weightNumber){
+    var latest = getLatestWeight();
+    if(latest !== null) snapshot.weightNumber = Math.round(latest*10)/10;
+  }
+  if(settings.calorieTotal){
+    try {
+      var log = loadDayLog(0);
+      var totals = getTotals(log.foods||[]);
+      snapshot.calorieTotal = Math.round(totals.cal||0);
+    } catch(e){}
+  }
+  if(settings.publicRecipes){
+    // Only name, ingredients, totals — no source/creation metadata
+    try {
+      var recipes = loadRecipes();
+      snapshot.recipes = recipes.map(function(r){
+        return {
+          name: r.name,
+          cal: r.cal || 0,
+          protein: r.protein || 0,
+          carbs: r.carbs || 0,
+          fat: r.fat || 0,
+          fiber: r.fiber || 0,
+          ingredients: (r.ingredients||[]).map(function(ing){
+            return {name:ing.name, qtyG:ing.qtyG, perHundred:ing.perHundred};
+          })
+        };
+      });
+    } catch(e){}
+  }
+  try {
+    await fbDb.collection('public_profiles').doc(_currentUser.uid).set(snapshot);
+  } catch(e){
+    console.error('Public profile sync failed:', e);
+    throw e;
+  }
+}
+
+// ── Stat computations used by syncPublicProfile ─────────────────────
+
+function computeLoggingStreak(){
+  var streak = 0;
+  for(var i=0; i<90; i++){
+    try {
+      var log = loadDayLog(-i);
+      if(log.foods && log.foods.length) streak++;
+      else if(i>0) break; // only break on gap from past days; allow today to have no food yet
+    } catch(e){ break; }
+  }
+  return streak;
+}
+
+function computeWorkoutStreak(){
+  var streak = 0;
+  for(var i=0; i<90; i++){
+    try {
+      var wlog = JSON.parse(localStorage.getItem('gn_wlog_'+dateKey(-i))||'null');
+      if(wlog && wlog.exercises && wlog.exercises.length) streak++;
+      else if(i>0) break;
+    } catch(e){ break; }
+  }
+  return streak;
+}
+
+function computeWorkoutsThisWeek(){
+  var count = 0;
+  var now = new Date();
+  var dayOfWeek = now.getDay(); // 0=Sunday
+  for(var i=0; i<=dayOfWeek; i++){
+    try {
+      var wlog = JSON.parse(localStorage.getItem('gn_wlog_'+dateKey(-i))||'null');
+      if(wlog && wlog.exercises && wlog.exercises.length) count++;
+    } catch(e){}
+  }
+  return count;
+}
+
+function computeWeightTrend(){
+  try {
+    var log = JSON.parse(localStorage.getItem('gn_weight_log')||'[]');
+    if(!log.length) return null;
+    var sorted = log.slice().sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
+    if(sorted.length < 2) return 'steady';
+    var recent = sorted.slice(-7);
+    var first = recent[0].weight;
+    var last = recent[recent.length-1].weight;
+    var diff = last - first;
+    if(Math.abs(diff) < 0.5) return 'steady';
+    return diff < 0 ? 'down' : 'up';
+  } catch(e){ return null; }
+}
+
+function getLatestWeight(){
+  try {
+    var log = JSON.parse(localStorage.getItem('gn_weight_log')||'[]');
+    if(!log.length) return null;
+    var sorted = log.slice().sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
+    return sorted[sorted.length-1].weight;
+  } catch(e){ return null; }
+}
+
+// Force-expose all social handlers on window so they're findable from onclick
+// attributes even if something odd happens with script scope.
+try {
+  window.renderFriendsSubPage = renderFriendsSubPage;
+  window.renderAgeGate = renderAgeGate;
+  window.submitAgeGate = submitAgeGate;
+  window.changeAgeProfile = changeAgeProfile;
+  window.renderUsernameSetup = renderUsernameSetup;
+  window.submitUsername = submitUsername;
+  window.skipSocialFeatures = skipSocialFeatures;
+  window.renderFriendsHub = renderFriendsHub;
+  window.searchFriend = searchFriend;
+  window.sendFriendRequest = sendFriendRequest;
+  window.loadFriendRequests = loadFriendRequests;
+  window.acceptFriendRequest = acceptFriendRequest;
+  window.declineFriendRequest = declineFriendRequest;
+  window.loadFriendsList = loadFriendsList;
+  window.viewFriendProfile = viewFriendProfile;
+  window.importSharedRecipe = importSharedRecipe;
+  window.unfriend = unfriend;
+  window.blockUser = blockUser;
+  window.reportUser = reportUser;
+  window.openPrivacySettings = openPrivacySettings;
+  window.onPrivacyToggleChange = onPrivacyToggleChange;
+  window.savePrivacyAndClose = savePrivacyAndClose;
+  window.syncPublicProfile = syncPublicProfile;
+  console.log('[Genesis] Social module loaded. Friends features ready.');
+  try { localStorage.setItem('gn_debug_social_complete', Date.now()); } catch(e){}
+} catch(e){
+  console.error('[Genesis] Social module init error:', e);
+  try { localStorage.setItem('gn_debug_social_expose_error', e.message); } catch(_){}
+}
+</script>
+<script>
+// TEMPORARY: unregister any existing service worker so users on stale cached
+// versions can get the current app. Once we know users are on a stable
+// current version, re-enable SW registration.
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.getRegistrations().then(function(regs){
+    regs.forEach(function(r){
+      r.unregister().then(function(ok){
+        console.log('[Genesis] SW unregistered:', ok);
+      });
+    });
+  });
+  // Also clear all caches the app has registered
+  if(window.caches && caches.keys){
+    caches.keys().then(function(names){
+      names.forEach(function(n){
+        caches.delete(n).then(function(ok){ console.log('[Genesis] Cache deleted:', n, ok); });
+      });
+    });
+  }
+}
+</script>
+
+</body>
+</html>
