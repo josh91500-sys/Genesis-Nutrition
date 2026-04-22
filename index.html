@@ -773,6 +773,7 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
       <div class="input-group"><label class="input-label">Potassium (mg)</label><input type="number" id="g-potassium" placeholder="4700"></div>
     </div>
     <button class="btn-primary" onclick="saveGoals()">Save Goals</button>
+    <button class="btn-secondary" style="margin-top:8px;" onclick="recoverMisdatedLogs()">🔧 Check for misdated food logs</button>
     <button class="btn-secondary" style="margin-top:8px;background:#ff6b6b22;color:#ff9090;border-color:#ff6b6b44;" onclick="if(confirm('Clear all data?'))clearData()">Clear All Data</button>
     <button class="btn-secondary" style="margin-top:8px;" onclick="closeSettings()">Cancel</button>
   </div>
@@ -832,9 +833,25 @@ function loadGoals(){
 }
 
 function dateKey(offset=0){
+  // Use LOCAL date, not UTC. toISOString() returns UTC which causes foods
+  // logged in the evening (e.g., 9pm EST = 1am UTC next day) to be stored
+  // under tomorrow's date key.
   const d = new Date();
   d.setDate(d.getDate()+offset);
-  return d.toISOString().split('T')[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return y + '-' + m + '-' + day;
+}
+
+// Convert any Date object to a YYYY-MM-DD string in LOCAL time.
+// Use this anywhere you need a log key for a specific date (not just today+offset).
+function localDateKey(d){
+  if(!d) return dateKey(0);
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return y + '-' + m + '-' + day;
 }
 
 let dayOffset = 0;
@@ -876,6 +893,57 @@ function clearData(){
   closeSettings();
   renderNutrition();
   showToast('Data cleared');
+}
+
+// Scan gn_log_* keys and look for food entries dated in the future relative
+// to local today. These were most likely logged under the old UTC-based
+// dateKey bug (foods logged after ~7pm local got shoved to tomorrow's key).
+// We list what we find and offer to move them back one day.
+function recoverMisdatedLogs(){
+  var today = dateKey(0);
+  var suspect = [];  // [{key, date, foodCount, cal}]
+  Object.keys(localStorage).forEach(function(k){
+    if(!k.startsWith('gn_log_')) return;
+    var d = k.substring(7);
+    if(d <= today) return;  // only future-dated keys are suspect
+    try {
+      var log = JSON.parse(localStorage.getItem(k));
+      if(log && log.foods && log.foods.length){
+        var cal = log.foods.reduce(function(a,f){ return a + (f.cal||0); }, 0);
+        suspect.push({key:k, date:d, count:log.foods.length, cal:Math.round(cal)});
+      }
+    } catch(e){}
+  });
+  if(!suspect.length){
+    alert('✓ No misdated logs found. Everything looks correct.');
+    return;
+  }
+  var lines = suspect.map(function(s){
+    return s.date + ' — ' + s.count + ' food' + (s.count===1?'':'s') + ' · ' + s.cal + ' kcal';
+  }).join('\n');
+  var msg = 'Found ' + suspect.length + ' log' + (suspect.length===1?'':'s') + ' dated in the future (likely from the old UTC timezone bug):\n\n' + lines + '\n\nMove these foods back one day to fix? (This merges them into the previous day\'s log — existing foods on that day are preserved.)';
+  if(!confirm(msg)) return;
+  var movedCount = 0;
+  suspect.forEach(function(s){
+    try {
+      // Parse the date string and subtract one day using local time
+      var parts = s.date.split('-');
+      var dt = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+      dt.setDate(dt.getDate() - 1);
+      var newKey = 'gn_log_' + localDateKey(dt);
+      var srcLog = JSON.parse(localStorage.getItem(s.key));
+      var dstLog = {foods:[]};
+      try { dstLog = JSON.parse(localStorage.getItem(newKey) || '{"foods":[]}'); } catch(e){}
+      if(!dstLog.foods) dstLog.foods = [];
+      // Append source foods to destination (preserve destination's existing foods)
+      srcLog.foods.forEach(function(f){ dstLog.foods.push(f); movedCount++; });
+      localStorage.setItem(newKey, JSON.stringify(dstLog));
+      localStorage.removeItem(s.key);
+    } catch(e){ console.error('Recovery failed for', s.key, e); }
+  });
+  closeSettings();
+  renderNutrition();
+  showToast('✓ Recovered '+movedCount+' food entries', 3500);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3679,8 +3747,11 @@ function toggleRecipeIngredients(idx){
 }
 
 function showCreateRecipe(){
-  // Reset draft and edit-mode flag
-  _recipeDraft = {name:'', ingredients:[]};
+  // Reset draft unless a caller has asked us to preserve it (e.g. we were
+  // navigated here from "Add to new recipe" with a pre-loaded ingredient).
+  if(!window._recipePreserveDraft){
+    _recipeDraft = {name:'', ingredients:[]};
+  }
   _recipeEditIdx = null;
   var formEl = document.getElementById('recipe-create-form');
   if(!formEl) return;
@@ -4175,23 +4246,25 @@ function addFoodToRecipe(target){
   }
 
   if(target === 'new'){
-    // Start a new draft and open the Recipes subpage with the form pre-populated
+    // Set the draft FIRST with this ingredient, then navigate to the form.
+    // We also set a flag so showCreateRecipe preserves our ingredient.
     _recipeDraft = {name:'', ingredients:[ingredient]};
+    window._recipePreserveDraft = true;
     // Navigate to More → Recipes, open the create form
     showPage('more', document.querySelector('.nav-btn:last-child'));
-    // Wait a tick for the page to render, then open the recipe flow
     setTimeout(function(){
       showSubPage('recipes');
       setTimeout(function(){
         showCreateRecipe();
-        // showCreateRecipe resets _recipeDraft — put ingredient back
-        _recipeDraft = {name:'', ingredients:[ingredient]};
+        // After showCreateRecipe rendered the form, refresh the list so the
+        // pre-loaded ingredient shows up
         refreshRecipeUI();
         var nameEl = document.getElementById('rc-name');
         if(nameEl) nameEl.focus();
-      }, 100);
-    }, 100);
-    showToast('✓ Name your new recipe');
+        window._recipePreserveDraft = false;
+      }, 120);
+    }, 120);
+    showToast('✓ Added to new recipe · name it');
     window._pendingIngredientFood = null;
     return;
   }
@@ -4230,6 +4303,11 @@ function addFoodToRecipe(target){
   saveRecipes(recipes);
   window._pendingIngredientFood = null;
   showToast('✓ '+ingredient.name+' added to '+r.name+' · now '+Math.round(r.cal)+' kcal');
+  // If the Recipes page is currently rendered, refresh it so the user sees the update
+  var subPageEl = document.getElementById('sub-page-content');
+  if(subPageEl && subPageEl.innerHTML.indexOf('My Recipes') !== -1){
+    renderRecipesSubPage(subPageEl);
+  }
 }
 </script>
 
@@ -4577,7 +4655,7 @@ function renderCalWeek(el){
     +'<button onclick="changeCalWeek(1)" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">›</button></div>';
   for(var i=0;i<7;i++){
     var d=new Date(ws); d.setDate(ws.getDate()+i);
-    var ds=d.toISOString().split('T')[0],ev=getCalEvents(ds),isToday=d.toDateString()===new Date().toDateString();
+    var ds=localDateKey(d),ev=getCalEvents(ds),isToday=d.toDateString()===new Date().toDateString();
     var pct=ev.cal>0?Math.min(100,(ev.cal/goals.calories)*100):0,bc=ev.cal>goals.calories?'#ff6b6b':ev.cal>0?'var(--fiber)':'var(--bg5)';
     html+='<div onclick="calDayClick(\''+ds+'\')" style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg3);border:1px solid '+(isToday?'var(--accent)':'var(--border)')+';border-radius:12px;margin:0 16px 6px;cursor:pointer;">'
       +'<div style="width:44px;text-align:center;"><div style="font-size:11px;color:var(--muted);">'+d.toLocaleDateString('en-US',{weekday:'short'})+'</div>'
@@ -4590,7 +4668,7 @@ function renderCalWeek(el){
   html+='<div id="cal-day-detail" style="margin:10px 16px 0;"></div>'; el.innerHTML=html;
 }
 function renderCalDay(el){
-  var ds=calDate.toISOString().split('T')[0],ev=getCalEvents(ds),isToday=calDate.toDateString()===new Date().toDateString();
+  var ds=localDateKey(calDate),ev=getCalEvents(ds),isToday=calDate.toDateString()===new Date().toDateString();
   var html='<div style="display:flex;align-items:center;justify-content:space-between;padding:0 16px;margin-bottom:10px;">'
     +'<button onclick="changeCalDay(-1)" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">‹</button>'
     +'<div style="font-size:15px;font-weight:700;">'+(isToday?'Today · ':'')+calDate.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})+'</div>'
