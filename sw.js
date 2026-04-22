@@ -12,7 +12,7 @@
 //   • Skip-waiting + clients.claim() so updates activate immediately
 // ══════════════════════════════════════════════════════════════════════
 
-var APP_VERSION = 'genesis-2026-04-22-v8';
+var APP_VERSION = 'genesis-2026-04-22-v9';
 var CACHE_NAME = 'genesis-' + APP_VERSION;
 
 // Minimal files the app needs offline. Index is cached dynamically on first load.

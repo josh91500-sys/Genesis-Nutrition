@@ -1,0 +1,30 @@
+{
+  "name": "Genesis Nutrition",
+  "short_name": "Genesis",
+  "description": "Nutrition and fitness tracking. Begin your journey.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1419",
+  "theme_color": "#6357ff",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/genesisnutritionicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/genesisnutritionicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/genesisnutritionicon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
