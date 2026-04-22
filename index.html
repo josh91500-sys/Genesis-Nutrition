@@ -5309,10 +5309,19 @@ function renderHealthSubPage(el){
     return;
   }
   var profile=JSON.parse(localStorage.getItem('gn_health_profile')||'null');
+  // Default: update goals when user generates a plan (matches previous behavior).
+  // Persists across sessions so users can set-and-forget their preference.
+  var updateGoalsPref = localStorage.getItem('gn_health_update_goals');
+  if(updateGoalsPref === null) updateGoalsPref = 'true';
   el.innerHTML='<div class="card"><div class="card-title">🩺 Health AI</div>'
     +'<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Enter conditions, medications, and goals. AI creates a personalized nutrition + workout plan with clinical reasoning.</div>'
     +'<div class="input-group"><label class="input-label">Your Health Profile</label>'
     +'<textarea id="health-input" rows="5" placeholder="e.g. High blood pressure, taking lisinopril, want to lose weight">'+(profile&&profile.rawText?profile.rawText:'')+'</textarea></div>'
+    +'<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg4);border:1px solid var(--border);border-radius:var(--r1);margin-bottom:10px;cursor:pointer;">'
+    +'<input type="checkbox" id="health-update-goals" '+(updateGoalsPref==='true'?'checked':'')+' onchange="localStorage.setItem(\'gn_health_update_goals\', this.checked?\'true\':\'false\')" style="width:18px;height:18px;accent-color:var(--accent);">'
+    +'<div style="flex:1;"><div style="font-size:13px;font-weight:600;">Update my goals from this plan</div>'
+    +'<div style="font-size:11px;color:var(--muted);">Turn off to just get recommendations without changing your calorie/macro targets.</div></div>'
+    +'</label>'
     +'<button class="btn-primary" onclick="generateHealthRecs()" id="health-btn">🤖 Generate Full Health Plan</button>'
     +'<div id="health-status" class="ai-status"></div>'
     +'<div id="health-result">'+(profile&&profile.renderedHTML?profile.renderedHTML:'')+'</div>'
@@ -5355,7 +5364,11 @@ async function generateHealthRecs(){
     var data=await res.json(),text=(data.content&&data.content[0]&&data.content[0].text)||'';
     var match=text.match(/\{[\s\S]*\}/); if(!match) throw new Error('No JSON');
     var result=JSON.parse(match[0]);
-    if(result.nutrition_goals){
+    // Only update goals if the user's checkbox is checked. Lets users get
+    // recommendations without overwriting their existing targets.
+    var updateGoalsEl = document.getElementById('health-update-goals');
+    var shouldUpdateGoals = updateGoalsEl ? updateGoalsEl.checked : true;
+    if(result.nutrition_goals && shouldUpdateGoals){
       var g=getGoals();
       Object.entries(result.nutrition_goals).forEach(function(kv){ var v=kv[1]&&typeof kv[1]==='object'?kv[1].value:kv[1]; if(v>0) g[kv[0]]=v; });
       localStorage.setItem('gn_goals',JSON.stringify(g));
@@ -5363,7 +5376,7 @@ async function generateHealthRecs(){
     var html=buildHealthResultHTML(result);
     localStorage.setItem('gn_health_profile',JSON.stringify({rawText:input,summary:result.summary,renderedHTML:html}));
     status.textContent=''; document.getElementById('health-result').innerHTML=html;
-    showToast('✓ Goals updated!');
+    showToast(shouldUpdateGoals ? '✓ Plan generated & goals updated!' : '✓ Plan generated (goals unchanged)');
   } catch(e){ status.textContent='✗ Failed. Try again.'; }
   btn.disabled=false; btn.innerHTML='🤖 Generate Full Health Plan';
 }
@@ -9213,3 +9226,5 @@ if('serviceWorker' in navigator){
 
 </body>
 </html>
+
+  moda
