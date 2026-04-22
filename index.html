@@ -531,6 +531,11 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
           <div class="more-label">Recipes</div>
           <div class="more-sub">Save custom meals</div>
         </div>
+        <div class="more-item" onclick="showSubPage('friends')">
+          <div class="more-icon">👥</div>
+          <div class="more-label">Friends</div>
+          <div class="more-sub">Connect & share</div>
+        </div>
         <div class="more-item" onclick="openSettings()">
           <div class="more-icon">⚙️</div>
           <div class="more-label">Settings</div>
@@ -718,6 +723,11 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
         <input type="time" id="ef-time" style="flex:1;">
         <button onclick="var t=new Date();document.getElementById('ef-time').value=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');" style="background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:var(--r1);padding:0 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">Now</button>
       </div>
+    </div>
+    <div id="ef-recipe-link" style="display:none;margin-bottom:10px;padding:10px;background:rgba(99,87,255,.1);border:1px solid var(--accent);border-radius:var(--r1);">
+      <div style="font-size:12px;color:var(--accent2);font-weight:700;margin-bottom:6px;">🍳 This meal has ingredients</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.4;">Edit the ingredients (add/remove items or change quantities) in the recipe editor. You'll be asked whether to apply changes to just this entry or to the saved recipe.</div>
+      <button onclick="openRecipeEditorFromLog()" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:10px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">✏️ Edit ingredients</button>
     </div>
     <button class="btn-primary" onclick="saveEditFood()">Save Changes</button>
     <button class="btn-secondary" style="margin-top:8px;background:#ff6b6b22;color:#ff9090;border-color:#ff6b6b44;" onclick="deleteEditFood()">&#x1F5D1; Delete Food</button>
@@ -3043,6 +3053,11 @@ function openEditFood(meal,idx){
       timeEl.value = '';
     }
   }
+  // Show the "Edit ingredients" panel only when this entry is linked to a recipe
+  var recipeLinkEl = document.getElementById('ef-recipe-link');
+  if(recipeLinkEl){
+    recipeLinkEl.style.display = (food.recipe_idx !== undefined && food.recipe_idx !== null) ? 'block' : 'none';
+  }
   document.getElementById('edit-food-modal').classList.add('open');
 }
 function closeEditFood(){
@@ -3625,7 +3640,7 @@ function showSubPage(name){
   if(name==='weight'){ showWeightTracker(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   if(name==='health'){ renderHealthSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   if(name==='supplements'){ renderSupplementsSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
-  var pages={planner:renderPlannerSubPage,goals:renderGoalsSubPage,recipes:renderRecipesSubPage};
+  var pages={planner:renderPlannerSubPage,goals:renderGoalsSubPage,recipes:renderRecipesSubPage,friends:renderFriendsSubPage};
   if(pages[name]) pages[name](el);
   el.scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -3690,9 +3705,18 @@ function renderRecipesSubPage(el){
   var html = '<div class="card"><div class="card-title">👨‍🍳 My Recipes</div>'
     + '<button class="btn-primary" style="margin-bottom:12px;" onclick="showCreateRecipe()">+ Create Recipe</button>';
   if(recipes.length){
-    html += recipes.map(function(r,i){
+    // Build a list of [recipe, originalIdx] sorted newest-first by `created` timestamp.
+    // We keep the ORIGINAL index for all click handlers so storage operations work correctly.
+    var sorted = recipes.map(function(r, origIdx){ return {r:r, i:origIdx}; });
+    sorted.sort(function(a,b){ return (b.r.created||0) - (a.r.created||0); });
+    html += sorted.map(function(pair){
+      var r = pair.r, i = pair.i;
       var ingCount = (r.ingredients && r.ingredients.length) || 0;
       var isEmpty = ingCount === 0 && !(r.cal || r.protein || r.carbs || r.fat);
+      var isHealthAI = r.source === 'Health AI';
+      var sourceChip = isHealthAI
+        ? '<span style="display:inline-block;background:rgba(99,87,255,.2);color:var(--accent2);border-radius:99px;padding:2px 8px;font-size:10px;font-weight:700;margin-left:6px;vertical-align:middle;">🩺 Health AI</span>'
+        : '';
       var subtitle;
       if(isEmpty){
         subtitle = '<span style="color:var(--accent2);">Empty — tap 🍳 on any food to fill in</span>';
@@ -3703,7 +3727,7 @@ function renderRecipesSubPage(el){
       return '<div style="padding:12px 0;border-bottom:1px solid var(--border);">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
         + '<div style="flex:1;min-width:0;">'
-        + '<div style="font-size:14px;font-weight:600;">'+r.name+'</div>'
+        + '<div style="font-size:14px;font-weight:600;">'+r.name+sourceChip+'</div>'
         + '<div style="font-size:11px;color:var(--muted);">'+subtitle+'</div>'
         + '</div>'
         + '<div style="display:flex;gap:6px;flex-shrink:0;">'
@@ -4051,6 +4075,26 @@ function saveRecipe(){
 
   if(_recipeEditIdx !== null){
     // UPDATE EXISTING RECIPE
+    // Special path: if we opened this editor from a log entry, ask the user
+    // whether changes should apply to just that log entry or save to the recipe.
+    if(window._recipeEditingForLogEntry){
+      var entryInfo = window._recipeEditingForLogEntry;
+      var choice = confirmRecipeEditScope();
+      if(choice === 'cancel') return;
+      if(choice === 'entry-only'){
+        // Apply totals to the log entry only; don't modify the recipe template
+        applyRecipeEditToLogEntry(entryInfo, _recipeDraft.ingredients, ingTotals, name);
+        _recipeDraft = null;
+        _recipeEditIdx = null;
+        window._recipeEditingForLogEntry = null;
+        showToast('✓ Updated this log entry only');
+        renderRecipesSubPage(document.getElementById('sub-page-content'));
+        return;
+      }
+      // 'both' — update recipe AND the log entry
+      applyRecipeEditToLogEntry(entryInfo, _recipeDraft.ingredients, ingTotals, name);
+      window._recipeEditingForLogEntry = null;
+    }
     var r = recipes[_recipeEditIdx];
     if(!r){ showToast('Recipe not found'); _recipeEditIdx = null; return; }
     r.name = name;
@@ -4079,6 +4123,72 @@ function saveRecipe(){
   var emptyNote = newRecipe.ingredients.length ? '' : ' (empty — add ingredients from barcode/search anytime)';
   showToast('✓ Recipe saved!'+emptyNote);
   renderRecipesSubPage(document.getElementById('sub-page-content'));
+}
+
+// Ask the user whether an edit should touch only the current log entry, or
+// propagate to the saved recipe template (and therefore future logs of it).
+// Returns 'entry-only' | 'both' | 'cancel'.
+function confirmRecipeEditScope(){
+  // Use a three-way confirm: OK = save to recipe (and log), Cancel = abort
+  // Then a follow-up confirm for "only this entry" path.
+  var msg = 'Save these changes to the recipe for future use?\n\n'
+    + 'OK — Update the recipe AND this log entry\n'
+    + 'Cancel — Ask about entry-only update';
+  if(confirm(msg)) return 'both';
+  if(confirm('Apply changes to just this log entry (recipe stays unchanged)?')) return 'entry-only';
+  return 'cancel';
+}
+
+// Given a log entry reference and edited ingredients + totals, update ONLY
+// the log entry (not the recipe). Used by the "just this entry" path.
+function applyRecipeEditToLogEntry(entryInfo, ingredients, totals, newName){
+  var targetOffset = entryInfo.dayOffset;
+  var log = loadDayLog(targetOffset);
+  // Find the entry by its stored id (safer than by index which can shift)
+  var found = null, foundIdx = -1;
+  for(var i=0; i<log.foods.length; i++){
+    if(log.foods[i].id === entryInfo.foodId){ found = log.foods[i]; foundIdx = i; break; }
+  }
+  if(!found){ showToast('Original log entry not found — changes not applied'); return; }
+  // Update fields
+  found.name = newName || found.name;
+  found.recipe_ingredients = ingredients;
+  found.serving = (ingredients||[]).reduce(function(a,ing){ return a + (ing.qtyG||0); }, 0) || found.serving;
+  ALL_NUTRIENT_KEYS.forEach(function(k){
+    found[k] = (totals[k]||0);
+  });
+  log.foods[foundIdx] = found;
+  saveDayLog(log, targetOffset);
+  if(targetOffset === dayOffset) renderNutrition();
+}
+
+// Called from the Edit Food modal's "Edit ingredients" button.
+// Closes Edit Food, navigates to Recipes, opens the recipe in edit mode with
+// a flag so saveRecipe knows to prompt about log-entry scope.
+function openRecipeEditorFromLog(){
+  if(_editFoodIdx === null) return;
+  var log = loadDayLog(dayOffset);
+  var food = log.foods[_editFoodIdx];
+  if(!food || food.recipe_idx === undefined || food.recipe_idx === null){
+    showToast('No recipe linked to this entry');
+    return;
+  }
+  // Stash context so saveRecipe knows which log entry to update
+  window._recipeEditingForLogEntry = {
+    dayOffset: dayOffset,
+    foodId: food.id,
+    recipeIdx: food.recipe_idx
+  };
+  // Close the edit food modal
+  closeEditFood();
+  // Navigate to More → Recipes, then open the recipe in edit mode
+  showPage('more', document.querySelector('.nav-btn:last-child'));
+  setTimeout(function(){
+    showSubPage('recipes');
+    setTimeout(function(){
+      editRecipe(food.recipe_idx);
+    }, 120);
+  }, 120);
 }
 
 function saveManualRecipe(){
@@ -4344,7 +4454,16 @@ function renderHealthSubPage(el){
     +'<button class="btn-primary" onclick="generateHealthRecs()" id="health-btn">🤖 Generate Full Health Plan</button>'
     +'<div id="health-status" class="ai-status"></div>'
     +'<div id="health-result">'+(profile&&profile.renderedHTML?profile.renderedHTML:'')+'</div>'
-    +'<div style="margin-top:12px;font-size:11px;color:var(--muted);">⚠️ Not medical advice. Consult your doctor.</div></div>';
+    +'<div style="margin-top:12px;font-size:11px;color:var(--muted);">⚠️ Not medical advice. Consult your doctor.</div></div>'
+    +'<div class="card" style="margin-top:12px;"><div class="card-title">🍽 More Meals</div>'
+    +'<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Generate meal ideas that fit your goals. Each meal uses CNF ingredients where possible for accurate nutrients.</div>'
+    +'<div style="display:flex;gap:8px;">'
+    +'<button class="btn-secondary" style="flex:1;background:rgba(245,158,11,.1);border-color:var(--sugar);color:var(--sugar);" onclick="generateMoreMeals(\'breakfast\')" id="mm-bfast-btn">☀️ Breakfast</button>'
+    +'<button class="btn-secondary" style="flex:1;background:rgba(45,212,160,.1);border-color:var(--fiber);color:var(--fiber);" onclick="generateMoreMeals(\'lunchdinner\')" id="mm-lnch-btn">🍽 Lunch / Dinner</button>'
+    +'</div>'
+    +'<div id="mm-status" style="margin-top:10px;font-size:12px;color:var(--muted);"></div>'
+    +'<div id="mm-results" style="margin-top:10px;"></div>'
+    +'</div>';
 }
 
 async function generateHealthRecs(){
@@ -4453,6 +4572,369 @@ function buildHealthResultHTML(r){
   }
   html+='<div style="margin:10px 0;padding:12px;background:var(--bg4);border-radius:10px;font-size:11px;color:var(--muted);">⚠️ For informational purposes only. Always consult your doctor before changing diet or exercise.</div>';
   return html;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// MORE MEALS — generate meal options with CNF-sourced ingredients
+// ══════════════════════════════════════════════════════════════════════
+
+// State: meals generated so far in the current batch run.
+// Reset when switching between breakfast and lunch/dinner.
+var _moreMealsState = {
+  category: null,      // 'breakfast' | 'lunchdinner'
+  meals: [],           // generated meal objects with ingredient lists
+  totalShown: 0
+};
+
+async function generateMoreMeals(category){
+  // Fresh start when category changes; otherwise append
+  if(_moreMealsState.category !== category){
+    _moreMealsState = {category: category, meals: [], totalShown: 0};
+  }
+  var statusEl = document.getElementById('mm-status');
+  var resultsEl = document.getElementById('mm-results');
+  var btnBfast = document.getElementById('mm-bfast-btn');
+  var btnLnch = document.getElementById('mm-lnch-btn');
+  if(btnBfast) btnBfast.disabled = true;
+  if(btnLnch) btnLnch.disabled = true;
+
+  // Build context from the Health AI input (already saved, pre-filled on page)
+  var healthInput = '';
+  try {
+    var hInputEl = document.getElementById('health-input');
+    if(hInputEl) healthInput = (hInputEl.value||'').trim();
+    if(!healthInput){
+      var profile = JSON.parse(localStorage.getItem('gn_health_profile')||'null');
+      if(profile && profile.rawText) healthInput = profile.rawText;
+    }
+  } catch(e){}
+
+  // Figure out calorie target per meal from user's goals
+  var goals = (typeof getGoals === 'function') ? getGoals() : {};
+  var dailyCalGoal = goals.calories || 2000;
+  var perMealCalTarget;
+  if(category === 'breakfast'){
+    perMealCalTarget = Math.round(dailyCalGoal * 0.25);  // 25% of daily
+  } else {
+    perMealCalTarget = Math.round(dailyCalGoal * 0.35);  // 35% of daily for lunch/dinner
+  }
+
+  // Names of already-generated meals so AI doesn't repeat
+  var existingNames = _moreMealsState.meals.map(function(m){ return m.name; });
+
+  statusEl.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Generating 10 ' + (category==='breakfast'?'breakfast':'lunch/dinner') + ' options...</div>';
+
+  var categoryLabel = category==='breakfast' ? 'breakfast' : 'lunch or dinner';
+  var prompt = 'You are a nutrition expert generating realistic ' + categoryLabel + ' meal ideas.\n\n'
+    + (healthInput ? 'User health context: ' + healthInput + '\n\n' : '')
+    + 'Target: approximately ' + perMealCalTarget + ' kcal per meal (range ' + Math.round(perMealCalTarget*0.75) + '-' + Math.round(perMealCalTarget*1.25) + ' kcal is fine).\n\n'
+    + 'Generate exactly 10 ' + categoryLabel + ' meals. Each meal should have 3-6 ingredients listed separately (protein, carbs, vegetables, fats, sauces, etc.). Use common whole foods when possible — this helps us look up accurate nutrition data.\n\n'
+    + (existingNames.length ? 'DO NOT repeat any of these already-generated meals: ' + existingNames.join(', ') + '\n\n' : '')
+    + 'Return ONLY a JSON array with this exact shape:\n'
+    + '[{"name":"descriptive meal name","description":"1-sentence description","ingredients":[{"name":"common food name","qty_g":100},{"name":"another food","qty_g":50}]}]\n\n'
+    + 'Ingredient names should be generic enough to find in USDA/CNF databases (e.g. "chicken breast, cooked" not "grilled teriyaki chicken"; "teriyaki sauce" as a separate ingredient). qty_g is grams. Include cooking oil, sauces, and seasonings as separate ingredients when they contribute meaningful calories/sodium.';
+
+  var mealStubs;
+  try {
+    var res = await callClaude({model:'claude-sonnet-4-20250514', max_tokens:4000, messages:[{role:'user', content:prompt}]});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data = await res.json();
+    var text = (data.content && data.content[0] && data.content[0].text) || '';
+    var match = text.match(/\[[\s\S]*\]/);
+    if(!match) throw new Error('No JSON array');
+    mealStubs = JSON.parse(match[0]);
+    if(!mealStubs.length) throw new Error('Empty response');
+  } catch(e){
+    statusEl.innerHTML = '<span style="color:#ff9090;">✗ Generation failed. Try again in a moment.</span>';
+    if(btnBfast) btnBfast.disabled = false;
+    if(btnLnch) btnLnch.disabled = false;
+    return;
+  }
+
+  // Now resolve each ingredient through CNF, with AI fallback
+  var totalIngredients = mealStubs.reduce(function(a,m){ return a + (m.ingredients||[]).length; }, 0);
+  var doneCount = 0;
+  statusEl.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Resolving ingredients: 0/' + totalIngredients + '</div>';
+
+  // Ensure CNF food list is loaded
+  if(!_cnfFoodList){
+    try { await fetchCnfFoodList(); } catch(e){ /* CNF unavailable, everything will AI-fallback */ }
+  }
+
+  // Process meals sequentially to avoid hammering CNF API too hard.
+  // Within each meal, process ingredients in parallel (up to 5 concurrent).
+  for(var mi=0; mi<mealStubs.length; mi++){
+    var stub = mealStubs[mi];
+    stub.ingredients = stub.ingredients || [];
+    var resolved = await resolveIngredientsBatch(stub.ingredients, function(){
+      doneCount++;
+      statusEl.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Resolving ingredients: ' + doneCount + '/' + totalIngredients + '</div>';
+    });
+    stub.resolved = resolved;
+    stub.totals = sumResolvedIngredients(resolved);
+  }
+
+  // Append to state
+  _moreMealsState.meals = _moreMealsState.meals.concat(mealStubs);
+  _moreMealsState.totalShown = _moreMealsState.meals.length;
+
+  statusEl.textContent = '';
+  renderMoreMealsResults();
+  if(btnBfast) btnBfast.disabled = false;
+  if(btnLnch) btnLnch.disabled = false;
+}
+
+// Look up each ingredient in CNF; fall back to AI if no match.
+// Returns an array of resolved ingredients with per-gram nutrients + source info.
+async function resolveIngredientsBatch(ingredients, onProgress){
+  var results = new Array(ingredients.length);
+  var concurrent = 5;
+  for(var i=0; i<ingredients.length; i+=concurrent){
+    var chunk = ingredients.slice(i, i+concurrent);
+    var chunkResults = await Promise.all(chunk.map(function(ing, j){
+      return resolveOneIngredient(ing).then(function(r){ if(onProgress) onProgress(); return r; });
+    }));
+    chunkResults.forEach(function(r, j){ results[i+j] = r; });
+  }
+  return results;
+}
+
+async function resolveOneIngredient(ing){
+  var name = (ing && ing.name) || 'unknown ingredient';
+  var qtyG = parseFloat(ing && ing.qty_g) || 100;
+  // Try CNF first
+  try {
+    var matches = (typeof searchCnfForQuery === 'function') ? searchCnfForQuery(name) : [];
+    if(matches && matches.length){
+      var cnfFood = matches[0];
+      var nutrientData = await fetchCnfNutrients(cnfFood.code);
+      if(nutrientData){
+        // Build per-gram multiplier (CNF data is per 100g)
+        var perGram = {};
+        ALL_NUTRIENT_KEYS.forEach(function(k){
+          perGram[k] = (nutrientData[k] || 0) / 100;
+        });
+        return {
+          name: name,
+          qtyG: qtyG,
+          cnfMatch: cnfFood.desc,
+          source: 'CNF',
+          perGram: perGram,
+          totals: scalePerGram(perGram, qtyG)
+        };
+      }
+    }
+  } catch(e){ /* fall through to AI */ }
+
+  // AI fallback — ask Claude for per-100g values for this specific ingredient
+  try {
+    var prompt = 'Per-100g nutrition for: "'+name+'".\nReturn ONLY JSON:\n'
+      + getAINutrientSchemaJSON({includeName:true}) + '\n'
+      + 'All values per 100g. ' + getAINutrientUnitsNote();
+    var res = await callClaude({model:'claude-sonnet-4-20250514', max_tokens:800, messages:[{role:'user', content:prompt}]});
+    if(res.ok){
+      var data = await res.json();
+      var text = (data.content && data.content[0] && data.content[0].text) || '';
+      var m = text.match(/\{[\s\S]*\}/);
+      if(m){
+        var parsed = JSON.parse(m[0]);
+        var perGram = {};
+        ALL_NUTRIENT_KEYS.forEach(function(k){
+          perGram[k] = (parsed[k] || 0) / 100;
+        });
+        return {
+          name: name,
+          qtyG: qtyG,
+          source: 'AI',
+          perGram: perGram,
+          totals: scalePerGram(perGram, qtyG)
+        };
+      }
+    }
+  } catch(e){}
+
+  // Everything failed — return zeros so meal renders (but flagged)
+  var zeros = {};
+  ALL_NUTRIENT_KEYS.forEach(function(k){ zeros[k] = 0; });
+  return {name:name, qtyG:qtyG, source:'unknown', perGram:zeros, totals:zeros};
+}
+
+function scalePerGram(perGram, qtyG){
+  var out = {};
+  ALL_NUTRIENT_KEYS.forEach(function(k){
+    out[k] = (perGram[k] || 0) * qtyG;
+  });
+  return out;
+}
+
+function sumResolvedIngredients(resolved){
+  var totals = {};
+  ALL_NUTRIENT_KEYS.forEach(function(k){ totals[k] = 0; });
+  (resolved||[]).forEach(function(r){
+    if(!r || !r.totals) return;
+    ALL_NUTRIENT_KEYS.forEach(function(k){
+      totals[k] += r.totals[k] || 0;
+    });
+  });
+  return totals;
+}
+
+function renderMoreMealsResults(){
+  var el = document.getElementById('mm-results');
+  if(!el) return;
+  if(!_moreMealsState.meals.length){ el.innerHTML = ''; return; }
+  window._moreMealsCache = _moreMealsState.meals;
+  var cards = _moreMealsState.meals.map(function(m, idx){
+    var t = m.totals || {};
+    var cnfCount = (m.resolved||[]).filter(function(r){ return r.source==='CNF'; }).length;
+    var totalIng = (m.resolved||[]).length;
+    var sourceChip = cnfCount === totalIng
+      ? '<span class="verified-badge" style="background:rgba(255,107,107,.15);color:#ff9090;font-size:10px;">🇨🇦 '+cnfCount+'/'+totalIng+' CNF</span>'
+      : cnfCount > 0
+        ? '<span class="verified-badge" style="background:rgba(99,87,255,.15);color:var(--accent2);font-size:10px;">🇨🇦 '+cnfCount+'/'+totalIng+' CNF · 🤖 '+(totalIng-cnfCount)+' AI</span>'
+        : '<span class="ai-badge" style="font-size:10px;">🤖 AI est.</span>';
+    var ingredientList = (m.resolved||[]).map(function(r){
+      var sourceIcon = r.source==='CNF' ? '🇨🇦' : r.source==='AI' ? '🤖' : '?';
+      var displayName = r.cnfMatch || r.name;
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:11px;color:var(--muted);">'
+        + '<div style="flex:1;min-width:0;"><span>'+sourceIcon+' '+displayName+'</span></div>'
+        + '<div style="flex-shrink:0;white-space:nowrap;">'+Math.round(r.qtyG)+'g · '+Math.round(r.totals.cal||0)+' kcal</div>'
+        + '</div>';
+    }).join('');
+    return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;margin-bottom:10px;">'
+      + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px;">'
+      + '<div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:700;margin-bottom:2px;">'+m.name+'</div>'
+      + (m.description?'<div style="font-size:12px;color:var(--muted);line-height:1.4;">'+m.description+'</div>':'')+'</div>'
+      + '<div>'+sourceChip+'</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">'
+      + '<span class="fmacro">⚡ '+Math.round(t.cal||0)+' kcal</span>'
+      + '<span class="fmacro" style="color:var(--protein)">P '+Math.round(t.protein||0)+'g</span>'
+      + '<span class="fmacro" style="color:var(--carbs)">C '+Math.round(t.carbs||0)+'g</span>'
+      + '<span class="fmacro" style="color:var(--fat)">F '+Math.round(t.fat||0)+'g</span>'
+      + (t.fiber>0?'<span class="fmacro" style="color:var(--fiber)">Fi '+Math.round(t.fiber||0)+'g</span>':'')
+      + '</div>'
+      + '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:11px;color:var(--accent2);font-weight:600;">View '+totalIng+' ingredients</summary>'
+      + '<div style="margin-top:6px;padding:8px 10px;background:var(--bg4);border-radius:8px;">'+ingredientList+'</div>'
+      + '</details>'
+      + '<button class="btn-primary" style="margin-top:10px;width:100%;" onclick="logMoreMeal('+idx+')">＋ Log this meal</button>'
+      + '</div>';
+  }).join('');
+  var showMore = '<button class="btn-secondary" style="width:100%;margin-top:8px;" onclick="generateMoreMeals(\''+_moreMealsState.category+'\')">＋ Show 10 more</button>';
+  el.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">'+_moreMealsState.meals.length+' meal ideas</div>' + cards + showMore;
+}
+
+// Log a generated meal: prompts for meal slot + time, then adds as a single entry
+function logMoreMeal(idx){
+  var meal = window._moreMealsCache && window._moreMealsCache[idx];
+  if(!meal){ showToast('Meal expired'); return; }
+  // Build a simple modal to pick meal slot and time
+  var existing = document.getElementById('log-meal-slot-modal');
+  if(existing) existing.remove();
+  var now = new Date();
+  var hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  var modal = document.createElement('div');
+  modal.className = 'modal-backdrop open';
+  modal.id = 'log-meal-slot-modal';
+  modal.innerHTML = '<div class="modal-sheet">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">Log "'+meal.name+'"</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">'+Math.round((meal.totals||{}).cal||0)+' kcal · '+(meal.resolved||[]).length+' ingredients</div>'
+    + '<div class="input-group"><label class="input-label">Meal</label>'
+    + '<select id="mm-log-meal" style="width:100%;"><option>Breakfast</option><option>Lunch</option><option>Dinner</option><option>Snacks</option></select></div>'
+    + '<div class="input-group"><label class="input-label">Time Eaten</label>'
+    + '<input type="time" id="mm-log-time" value="'+hhmm+'" style="width:100%;"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;">'
+    + '<button class="btn-primary" style="flex:1;" onclick="confirmLogMoreMeal('+idx+')">＋ Add to Log</button>'
+    + '<button class="btn-secondary" style="flex:1;" onclick="document.getElementById(\'log-meal-slot-modal\').remove()">Cancel</button>'
+    + '</div></div>';
+  document.body.appendChild(modal);
+  // Default slot based on category + current time
+  var sel = document.getElementById('mm-log-meal');
+  if(sel){
+    if(_moreMealsState.category === 'breakfast') sel.value = 'Breakfast';
+    else sel.value = now.getHours() < 15 ? 'Lunch' : 'Dinner';
+  }
+}
+
+function confirmLogMoreMeal(idx){
+  var meal = window._moreMealsCache && window._moreMealsCache[idx];
+  if(!meal){ showToast('Meal expired'); return; }
+  var mealSlot = document.getElementById('mm-log-meal').value;
+  var timeVal = document.getElementById('mm-log-time').value || '';
+  // Convert time HH:MM into today's timestamp
+  var now = new Date();
+  if(timeVal && /^\d{2}:\d{2}$/.test(timeVal)){
+    var parts = timeVal.split(':');
+    now.setHours(parseInt(parts[0]), parseInt(parts[1]), 0, 0);
+  }
+  var eatenAt = now.getTime();
+  // Also save this meal as a Recipe so user can edit ingredients later and reuse
+  var recipe = buildRecipeFromHealthAIMeal(meal);
+  var recipes = loadRecipes();
+  recipes.push(recipe);
+  var recipeIdx = recipes.length - 1;
+  saveRecipes(recipes);
+
+  // Build log entry — mark as CNF-backed; carry recipe_idx so the log row can
+  // open the recipe editor, and carry recipe_ingredients so expand/display works.
+  var cnfCount = (meal.resolved||[]).filter(function(r){ return r.source==='CNF'; }).length;
+  var totalIng = (meal.resolved||[]).length;
+  var allCnf = cnfCount === totalIng && totalIng > 0;
+  var entry = {
+    meal: mealSlot,
+    name: meal.name,
+    serving: (meal.resolved||[]).reduce(function(a,r){ return a + (r.qtyG||0); }, 0) || 100,
+    verified: allCnf,
+    ai_sourced: !allCnf,
+    cnf_sourced: allCnf,
+    source: allCnf ? '🇨🇦 CNF (Health AI meal)' : '🇨🇦 CNF + 🤖 AI (Health AI meal)',
+    health_ai_meal: true,
+    // Link to the Recipe just created so user can edit ingredients later
+    recipe_idx: recipeIdx,
+    recipe_ingredients: recipe.ingredients,
+    eaten_at: eatenAt,
+    id: Date.now()
+  };
+  ALL_NUTRIENT_KEYS.forEach(function(k){ entry[k] = (meal.totals && meal.totals[k]) || 0; });
+  var log = loadDayLog(dayOffset);
+  log.foods.push(entry);
+  saveDayLog(log, dayOffset);
+  if(dayOffset === 0) localStorage.setItem('gn_last_eaten_at', eatenAt);
+  var sheet = document.getElementById('log-meal-slot-modal');
+  if(sheet) sheet.remove();
+  renderNutrition();
+  showToast('✓ '+meal.name+' added to '+mealSlot+' · saved as recipe');
+}
+
+// Convert a resolved Health AI meal (with CNF/AI-resolved ingredients and
+// per-gram data) into a Recipe shape that slots into our existing recipe system.
+function buildRecipeFromHealthAIMeal(meal){
+  var ingredients = (meal.resolved||[]).map(function(r){
+    var perHundred = {};
+    RECIPE_NUTRIENT_KEYS.forEach(function(k){
+      // r.perGram is per-1g, so multiply by 100 to get per-100g
+      perHundred[k] = (r.perGram && r.perGram[k] ? r.perGram[k] : 0) * 100;
+    });
+    return {
+      name: r.cnfMatch || r.name,
+      qtyG: r.qtyG,
+      perHundred: perHundred,
+      source: r.source    // 'CNF' | 'AI' | 'unknown' — for info display
+    };
+  });
+  var recipe = {
+    name: meal.name,
+    ingredients: ingredients,
+    created: Date.now(),
+    source: 'Health AI'   // flag so we can visually tag in recipe list
+  };
+  RECIPE_NUTRIENT_KEYS.forEach(function(k){
+    recipe[k] = (meal.totals && meal.totals[k]) || 0;
+  });
+  return recipe;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -6119,12 +6601,9 @@ function cardioDeleteWorkout(id){
 </script>
 
 <script>
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js')
-    .then(reg=>console.log('SW registered:', reg.scope))
-    .catch(err=>console.log('SW registration failed:', err));
-}
-</script>
-
-</body>
-</html>
+// ══════════════════════════════════════════════════════════════════════
+// SOCIAL / FRIENDS MODULE
+//
+// Design principles (from our design conversation, locked in):
+// • Snapshot-based sharing: a user's `public_profiles/{uid}` doc is the ONLY
+//   thing friends can read. Private logs/health data
