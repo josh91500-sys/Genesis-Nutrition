@@ -3637,11 +3637,27 @@ function showSubPage(name){
     return;
   }
   var el=document.getElementById('sub-page-content');
+  if(!el){ console.error('sub-page-content element missing'); return; }
   if(name==='weight'){ showWeightTracker(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   if(name==='health'){ renderHealthSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   if(name==='supplements'){ renderSupplementsSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
-  var pages={planner:renderPlannerSubPage,goals:renderGoalsSubPage,recipes:renderRecipesSubPage,friends:renderFriendsSubPage};
-  if(pages[name]) pages[name](el);
+  // Resolve handler via window so undefined functions fail gracefully
+  // (avoids ReferenceError if a page module hasn't loaded yet)
+  var handlers = {
+    planner: typeof renderPlannerSubPage === 'function' ? renderPlannerSubPage : null,
+    goals:   typeof renderGoalsSubPage   === 'function' ? renderGoalsSubPage   : null,
+    recipes: typeof renderRecipesSubPage === 'function' ? renderRecipesSubPage : null,
+    friends: typeof renderFriendsSubPage === 'function' ? renderFriendsSubPage : null
+  };
+  var fn = handlers[name];
+  if(typeof fn === 'function'){
+    try { fn(el); } catch(e){
+      console.error('SubPage "'+name+'" render error:', e);
+      el.innerHTML = '<div class="card"><div class="card-title">'+name+'</div><div style="color:#ff9090;font-size:13px;">Error loading this page: '+(e.message||'unknown')+'. Try reloading.</div></div>';
+    }
+  } else {
+    el.innerHTML = '<div class="card"><div class="card-title">'+name+'</div><div style="color:var(--muted);font-size:13px;">This page failed to load. Try reloading the app.</div></div>';
+  }
   el.scrollIntoView({behavior:'smooth',block:'start'});
 }
 
@@ -6577,33 +6593,4 @@ function cardioSaveWorkout(){
 function cardioDiscardSummary(){
   if(!confirm('Discard this workout? This cannot be undone.')) return;
   window._pendingCardioWorkout = null;
-  document.getElementById('cardio-detail-overlay').style.display = 'none';
-  showToast('Workout discarded');
-}
-
-function cardioShowDetail(id){
-  var log = loadCardioLog();
-  var w = log.find(function(x){ return x.id === id; });
-  if(!w){ showToast('Workout not found'); return; }
-  cardioShowSummary(w, false);
-}
-
-function cardioDeleteWorkout(id){
-  if(!confirm('Delete this workout permanently?')) return;
-  var log = loadCardioLog();
-  log = log.filter(function(x){ return x.id !== id; });
-  saveCardioLog(log);
-  document.getElementById('cardio-detail-overlay').style.display = 'none';
-  renderCardioTab();
-  if(typeof renderNutrition === 'function') renderNutrition();
-  showToast('Workout deleted');
-}
-</script>
-
-<script>
-// ══════════════════════════════════════════════════════════════════════
-// SOCIAL / FRIENDS MODULE
-//
-// Design principles (from our design conversation, locked in):
-// • Snapshot-based sharing: a user's `public_profiles/{uid}` doc is the ONLY
-//   thing friends can read. Private logs/health data
+  document.getElementById('cardio-detail-overlay')
