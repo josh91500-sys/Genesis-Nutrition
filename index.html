@@ -636,6 +636,11 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
         <div class="mode-card-label">My Meals</div>
         <div class="mode-card-sub">Quick log</div>
       </div>
+      <div class="mode-card" id="mode-cnf" onclick="setMode('cnf',this);initCnfModeUI()">
+        <div class="mode-card-icon">🔬</div>
+        <div class="mode-card-label">CNF</div>
+        <div class="mode-card-sub">Scientific</div>
+      </div>
     </div>
 
     <!-- Describe mode -->
@@ -697,6 +702,24 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
     <div id="mode-meals-content" style="display:none;">
       <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">Pick a saved meal to log it to <strong id="meals-target-slot">the selected section</strong>.</div>
       <div id="my-meals-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>
+    </div>
+
+    <!-- CNF mode: scientific database search for power users -->
+    <div id="mode-cnf-content" style="display:none;">
+      <div id="cnf-explainer" style="background:rgba(99,87,255,.1);border:1px solid var(--accent);border-radius:var(--r1);padding:12px;margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px;">
+          <div style="font-size:13px;font-weight:700;color:var(--accent2);">🔬 Scientific Database</div>
+          <button onclick="dismissCnfExplainer()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0;line-height:1;">×</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5;">Canadian Nutrient File (CNF) from Health Canada — detailed micronutrients (vitamins, minerals, amino acids). Entries use technical names like <em>"Egg, chicken, whole, raw"</em>.<br><br><strong>Best for:</strong> tracking specific micronutrients, research.<br><strong>Not great for:</strong> branded products or restaurant food — use Describe mode for those.</div>
+      </div>
+      <div class="input-group">
+        <label class="input-label">Search CNF database</label>
+        <input type="text" id="cnf-search-input" placeholder="e.g. egg, salmon, spinach" onkeydown="if(event.key==='Enter') doCnfSearch()">
+      </div>
+      <button class="btn-primary" onclick="doCnfSearch()">🔬 Search</button>
+      <div id="cnf-search-status" class="ai-status"></div>
+      <div id="cnf-search-results"></div>
     </div>
 
     <button class="btn-secondary" style="margin-top:10px;" onclick="closeAddFood()">Cancel</button>
@@ -1439,6 +1462,79 @@ function quickLogMeal(idx){
   showToast('✓ Logged: ' + m.name);
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// CNF MODE — Scientific database search (opt-in for power users)
+// ══════════════════════════════════════════════════════════════════════
+
+// Show/hide the CNF explainer based on whether user has dismissed it
+function initCnfModeUI(){
+  var explainerEl = document.getElementById('cnf-explainer');
+  if(explainerEl){
+    var dismissed = localStorage.getItem('gn_cnf_explainer_dismissed') === 'true';
+    explainerEl.style.display = dismissed ? 'none' : 'block';
+  }
+  // Focus search input
+  setTimeout(function(){
+    var input = document.getElementById('cnf-search-input');
+    if(input) input.focus();
+  }, 100);
+}
+
+function dismissCnfExplainer(){
+  localStorage.setItem('gn_cnf_explainer_dismissed', 'true');
+  var el = document.getElementById('cnf-explainer');
+  if(el) el.style.display = 'none';
+}
+
+// Run a CNF search and render results.
+async function doCnfSearch(){
+  var input = document.getElementById('cnf-search-input');
+  var status = document.getElementById('cnf-search-status');
+  var resultsEl = document.getElementById('cnf-search-results');
+  var query = (input.value||'').trim();
+  if(!query){ showToast('Enter a food to search'); return; }
+  resultsEl.innerHTML = '';
+  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Searching Canadian Nutrient File…</div>';
+  try {
+    // Load CNF food list if not cached
+    if(!_cnfFoodList) await fetchCnfFoodList();
+    var matches = searchCnfForQuery(query);
+    if(!matches.length){
+      status.innerHTML = '<span style="color:var(--muted);">No CNF matches for "'+query+'". Try a different term or use Describe mode.</span>';
+      return;
+    }
+    status.textContent = 'Found ' + matches.length + ' CNF result' + (matches.length===1?'':'s') + '. Tap to log:';
+    resultsEl.innerHTML = matches.map(function(m, idx){
+      return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:6px;cursor:pointer;" onclick="selectCnfResult('+idx+')">'
+        + '<div style="font-size:13px;font-weight:600;">'+m.desc+'</div>'
+        + '<div style="font-size:10px;color:var(--muted);margin-top:3px;">🇨🇦 CNF · Code '+m.code+'</div>'
+        + '</div>';
+    }).join('');
+    // Stash for the selectCnfResult handler
+    window._cnfSearchMatches = matches;
+  } catch(e){
+    status.innerHTML = '<span style="color:#ff9090;">CNF search failed. Try again.</span>';
+  }
+}
+
+async function selectCnfResult(idx){
+  var matches = window._cnfSearchMatches || [];
+  var chosen = matches[idx];
+  if(!chosen) return;
+  var status = document.getElementById('cnf-search-status');
+  var resultsEl = document.getElementById('cnf-search-results');
+  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Fetching CNF nutrient data…</div>';
+  try {
+    var food = await fetchCnfFoodAsPreview(chosen);
+    if(!food){ throw new Error('Fetch returned null'); }
+    status.textContent = '';
+    resultsEl.innerHTML = '';
+    showFoodPreview(food, 'cnf-search-results');
+  } catch(e){
+    status.innerHTML = '<span style="color:#ff9090;">Could not fetch CNF data. Try another entry.</span>';
+  }
+}
+
 function renderQuickRecent(){
   const el = document.getElementById('quick-recent');
   const seen = {};
@@ -1517,7 +1613,7 @@ function getEatenAtTimestamp(){
 }
 
 function setMode(mode, el){
-  ['describe','scan','barcode','manual','meals'].forEach(function(m){
+  ['describe','scan','barcode','manual','meals','cnf'].forEach(function(m){
     var btn=document.getElementById('mode-'+m), cont=document.getElementById('mode-'+m+'-content');
     if(btn) btn.classList.toggle('active',m===mode);
     if(cont) cont.style.display=m===mode?'block':'none';
@@ -1540,9 +1636,16 @@ async function doDescribeLookup(){
 Source priority (use the BEST available for this specific food):
 1. RESTAURANT CHAIN ITEMS (Texas Roadhouse, McDonald's, Chipotle, Olive Garden, etc.) → Use the chain's official published nutrition guide values. These are public data. Set source to "Texas Roadhouse Nutrition Guide" (or whichever chain).
 2. PACKAGED/BRANDED PRODUCTS → Use the product's published nutrition label. Set source to "Product Label".
-3. GENERIC WHOLE FOODS (chicken breast, broccoli, brown rice, carrots) → Use USDA FoodData Central. Set source to "USDA FoodData Central". Whole foods often have rich micronutrient profiles — include Vitamin A for orange/leafy vegetables, Vitamin C for citrus/peppers, B12 for animal products, iron for meats/legumes, etc.
+3. GENERIC WHOLE FOODS (chicken breast, broccoli, brown rice, carrots) → Use USDA FoodData Central. Set source to "USDA FoodData Central".
 4. HOMEMADE/PREPARED DISHES (scrambled eggs, pasta with marinara) → Use reasonable estimates based on typical recipe. Set source to "Recipe estimate".
 5. FALLBACK → If you can't find exact data, provide your best estimate. Set source to "AI estimate — verify with source".
+
+IMPORTANT — COMPREHENSIVE NUTRIENTS: Fill in ALL fields in the schema where you have data, not just the macros. This means:
+- Vitamins: A (µg RAE), C, D, E, K, B1/thiamin, B2/riboflavin, B3/niacin, B6, B12, folate, pantothenic acid
+- Minerals: calcium, iron, magnesium, phosphorus, potassium, sodium, zinc, copper, manganese, selenium
+- Include saturated fat, trans fat, omega-3, omega-6, cholesterol where known
+- Whole foods have RICH micronutrient profiles — an egg has vitamin A, D, B12, choline, selenium; salmon has omega-3, B12, D, selenium; spinach has K, folate, iron, magnesium, etc.
+- Only use 0 if the nutrient is genuinely absent from that food (not because you're unsure)
 
 NEVER refuse to return values. NEVER return zeros for the macros. Always provide reasonable numbers for macros (cal/protein/carbs/fat).
 
@@ -1565,16 +1668,21 @@ ${getAINutrientUnitsNote()}`;
     return food;
   }
 
-  // Try CNF first, then AI
-  lookupWithCnfFirst(
-    input,
-    aiLookup,
-    function(food){ showFoodPreview(food, 'describe-preview'); },
-    status
-  ).finally(function(){
-    btn.disabled=false;
-    btn.innerHTML='🤖 Look Up Nutrition';
-  });
+  // AI lookup — direct path. CNF is now available via its own button for
+  // users who specifically want scientific-database data.
+  (async function(){
+    try {
+      status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Looking up nutrition…</div>';
+      var food = await aiLookup();
+      status.textContent = '';
+      showFoodPreview(food, 'describe-preview');
+    } catch(e){
+      status.innerHTML = '<span style="color:#ff9090;">✗ Lookup failed. Try a different phrasing, or use 🔬 CNF for scientific data.</span>';
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '🤖 Look Up Nutrition';
+    }
+  })();
 }
 
 // Global store for preview foods — avoids HTML-attribute-quoting nightmares
