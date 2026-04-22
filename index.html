@@ -6927,13 +6927,28 @@ async function renderFriendsHub(el){
     + '<div class="card" style="margin-top:10px;"><div class="card-title">My Friends</div>'
     + '<div id="fr-friends-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
     + '</div>'
+    + '<div class="card" style="margin-top:10px;"><div class="card-title">🏆 Leaderboards</div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">'
+    + '<button onclick="setLeaderboardMetric(\'workoutStreak\')" id="lb-btn-workoutStreak" class="lb-tab-btn" style="flex:1;min-width:0;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">🔥 Streak</button>'
+    + '<button onclick="setLeaderboardMetric(\'workoutsThisMonth\')" id="lb-btn-workoutsThisMonth" class="lb-tab-btn" style="flex:1;min-width:0;background:var(--bg4);color:var(--accent2);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">💪 Workouts</button>'
+    + '<button onclick="setLeaderboardMetric(\'daysLoggedThisMonth\')" id="lb-btn-daysLoggedThisMonth" class="lb-tab-btn" style="flex:1;min-width:0;background:var(--bg4);color:var(--accent2);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">📅 Logged</button>'
+    + '</div>'
+    + '<div id="lb-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4;">Only friends who\'ve enabled the relevant privacy toggle appear. Leaderboards are friends-only — no global rankings.</div>'
+    + '</div>'
+    + '<div class="card" style="margin-top:10px;"><div class="card-title">👨‍🍳 Friends\' Recipes</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Browse and import recipes from friends who\'ve enabled sharing.</div>'
+    + '<div id="fr-recipes-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '</div>'
     + '<div class="card" style="margin-top:10px;"><div class="card-title">📣 Friend Activity</div>'
     + '<div id="fr-activity-feed"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
     + '</div>';
-  // Lazy-load requests + friend list + activity
+  // Lazy-load requests + friend list + activity + shared recipes + leaderboard
   loadFriendRequests();
   loadFriendsList();
   loadAndRenderActivity();
+  loadAndRenderFriendsRecipes();
+  loadAndRenderLeaderboard();
   // Mark that the user viewed the feed (clears the "new activity" banner)
   localStorage.setItem('gn_friends_last_check', Date.now().toString());
   var banner = document.getElementById('friends-banner');
@@ -6945,6 +6960,210 @@ async function loadAndRenderActivity(){
   if(!el) return;
   var entries = await loadActivityFeed();
   el.innerHTML = renderActivityFeed(entries);
+}
+
+// Browse recipes from all friends who've opted to share
+async function loadAndRenderFriendsRecipes(){
+  var el = document.getElementById('fr-recipes-list');
+  if(!el) return;
+  if(!_currentUser){ el.innerHTML = ''; return; }
+  try {
+    // Get friend list
+    var friendsSnap = await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').get();
+    if(friendsSnap.empty){
+      el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;">Add friends first to see their shared recipes.</div>';
+      return;
+    }
+    var friends = [];
+    friendsSnap.forEach(function(d){ friends.push({uid:d.id, username:(d.data()||{}).username||''}); });
+
+    // Fetch each friend's public_profile and pull recipes
+    var allRecipes = [];
+    await Promise.all(friends.map(async function(f){
+      try {
+        var doc = await fbDb.collection('public_profiles').doc(f.uid).get();
+        if(!doc.exists) return;
+        var data = doc.data() || {};
+        if(!data.recipes || !data.recipes.length) return;
+        data.recipes.forEach(function(r, idx){
+          allRecipes.push({
+            uid: f.uid,
+            username: f.username || data.username || 'friend',
+            idx: idx,
+            name: r.name || 'Untitled',
+            cal: r.cal || 0,
+            protein: r.protein || 0,
+            carbs: r.carbs || 0,
+            fat: r.fat || 0,
+            ingredientCount: (r.ingredients && r.ingredients.length) || 0
+          });
+        });
+      } catch(e){
+        // Friend may have privacy off, be blocked, etc. — silently skip
+      }
+    }));
+
+    if(!allRecipes.length){
+      el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;">No shared recipes yet. Ask your friends to enable "Share recipes" in their privacy settings.</div>';
+      return;
+    }
+
+    // Sort alphabetically by friend username, then recipe name
+    allRecipes.sort(function(a,b){
+      if(a.username !== b.username) return a.username.localeCompare(b.username);
+      return a.name.localeCompare(b.name);
+    });
+
+    window._friendsRecipesCache = allRecipes;
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">' + allRecipes.length + ' recipe' + (allRecipes.length===1?'':'s') + ' from ' + friends.length + ' friend' + (friends.length===1?'':'s') + '</div>'
+      + allRecipes.map(function(r, i){
+        return '<div style="padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'
+          + '<div style="flex:1;min-width:0;">'
+          + '<div style="font-size:13px;font-weight:700;margin-bottom:2px;">'+r.name+'</div>'
+          + '<div style="font-size:11px;color:var(--muted);">'
+          + 'from <strong>@'+r.username+'</strong> · '+Math.round(r.cal)+' kcal · P '+Math.round(r.protein)+'g · C '+Math.round(r.carbs)+'g · F '+Math.round(r.fat)+'g'
+          + (r.ingredientCount ? ' · '+r.ingredientCount+' ingredient'+(r.ingredientCount===1?'':'s') : '')
+          + '</div></div>'
+          + '<button onclick="importFriendsRecipe('+i+')" style="flex-shrink:0;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;">＋ Import</button>'
+          + '</div></div>';
+      }).join('');
+  } catch(e){
+    console.error('[FriendsRecipes] load failed:', e);
+    el.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:6px;">Could not load shared recipes.</div>';
+  }
+}
+
+// Import one recipe from the cached browse list into the user's own Recipes
+async function importFriendsRecipe(listIdx){
+  var meta = window._friendsRecipesCache && window._friendsRecipesCache[listIdx];
+  if(!meta){ showToast('Recipe expired — reload'); return; }
+  try {
+    // Re-fetch the sharer's public_profile to get the full ingredients
+    var doc = await fbDb.collection('public_profiles').doc(meta.uid).get();
+    if(!doc.exists){ showToast('Sharer no longer sharing'); return; }
+    var src = (doc.data().recipes || [])[meta.idx];
+    if(!src){ showToast('Recipe not found'); return; }
+    var recipes = loadRecipes();
+    var copy = Object.assign({}, src);
+    copy.name = src.name + ' (from @' + meta.username + ')';
+    copy.created = Date.now();
+    copy.source = 'Imported from @' + meta.username;
+    recipes.push(copy);
+    saveRecipes(recipes);
+    showToast('✓ Imported: ' + src.name);
+  } catch(e){
+    console.error('[Import] failed:', e);
+    showToast('Import failed: '+(e.message||'try again'));
+  }
+}
+
+// ── Leaderboards ────────────────────────────────────────────────────
+// Friends-only rankings on workout streak, workouts this month, and
+// days logged this month. Food/calorie/weight metrics are intentionally
+// excluded from leaderboards to avoid enabling unhealthy comparison.
+
+var _currentLeaderboardMetric = 'workoutStreak';
+
+var LEADERBOARD_METRICS = {
+  workoutStreak: {label: '🔥 Workout Streak', unit: 'days', desc: 'Consecutive days with a workout logged'},
+  workoutsThisMonth: {label: '💪 Workouts This Month', unit: 'workouts', desc: 'Total workouts logged this month'},
+  daysLoggedThisMonth: {label: '📅 Days Logged This Month', unit: 'days', desc: 'Days with at least one food entry'}
+};
+
+function setLeaderboardMetric(key){
+  _currentLeaderboardMetric = key;
+  // Update button styles
+  Object.keys(LEADERBOARD_METRICS).forEach(function(k){
+    var btn = document.getElementById('lb-btn-'+k);
+    if(!btn) return;
+    if(k === key){
+      btn.style.background = 'var(--accent)';
+      btn.style.color = '#fff';
+      btn.style.border = 'none';
+    } else {
+      btn.style.background = 'var(--bg4)';
+      btn.style.color = 'var(--accent2)';
+      btn.style.border = '1px solid var(--border2)';
+    }
+  });
+  loadAndRenderLeaderboard();
+}
+
+async function loadAndRenderLeaderboard(){
+  var el = document.getElementById('lb-list');
+  if(!el) return;
+  if(!_currentUser) return;
+  el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;">Loading…</div>';
+
+  var metric = _currentLeaderboardMetric;
+  var meta = LEADERBOARD_METRICS[metric];
+
+  try {
+    // Get friend list
+    var friendsSnap = await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').get();
+    var friends = [];
+    friendsSnap.forEach(function(d){
+      friends.push({uid: d.id, username: (d.data()||{}).username || ''});
+    });
+
+    // Include self in the rankings
+    var myProfile = loadUserProfile();
+    var participants = friends.slice();
+    participants.push({uid: _currentUser.uid, username: myProfile.username || 'you', isSelf: true});
+
+    // Fetch each participant's public_profiles snapshot
+    var entries = [];
+    await Promise.all(participants.map(async function(p){
+      try {
+        var doc = await fbDb.collection('public_profiles').doc(p.uid).get();
+        if(!doc.exists) return;
+        var d = doc.data() || {};
+        var val = d[metric];
+        if(typeof val !== 'number') return; // not sharing this metric
+        entries.push({
+          uid: p.uid,
+          username: p.username || d.username || 'user',
+          value: val,
+          isSelf: !!p.isSelf
+        });
+      } catch(e){
+        // Skip friends we can't read (blocked, no profile, etc.)
+      }
+    }));
+
+    if(!entries.length){
+      el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;text-align:center;">No one (including you) has enabled this metric in privacy settings.</div>';
+      return;
+    }
+
+    // Sort descending by value; stable tie-breaking by username
+    entries.sort(function(a,b){
+      if(b.value !== a.value) return b.value - a.value;
+      return a.username.localeCompare(b.username);
+    });
+
+    // Render ranked list
+    var medals = ['🥇','🥈','🥉'];
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">' + meta.desc + '</div>'
+      + entries.map(function(e, i){
+        var rankBadge = i < 3 ? medals[i] : '#'+(i+1);
+        var bg = e.isSelf ? 'linear-gradient(90deg,rgba(99,87,255,.15),rgba(45,212,160,.08))' : 'var(--bg3)';
+        var border = e.isSelf ? '1px solid var(--accent)' : '1px solid var(--border)';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:'+bg+';border:'+border+';border-radius:8px;margin-bottom:6px;">'
+          + '<div style="font-size:16px;min-width:36px;text-align:center;font-weight:700;">'+rankBadge+'</div>'
+          + renderAvatar(e.username, 32)
+          + '<div style="flex:1;min-width:0;">'
+          + '<div style="font-size:13px;font-weight:700;">@'+e.username+(e.isSelf?' <span style="color:var(--accent2);font-size:10px;">(you)</span>':'')+'</div>'
+          + '</div>'
+          + '<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:var(--accent2);">'+e.value+'</div>'
+          + '<div style="font-size:10px;color:var(--muted);margin-left:-4px;">'+meta.unit+'</div>'
+          + '</div>';
+      }).join('');
+  } catch(e){
+    console.error('[Leaderboard] load failed:', e);
+    el.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:6px;">Could not load leaderboard.</div>';
+  }
 }
 
 async function searchFriend(){
@@ -7336,6 +7555,10 @@ async function syncPublicProfile(){
   }
   if(settings.workoutsThisWeek){
     snapshot.workoutsThisWeek = computeWorkoutsThisWeek();
+    snapshot.workoutsThisMonth = computeWorkoutsThisMonth();
+  }
+  if(settings.streakDays){
+    snapshot.daysLoggedThisMonth = computeDaysLoggedThisMonth();
   }
   if(settings.weightTrend){
     snapshot.weightTrend = computeWeightTrend();
@@ -7412,6 +7635,41 @@ function computeWorkoutsThisWeek(){
     try {
       var wlog = JSON.parse(localStorage.getItem('gn_wlog_'+dateKey(-i))||'null');
       if(wlog && wlog.exercises && wlog.exercises.length) count++;
+    } catch(e){}
+  }
+  return count;
+}
+
+function computeWorkoutsThisMonth(){
+  var count = 0;
+  var now = new Date();
+  var dayOfMonth = now.getDate();
+  for(var i=0; i<dayOfMonth; i++){
+    try {
+      var wlog = JSON.parse(localStorage.getItem('gn_wlog_'+dateKey(-i))||'null');
+      if(wlog && wlog.exercises && wlog.exercises.length) count++;
+    } catch(e){}
+  }
+  // Also count cardio logs for this month
+  try {
+    var clog = JSON.parse(localStorage.getItem('gn_cardio_log')||'[]');
+    var monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    clog.forEach(function(w){
+      var ts = w.endTime || w.startTime || w.id || 0;
+      if(ts >= monthStart) count++;
+    });
+  } catch(e){}
+  return count;
+}
+
+function computeDaysLoggedThisMonth(){
+  var count = 0;
+  var now = new Date();
+  var dayOfMonth = now.getDate();
+  for(var i=0; i<dayOfMonth; i++){
+    try {
+      var flog = JSON.parse(localStorage.getItem('gn_log_'+dateKey(-i))||'null');
+      if(flog && flog.foods && flog.foods.length) count++;
     } catch(e){}
   }
   return count;
@@ -7697,6 +7955,10 @@ try {
   window.renderActivityFeed = renderActivityFeed;
   window.checkFriendsBanner = checkFriendsBanner;
   window.loadAndRenderActivity = loadAndRenderActivity;
+  window.loadAndRenderFriendsRecipes = loadAndRenderFriendsRecipes;
+  window.importFriendsRecipe = importFriendsRecipe;
+  window.setLeaderboardMetric = setLeaderboardMetric;
+  window.loadAndRenderLeaderboard = loadAndRenderLeaderboard;
   console.log('[Genesis] Social module loaded. Friends features ready.');
   try { localStorage.setItem('gn_debug_social_complete', Date.now()); } catch(e){}
 } catch(e){
