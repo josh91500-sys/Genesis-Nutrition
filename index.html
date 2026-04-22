@@ -6633,6 +6633,14 @@ function cardioSaveWorkout(){
   // Refresh home screen so updated cardio burn reflects in net calories
   if(typeof renderNutrition === 'function') renderNutrition();
   showToast('✓ Workout saved · ' + Math.round(w.caloriesBurned) + ' kcal');
+  // Post to friend activity feed (respects privacy toggle)
+  try {
+    if(typeof postActivity === 'function'){
+      var mins = Math.round((w.durationSeconds||0)/60);
+      var label = 'logged a workout' + (mins>0 ? ' ('+mins+' min)' : '');
+      postActivity('workout', label, {kind:'cardio', minutes:mins});
+    }
+  } catch(e){}
 }
 
 function cardioDiscardSummary(){
@@ -6841,7 +6849,7 @@ function renderUsernameSetup(el){
   el.innerHTML = '<div class="card"><div class="card-title">👥 Create your @username</div>'
     + '<div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Pick a unique username so friends can find you. 3-20 lowercase letters, numbers, or underscores.</div>'
     + '<div class="input-group"><label class="input-label">Username</label>'
-    + '<input type="text" id="fr-username" placeholder="e.g. josh_91500" maxlength="20" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,\'\')" style="width:100%;"></div>'
+    + '<input type="text" id="fr-username" placeholder="e.g. josh_91500" maxlength="20" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,\'\')" style="width:100%;font-size:16px;color:var(--text);-webkit-text-fill-color:var(--text);"></div>'
     + '<div id="fr-username-status" style="font-size:12px;min-height:18px;margin-bottom:10px;"></div>'
     + '<button class="btn-primary" onclick="submitUsername()">Continue</button>'
     + '<button class="btn-secondary" style="margin-top:8px;" onclick="skipSocialFeatures()">Skip — use app without friends</button>'
@@ -6909,10 +6917,8 @@ async function renderFriendsHub(el){
     + '</div>'
     + '</div>'
     + '<div class="card" style="margin-top:10px;"><div class="card-title">Find Friends</div>'
-    + '<div style="display:flex;gap:8px;margin-bottom:10px;">'
-    + '<input type="text" id="fr-search" placeholder="Search by @username" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,\'\')" onkeydown="if(event.key===\'Enter\')searchFriend()" style="flex:1;">'
-    + '<button onclick="searchFriend()" class="btn-primary" style="margin:0;padding:12px 18px;">🔍</button>'
-    + '</div>'
+    + '<input type="text" id="fr-search" placeholder="Search by @username" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,\'\')" onkeydown="if(event.key===\'Enter\')searchFriend()" style="width:100%;font-size:17px;padding:16px 16px;color:var(--text);-webkit-text-fill-color:var(--text);margin-bottom:10px;box-sizing:border-box;">'
+    + '<button onclick="searchFriend()" class="btn-primary" style="width:100%;margin:0 0 10px 0;">🔍 Search</button>'
     + '<div id="fr-search-results"></div>'
     + '</div>'
     + '<div class="card" style="margin-top:10px;" id="fr-requests-card"><div class="card-title">Friend Requests</div>'
@@ -6920,10 +6926,611 @@ async function renderFriendsHub(el){
     + '</div>'
     + '<div class="card" style="margin-top:10px;"><div class="card-title">My Friends</div>'
     + '<div id="fr-friends-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '</div>'
+    + '<div class="card" style="margin-top:10px;"><div class="card-title">💬 Messages</div>'
+    + '<div id="fr-convos-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '</div>'
+    + '<div class="card" style="margin-top:10px;"><div class="card-title">🏆 Leaderboards</div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">'
+    + '<button onclick="setLeaderboardMetric(\'workoutStreak\')" id="lb-btn-workoutStreak" class="lb-tab-btn" style="flex:1;min-width:0;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">🔥 Streak</button>'
+    + '<button onclick="setLeaderboardMetric(\'workoutsThisMonth\')" id="lb-btn-workoutsThisMonth" class="lb-tab-btn" style="flex:1;min-width:0;background:var(--bg4);color:var(--accent2);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">💪 Workouts</button>'
+    + '<button onclick="setLeaderboardMetric(\'daysLoggedThisMonth\')" id="lb-btn-daysLoggedThisMonth" class="lb-tab-btn" style="flex:1;min-width:0;background:var(--bg4);color:var(--accent2);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">📅 Logged</button>'
+    + '</div>'
+    + '<div id="lb-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4;">Only friends who\'ve enabled the relevant privacy toggle appear. Leaderboards are friends-only — no global rankings.</div>'
+    + '</div>'
+    + '<div class="card" style="margin-top:10px;"><div class="card-title">👨‍🍳 Friends\' Recipes</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Browse and import recipes from friends who\'ve enabled sharing.</div>'
+    + '<div id="fr-recipes-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '</div>'
+    + '<div class="card" style="margin-top:10px;"><div class="card-title">📣 Friend Activity</div>'
+    + '<div id="fr-activity-feed"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
     + '</div>';
-  // Lazy-load requests + friend list
+  // Lazy-load requests + friend list + activity + shared recipes + leaderboard + messages
   loadFriendRequests();
   loadFriendsList();
+  loadAndRenderActivity();
+  loadAndRenderFriendsRecipes();
+  loadAndRenderLeaderboard();
+  loadAndRenderConversations();
+  // Mark that the user viewed the feed (clears the "new activity" banner)
+  localStorage.setItem('gn_friends_last_check', Date.now().toString());
+  var banner = document.getElementById('friends-banner');
+  if(banner) banner.style.display = 'none';
+}
+
+async function loadAndRenderActivity(){
+  var el = document.getElementById('fr-activity-feed');
+  if(!el) return;
+  var entries = await loadActivityFeed();
+  el.innerHTML = renderActivityFeed(entries);
+}
+
+// Browse recipes from all friends who've opted to share
+async function loadAndRenderFriendsRecipes(){
+  var el = document.getElementById('fr-recipes-list');
+  if(!el) return;
+  if(!_currentUser){ el.innerHTML = ''; return; }
+  try {
+    // Get friend list
+    var friendsSnap = await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').get();
+    if(friendsSnap.empty){
+      el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;">Add friends first to see their shared recipes.</div>';
+      return;
+    }
+    var friends = [];
+    friendsSnap.forEach(function(d){ friends.push({uid:d.id, username:(d.data()||{}).username||''}); });
+
+    // Fetch each friend's public_profile and pull recipes
+    var allRecipes = [];
+    await Promise.all(friends.map(async function(f){
+      try {
+        var doc = await fbDb.collection('public_profiles').doc(f.uid).get();
+        if(!doc.exists) return;
+        var data = doc.data() || {};
+        if(!data.recipes || !data.recipes.length) return;
+        data.recipes.forEach(function(r, idx){
+          allRecipes.push({
+            uid: f.uid,
+            username: f.username || data.username || 'friend',
+            idx: idx,
+            name: r.name || 'Untitled',
+            cal: r.cal || 0,
+            protein: r.protein || 0,
+            carbs: r.carbs || 0,
+            fat: r.fat || 0,
+            ingredientCount: (r.ingredients && r.ingredients.length) || 0
+          });
+        });
+      } catch(e){
+        // Friend may have privacy off, be blocked, etc. — silently skip
+      }
+    }));
+
+    if(!allRecipes.length){
+      el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;">No shared recipes yet. Ask your friends to enable "Share recipes" in their privacy settings.</div>';
+      return;
+    }
+
+    // Sort alphabetically by friend username, then recipe name
+    allRecipes.sort(function(a,b){
+      if(a.username !== b.username) return a.username.localeCompare(b.username);
+      return a.name.localeCompare(b.name);
+    });
+
+    window._friendsRecipesCache = allRecipes;
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">' + allRecipes.length + ' recipe' + (allRecipes.length===1?'':'s') + ' from ' + friends.length + ' friend' + (friends.length===1?'':'s') + '</div>'
+      + allRecipes.map(function(r, i){
+        return '<div style="padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'
+          + '<div style="flex:1;min-width:0;">'
+          + '<div style="font-size:13px;font-weight:700;margin-bottom:2px;">'+r.name+'</div>'
+          + '<div style="font-size:11px;color:var(--muted);">'
+          + 'from <strong>@'+r.username+'</strong> · '+Math.round(r.cal)+' kcal · P '+Math.round(r.protein)+'g · C '+Math.round(r.carbs)+'g · F '+Math.round(r.fat)+'g'
+          + (r.ingredientCount ? ' · '+r.ingredientCount+' ingredient'+(r.ingredientCount===1?'':'s') : '')
+          + '</div></div>'
+          + '<button onclick="importFriendsRecipe('+i+')" style="flex-shrink:0;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;">＋ Import</button>'
+          + '</div></div>';
+      }).join('');
+  } catch(e){
+    console.error('[FriendsRecipes] load failed:', e);
+    el.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:6px;">Could not load shared recipes.</div>';
+  }
+}
+
+// Import one recipe from the cached browse list into the user's own Recipes
+async function importFriendsRecipe(listIdx){
+  var meta = window._friendsRecipesCache && window._friendsRecipesCache[listIdx];
+  if(!meta){ showToast('Recipe expired — reload'); return; }
+  try {
+    // Re-fetch the sharer's public_profile to get the full ingredients
+    var doc = await fbDb.collection('public_profiles').doc(meta.uid).get();
+    if(!doc.exists){ showToast('Sharer no longer sharing'); return; }
+    var src = (doc.data().recipes || [])[meta.idx];
+    if(!src){ showToast('Recipe not found'); return; }
+    var recipes = loadRecipes();
+    var copy = Object.assign({}, src);
+    copy.name = src.name + ' (from @' + meta.username + ')';
+    copy.created = Date.now();
+    copy.source = 'Imported from @' + meta.username;
+    recipes.push(copy);
+    saveRecipes(recipes);
+    showToast('✓ Imported: ' + src.name);
+  } catch(e){
+    console.error('[Import] failed:', e);
+    showToast('Import failed: '+(e.message||'try again'));
+  }
+}
+
+// ── Leaderboards ────────────────────────────────────────────────────
+// Friends-only rankings on workout streak, workouts this month, and
+// days logged this month. Food/calorie/weight metrics are intentionally
+// excluded from leaderboards to avoid enabling unhealthy comparison.
+
+var _currentLeaderboardMetric = 'workoutStreak';
+
+var LEADERBOARD_METRICS = {
+  workoutStreak: {label: '🔥 Workout Streak', unit: 'days', desc: 'Consecutive days with a workout logged'},
+  workoutsThisMonth: {label: '💪 Workouts This Month', unit: 'workouts', desc: 'Total workouts logged this month'},
+  daysLoggedThisMonth: {label: '📅 Days Logged This Month', unit: 'days', desc: 'Days with at least one food entry'}
+};
+
+function setLeaderboardMetric(key){
+  _currentLeaderboardMetric = key;
+  // Update button styles
+  Object.keys(LEADERBOARD_METRICS).forEach(function(k){
+    var btn = document.getElementById('lb-btn-'+k);
+    if(!btn) return;
+    if(k === key){
+      btn.style.background = 'var(--accent)';
+      btn.style.color = '#fff';
+      btn.style.border = 'none';
+    } else {
+      btn.style.background = 'var(--bg4)';
+      btn.style.color = 'var(--accent2)';
+      btn.style.border = '1px solid var(--border2)';
+    }
+  });
+  loadAndRenderLeaderboard();
+}
+
+async function loadAndRenderLeaderboard(){
+  var el = document.getElementById('lb-list');
+  if(!el) return;
+  if(!_currentUser) return;
+  el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;">Loading…</div>';
+
+  var metric = _currentLeaderboardMetric;
+  var meta = LEADERBOARD_METRICS[metric];
+
+  try {
+    // Get friend list
+    var friendsSnap = await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').get();
+    var friends = [];
+    friendsSnap.forEach(function(d){
+      friends.push({uid: d.id, username: (d.data()||{}).username || ''});
+    });
+
+    // Include self in the rankings
+    var myProfile = loadUserProfile();
+    var participants = friends.slice();
+    participants.push({uid: _currentUser.uid, username: myProfile.username || 'you', isSelf: true});
+
+    // Fetch each participant's public_profiles snapshot
+    var entries = [];
+    await Promise.all(participants.map(async function(p){
+      try {
+        var doc = await fbDb.collection('public_profiles').doc(p.uid).get();
+        if(!doc.exists) return;
+        var d = doc.data() || {};
+        var val = d[metric];
+        if(typeof val !== 'number') return; // not sharing this metric
+        entries.push({
+          uid: p.uid,
+          username: p.username || d.username || 'user',
+          value: val,
+          isSelf: !!p.isSelf
+        });
+      } catch(e){
+        // Skip friends we can't read (blocked, no profile, etc.)
+      }
+    }));
+
+    if(!entries.length){
+      el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;text-align:center;">No one (including you) has enabled this metric in privacy settings.</div>';
+      return;
+    }
+
+    // Sort descending by value; stable tie-breaking by username
+    entries.sort(function(a,b){
+      if(b.value !== a.value) return b.value - a.value;
+      return a.username.localeCompare(b.username);
+    });
+
+    // Render ranked list
+    var medals = ['🥇','🥈','🥉'];
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">' + meta.desc + '</div>'
+      + entries.map(function(e, i){
+        var rankBadge = i < 3 ? medals[i] : '#'+(i+1);
+        var bg = e.isSelf ? 'linear-gradient(90deg,rgba(99,87,255,.15),rgba(45,212,160,.08))' : 'var(--bg3)';
+        var border = e.isSelf ? '1px solid var(--accent)' : '1px solid var(--border)';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:'+bg+';border:'+border+';border-radius:8px;margin-bottom:6px;">'
+          + '<div style="font-size:16px;min-width:36px;text-align:center;font-weight:700;">'+rankBadge+'</div>'
+          + renderAvatar(e.username, 32)
+          + '<div style="flex:1;min-width:0;">'
+          + '<div style="font-size:13px;font-weight:700;">@'+e.username+(e.isSelf?' <span style="color:var(--accent2);font-size:10px;">(you)</span>':'')+'</div>'
+          + '</div>'
+          + '<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:var(--accent2);">'+e.value+'</div>'
+          + '<div style="font-size:10px;color:var(--muted);margin-left:-4px;">'+meta.unit+'</div>'
+          + '</div>';
+      }).join('');
+  } catch(e){
+    console.error('[Leaderboard] load failed:', e);
+    el.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:6px;">Could not load leaderboard.</div>';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// MESSAGING
+//
+// Friends-only, text-only direct messages. 30-day retention (client-side
+// filter, server keeps longer for report evidence). Rate-limited: 30
+// msgs/day/friendship. Content filter blocks obvious explicit terms.
+// ══════════════════════════════════════════════════════════════════════
+
+var MAX_MSG_LENGTH = 1000;
+var MAX_MSGS_PER_DAY_PER_FRIEND = 30;
+var MSG_RETENTION_DAYS = 30;
+
+// Client-side blocklist of obvious explicit terms. Not comprehensive — this
+// is deterrence, not prevention. Real moderation happens via report review.
+var MSG_BLOCKED_TERMS = [
+  // explicit sexual acts
+  'fuck','fucking','fucked','blowjob','handjob','rimjob','anal','oral sex',
+  // body parts (explicit)
+  'penis','vagina','pussy','cock','dick','boobs','tits','nipples','nudes','naked',
+  // explicit invitations
+  'horny','aroused','turn me on','sex with','hookup','fwb','nsfw','send pics',
+  // grooming / minor-targeting red flags (partial — the real ones use normal words)
+  'how old are you really','dont tell your parents','our little secret',
+  // porn
+  'porn','pornhub','xvideos','onlyfans','sexting','dtf','suck my','eat my',
+  'jerk off','masturbate','cum','orgasm'
+];
+
+// Deterministic conversation ID between two users. Same id regardless of
+// who's the caller, by sorting alphabetically and joining with underscore.
+function conversationIdFor(uidA, uidB){
+  return [uidA, uidB].sort().join('_');
+}
+
+// Scan text for any blocked terms (case-insensitive, substring match)
+function contentFilterViolations(text){
+  var lower = (text||'').toLowerCase();
+  var hits = [];
+  MSG_BLOCKED_TERMS.forEach(function(term){
+    if(lower.indexOf(term) !== -1) hits.push(term);
+  });
+  return hits;
+}
+
+// Track filter violations locally — 2+ violations in one session auto-flags
+function bumpFilterViolationCount(){
+  try {
+    var count = parseInt(localStorage.getItem('gn_filter_violations')||'0') + 1;
+    localStorage.setItem('gn_filter_violations', String(count));
+    return count;
+  } catch(e){ return 1; }
+}
+
+// ── UI ENTRY: open messages from friend profile ────────────────────
+
+async function openConversation(friendUid, friendUsername){
+  if(!_currentUser){ showToast('Not signed in'); return; }
+  // One-time community guidelines gate
+  if(!localStorage.getItem('gn_msg_guidelines_accepted')){
+    showMessageGuidelines(friendUid, friendUsername);
+    return;
+  }
+  renderConversationView(friendUid, friendUsername);
+}
+
+function showMessageGuidelines(friendUid, friendUsername){
+  var el = document.getElementById('sub-page-content');
+  el.innerHTML = '<div class="card">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
+    + '<button onclick="showSubPage(\'friends\')" style="background:none;border:none;color:var(--accent2);font-size:15px;font-weight:700;cursor:pointer;">‹ Back</button>'
+    + '</div>'
+    + '<div class="card-title">📋 Community Guidelines</div>'
+    + '<div style="font-size:13px;color:var(--text);line-height:1.7;margin-bottom:14px;">'
+    + 'Genesis Nutrition messaging is meant to help you stay connected with fitness/nutrition friends. Before sending your first message, please read and agree:'
+    + '</div>'
+    + '<div style="background:var(--bg4);border-radius:var(--r1);padding:14px;font-size:13px;line-height:1.7;margin-bottom:14px;">'
+    + '<strong>Prohibited content:</strong><br>'
+    + '• Sexual or romantic content of any kind<br>'
+    + '• Harassment, threats, or hate speech<br>'
+    + '• Spam, scams, or promotional messages<br>'
+    + '• Content involving or targeting minors<br>'
+    + '• Sharing of personal contact info (phone, address) before trust is established<br><br>'
+    + '<strong>How this works:</strong><br>'
+    + '• Messages you send cannot be edited or deleted<br>'
+    + '• Messages older than 30 days are automatically hidden<br>'
+    + '• Reports are reviewed by the app admin within 48 hours<br>'
+    + '• Violations can result in account ban<br>'
+    + '• The admin can view reported conversations'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px;">By tapping "I agree", you confirm you\'ve read these guidelines and will follow them.</div>'
+    + '<button class="btn-primary" onclick="acceptMessageGuidelines(\''+friendUid+'\',\''+friendUsername+'\')">I agree — continue</button>'
+    + '<button class="btn-secondary" style="margin-top:8px;" onclick="showSubPage(\'friends\')">Cancel</button>'
+    + '</div>';
+}
+
+function acceptMessageGuidelines(friendUid, friendUsername){
+  localStorage.setItem('gn_msg_guidelines_accepted', Date.now().toString());
+  renderConversationView(friendUid, friendUsername);
+}
+
+async function renderConversationView(friendUid, friendUsername){
+  var el = document.getElementById('sub-page-content');
+  var convId = conversationIdFor(_currentUser.uid, friendUid);
+  window._currentConversation = {convId: convId, friendUid: friendUid, friendUsername: friendUsername};
+
+  el.innerHTML = '<div class="card">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
+    + '<button onclick="showSubPage(\'friends\')" style="background:none;border:none;color:var(--accent2);font-size:15px;font-weight:700;cursor:pointer;">‹ Back</button>'
+    + '<div style="flex:1;"></div>'
+    + '<button onclick="reportUser(\''+friendUid+'\',\''+friendUsername+'\')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:11px;cursor:pointer;">🚩 Report</button>'
+    + '<button onclick="blockUser(\''+friendUid+'\',\''+friendUsername+'\')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:6px 10px;font-size:11px;cursor:pointer;margin-left:6px;">🚫 Block</button>'
+    + '</div>'
+    + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">'
+    + renderAvatar(friendUsername, 44)
+    + '<div><div style="font-size:15px;font-weight:700;">@'+friendUsername+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">Messages · 30-day retention</div></div>'
+    + '</div>'
+    + '<div id="msg-thread" style="min-height:200px;max-height:400px;overflow-y:auto;padding:8px;background:var(--bg4);border-radius:var(--r1);margin-bottom:10px;">'
+    + '<div style="font-size:12px;color:var(--muted);padding:10px;text-align:center;">Loading messages…</div>'
+    + '</div>'
+    + '<textarea id="msg-input" placeholder="Type a message…" rows="2" maxlength="'+MAX_MSG_LENGTH+'" style="width:100%;font-size:15px;margin-bottom:8px;resize:vertical;box-sizing:border-box;"></textarea>'
+    + '<button class="btn-primary" onclick="sendMessage()">Send</button>'
+    + '<div id="msg-send-status" style="font-size:11px;margin-top:6px;min-height:16px;"></div>'
+    + '</div>';
+
+  await loadConversationMessages();
+  // Mark messages read (clears unread count)
+  markConversationRead();
+}
+
+async function loadConversationMessages(){
+  var ctx = window._currentConversation;
+  if(!ctx) return;
+  var threadEl = document.getElementById('msg-thread');
+  if(!threadEl) return;
+  try {
+    var snap = await fbDb.collection('messages').doc(ctx.convId).collection('msgs')
+      .orderBy('tsLocal','asc').limit(200).get();
+    if(snap.empty){
+      threadEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:20px;text-align:center;">No messages yet. Say hi!</div>';
+      return;
+    }
+    var cutoff = Date.now() - (MSG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    var msgs = [];
+    snap.forEach(function(doc){
+      var d = doc.data();
+      if((d.tsLocal||0) < cutoff) return;  // client-side 30-day expiry
+      msgs.push({
+        id: doc.id,
+        senderUid: d.senderUid,
+        senderUsername: d.senderUsername,
+        text: d.text,
+        tsLocal: d.tsLocal
+      });
+    });
+    if(!msgs.length){
+      threadEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:20px;text-align:center;">No messages in the last 30 days.</div>';
+      return;
+    }
+    threadEl.innerHTML = msgs.map(function(m){
+      var mine = m.senderUid === _currentUser.uid;
+      var bgColor = mine ? 'var(--accent)' : 'var(--bg3)';
+      var textColor = mine ? '#fff' : 'var(--text)';
+      var align = mine ? 'flex-end' : 'flex-start';
+      var time = m.tsLocal ? relTime(m.tsLocal) : '';
+      var safeText = (m.text||'').replace(/[<>&]/g, function(c){ return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c]; });
+      return '<div style="display:flex;justify-content:'+align+';margin-bottom:8px;">'
+        + '<div style="max-width:78%;">'
+        + '<div style="background:'+bgColor+';color:'+textColor+';padding:8px 12px;border-radius:14px;font-size:14px;line-height:1.4;word-wrap:break-word;">'+safeText+'</div>'
+        + '<div style="font-size:10px;color:var(--muted);margin-top:2px;text-align:'+(mine?'right':'left')+';">'
+        + time + (mine ? '' : ' · <a onclick="reportMessage(\''+m.id+'\')" style="color:var(--muted);text-decoration:underline;cursor:pointer;">report</a>')
+        + '</div>'
+        + '</div></div>';
+    }).join('');
+    // Scroll to bottom
+    threadEl.scrollTop = threadEl.scrollHeight;
+  } catch(e){
+    console.error('[Messages] load failed:', e);
+    threadEl.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:10px;">Could not load messages.</div>';
+  }
+}
+
+async function sendMessage(){
+  var ctx = window._currentConversation;
+  if(!ctx) return;
+  var input = document.getElementById('msg-input');
+  var status = document.getElementById('msg-send-status');
+  var text = (input.value||'').trim();
+  if(!text) return;
+  if(text.length > MAX_MSG_LENGTH){ status.innerHTML = '<span style="color:#ff9090;">Message too long ('+MAX_MSG_LENGTH+' char max)</span>'; return; }
+
+  // Content filter check
+  var violations = contentFilterViolations(text);
+  if(violations.length > 0){
+    var vCount = bumpFilterViolationCount();
+    status.innerHTML = '<span style="color:#ff9090;">Message blocked — content appears to violate community guidelines. Repeat violations may be reviewed by admin.</span>';
+    // Auto-flag on 2nd+ violation: create a moderation report
+    if(vCount >= 2){
+      try {
+        await fbDb.collection('reports').add({
+          reporterUid: _currentUser.uid,
+          reporterUsername: loadUserProfile().username || '',
+          reportedUid: _currentUser.uid,   // self-report via filter
+          reportedUsername: loadUserProfile().username || '',
+          reason: 'AUTO: content filter repeat violation (' + vCount + ' violations). Blocked terms: ' + violations.join(', ') + '. Attempted message: ' + text.substring(0,300),
+          type: 'filter_violation',
+          reviewEmail: REPORT_ABUSE_EMAIL,
+          at: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      } catch(e){ console.error('Auto-flag failed:', e); }
+    }
+    return;
+  }
+
+  // Rate limit: count my messages to this friend in the last 24h
+  try {
+    var dayAgo = Date.now() - 24*60*60*1000;
+    var recent = await fbDb.collection('messages').doc(ctx.convId).collection('msgs')
+      .where('senderUid','==',_currentUser.uid).where('tsLocal','>=',dayAgo).get();
+    if(recent.size >= MAX_MSGS_PER_DAY_PER_FRIEND){
+      status.innerHTML = '<span style="color:#ff9090;">Daily message limit reached ('+MAX_MSGS_PER_DAY_PER_FRIEND+'/day per friend). Try again tomorrow.</span>';
+      return;
+    }
+  } catch(e){
+    // If the rate-limit query fails, fall back to allowing the send (don't hard-block)
+    console.warn('[Messages] rate limit check failed:', e);
+  }
+
+  status.innerHTML = '<span style="color:var(--muted);">Sending…</span>';
+  try {
+    await fbDb.collection('messages').doc(ctx.convId).collection('msgs').add({
+      senderUid: _currentUser.uid,
+      senderUsername: loadUserProfile().username || '',
+      text: text,
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+      tsLocal: Date.now()
+    });
+    // Bump unread count for the recipient via the conversation metadata doc
+    try {
+      var updateObj = {
+        lastMsgAt: firebase.firestore.FieldValue.serverTimestamp(),
+        lastMsgTs: Date.now(),
+        participants: [_currentUser.uid, ctx.friendUid]
+      };
+      updateObj['unread_'+ctx.friendUid] = firebase.firestore.FieldValue.increment(1);
+      await fbDb.collection('messages').doc(ctx.convId).set(updateObj, {merge: true});
+    } catch(e){ console.warn('[Messages] unread bump failed:', e); }
+
+    input.value = '';
+    status.innerHTML = '';
+    await loadConversationMessages();
+  } catch(e){
+    console.error('[Messages] send failed:', e);
+    status.innerHTML = '<span style="color:#ff9090;">Send failed: '+(e.message||'try again')+'</span>';
+  }
+}
+
+async function markConversationRead(){
+  var ctx = window._currentConversation;
+  if(!ctx) return;
+  try {
+    var updateObj = {};
+    updateObj['unread_'+_currentUser.uid] = 0;
+    await fbDb.collection('messages').doc(ctx.convId).set(updateObj, {merge: true});
+  } catch(e){}
+}
+
+async function reportMessage(msgId){
+  var ctx = window._currentConversation;
+  if(!ctx){ showToast('No active conversation'); return; }
+  var reason = prompt('Why are you reporting this message?\n\nThe admin will be emailed and review within 48 hours.', '');
+  if(reason === null) return;
+  reason = (reason||'').trim();
+  if(!reason){ showToast('Report cancelled'); return; }
+  try {
+    // Fetch the message content so it's preserved in the report
+    var msgDoc = await fbDb.collection('messages').doc(ctx.convId).collection('msgs').doc(msgId).get();
+    var msgData = msgDoc.exists ? msgDoc.data() : {text:'(message not found)'};
+    await fbDb.collection('reports').add({
+      reporterUid: _currentUser.uid,
+      reporterUsername: loadUserProfile().username || '',
+      reportedUid: msgData.senderUid || ctx.friendUid,
+      reportedUsername: msgData.senderUsername || ctx.friendUsername,
+      reason: reason,
+      type: 'message',
+      conversationId: ctx.convId,
+      messageId: msgId,
+      messageText: (msgData.text || '').substring(0, 1000),
+      messageSentAt: msgData.tsLocal || 0,
+      reviewEmail: REPORT_ABUSE_EMAIL,
+      at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast('✓ Reported. Admin will review within 48 hours.');
+  } catch(e){
+    console.error('[Report] failed:', e);
+    showToast('Could not submit report: '+(e.message||'try again'));
+  }
+}
+
+// ── Conversation list (Messages card on Friends hub) ────────────────
+
+async function loadAndRenderConversations(){
+  var el = document.getElementById('fr-convos-list');
+  if(!el) return;
+  if(!_currentUser) return;
+  try {
+    var snap = await fbDb.collection('messages').where('participants','array-contains',_currentUser.uid).get();
+    if(snap.empty){
+      el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:6px;">No messages yet. Tap a friend\'s profile to start a conversation.</div>';
+      return;
+    }
+    var convs = [];
+    snap.forEach(function(doc){
+      var d = doc.data();
+      var otherUid = (d.participants||[]).find(function(u){ return u !== _currentUser.uid; });
+      if(!otherUid) return;
+      convs.push({
+        convId: doc.id,
+        otherUid: otherUid,
+        lastMsgTs: d.lastMsgTs || 0,
+        unread: d['unread_'+_currentUser.uid] || 0
+      });
+    });
+    convs.sort(function(a,b){ return (b.lastMsgTs||0) - (a.lastMsgTs||0); });
+
+    // Look up usernames for each other participant
+    await Promise.all(convs.map(async function(c){
+      try {
+        var pdoc = await fbDb.collection('public_profiles').doc(c.otherUid).get();
+        c.username = (pdoc.exists && pdoc.data().username) || c.otherUid.substring(0,6);
+      } catch(e){ c.username = 'friend'; }
+    }));
+
+    el.innerHTML = convs.map(function(c){
+      var unreadBadge = c.unread > 0 ? '<span style="background:var(--accent);color:#fff;border-radius:99px;padding:2px 8px;font-size:10px;font-weight:700;margin-left:6px;">'+c.unread+'</span>' : '';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openConversation(\''+c.otherUid+'\',\''+c.username+'\')">'
+        + renderAvatar(c.username, 36)
+        + '<div style="flex:1;min-width:0;">'
+        + '<div style="font-size:13px;font-weight:700;">@'+c.username+unreadBadge+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);">'+(c.lastMsgTs?relTime(c.lastMsgTs):'')+'</div>'
+        + '</div>'
+        + '<div style="color:var(--muted);">›</div>'
+        + '</div>';
+    }).join('');
+  } catch(e){
+    console.error('[Conversations] load failed:', e);
+    el.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:6px;">Could not load conversations.</div>';
+  }
+}
+
+// Count unread messages across all conversations (for banner)
+async function countUnreadMessages(){
+  if(!_currentUser) return 0;
+  try {
+    var snap = await fbDb.collection('messages').where('participants','array-contains',_currentUser.uid).get();
+    var total = 0;
+    snap.forEach(function(doc){
+      total += (doc.data()['unread_'+_currentUser.uid] || 0);
+    });
+    return total;
+  } catch(e){ return 0; }
 }
 
 async function searchFriend(){
@@ -7107,6 +7714,7 @@ async function viewFriendProfile(friendUid, friendUsername){
     + '<div style="flex:1;min-width:0;"><div style="font-size:18px;font-weight:700;">@'+friendUsername+'</div></div>'
     + '</div>'
     + '<div id="friend-profile-content"><div style="font-size:12px;color:var(--muted);">Loading shared data…</div></div>'
+    + '<button class="btn-primary" style="margin-top:14px;" onclick="openConversation(\''+friendUid+'\',\''+friendUsername+'\')">💬 Message</button>'
     + '<div style="margin-top:14px;display:flex;gap:8px;">'
     + '<button onclick="reportUser(\''+friendUid+'\',\''+friendUsername+'\')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;">🚩 Report</button>'
     + '<button onclick="blockUser(\''+friendUid+'\',\''+friendUsername+'\')" style="background:none;border:1px solid var(--border2);color:var(--muted);border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer;">🚫 Block</button>'
@@ -7315,6 +7923,10 @@ async function syncPublicProfile(){
   }
   if(settings.workoutsThisWeek){
     snapshot.workoutsThisWeek = computeWorkoutsThisWeek();
+    snapshot.workoutsThisMonth = computeWorkoutsThisMonth();
+  }
+  if(settings.streakDays){
+    snapshot.daysLoggedThisMonth = computeDaysLoggedThisMonth();
   }
   if(settings.weightTrend){
     snapshot.weightTrend = computeWeightTrend();
@@ -7396,6 +8008,41 @@ function computeWorkoutsThisWeek(){
   return count;
 }
 
+function computeWorkoutsThisMonth(){
+  var count = 0;
+  var now = new Date();
+  var dayOfMonth = now.getDate();
+  for(var i=0; i<dayOfMonth; i++){
+    try {
+      var wlog = JSON.parse(localStorage.getItem('gn_wlog_'+dateKey(-i))||'null');
+      if(wlog && wlog.exercises && wlog.exercises.length) count++;
+    } catch(e){}
+  }
+  // Also count cardio logs for this month
+  try {
+    var clog = JSON.parse(localStorage.getItem('gn_cardio_log')||'[]');
+    var monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    clog.forEach(function(w){
+      var ts = w.endTime || w.startTime || w.id || 0;
+      if(ts >= monthStart) count++;
+    });
+  } catch(e){}
+  return count;
+}
+
+function computeDaysLoggedThisMonth(){
+  var count = 0;
+  var now = new Date();
+  var dayOfMonth = now.getDate();
+  for(var i=0; i<dayOfMonth; i++){
+    try {
+      var flog = JSON.parse(localStorage.getItem('gn_log_'+dateKey(-i))||'null');
+      if(flog && flog.foods && flog.foods.length) count++;
+    } catch(e){}
+  }
+  return count;
+}
+
 function computeWeightTrend(){
   try {
     var log = JSON.parse(localStorage.getItem('gn_weight_log')||'[]');
@@ -7418,6 +8065,236 @@ function getLatestWeight(){
     var sorted = log.slice().sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
     return sorted[sorted.length-1].weight;
   } catch(e){ return null; }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ACTIVITY FEED
+//
+// Friends see each other's activity events in a reverse-chronological feed.
+// Events respect privacy toggles: if "share workouts" is off, no workout
+// events appear in the feed. Each event is tiny (no calorie numbers, no
+// weight numbers) to avoid enabling unhealthy comparison behavior.
+//
+// Storage: activity/{uid}/feed/{entryId}
+//   entry: {type, ts, label, meta?}
+//   type: 'meal' | 'workout' | 'weight_goal' | 'recipe' | 'streak'
+//   Entries auto-expire after 7 days (cleaned up on next read).
+//
+// Rate limit: max 5 events per user per day (prevents spammy feeds).
+// ══════════════════════════════════════════════════════════════════════
+
+var ACTIVITY_MAX_PER_DAY = 5;
+var ACTIVITY_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;  // 7 days
+
+// Post an activity event to the current user's feed.
+// type: 'meal'|'workout'|'weight_goal'|'recipe'|'streak'
+// label: short text shown in the feed (no numbers for sensitive types)
+// Returns true if posted, false if rate-limited or privacy-blocked.
+async function postActivity(type, label, meta){
+  if(!_currentUser) return false;
+  // Privacy check: is the user sharing this type?
+  if(!isActivityTypeShared(type)) return false;
+  // Rate limit check: how many entries in the last 24h?
+  var todayCount = getTodayActivityCount();
+  if(todayCount >= ACTIVITY_MAX_PER_DAY){
+    console.log('[Activity] Rate limit reached for today, skipping:', type);
+    return false;
+  }
+  try {
+    var entry = {
+      type: type,
+      label: label || '',
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+      tsLocal: Date.now(),  // local timestamp for sorting before server fills in
+      meta: meta || null
+    };
+    await fbDb.collection('activity').doc(_currentUser.uid).collection('feed').add(entry);
+    // Update local count for rate limiting
+    bumpTodayActivityCount();
+    return true;
+  } catch(e){
+    console.error('[Activity] Post failed:', e);
+    return false;
+  }
+}
+
+// Is the user sharing this activity type based on their privacy toggles?
+function isActivityTypeShared(type){
+  var settings = loadPrivacySettings();
+  if(type === 'meal') return false;  // meals never in feed (too frequent, too sensitive)
+  if(type === 'workout') return !!settings.workoutsThisWeek;
+  if(type === 'weight_goal') return !!settings.weightTrend;  // milestone only, no number
+  if(type === 'recipe') return !!settings.publicRecipes;
+  if(type === 'streak') return !!settings.streakDays;
+  return false;
+}
+
+// Local rate-limit counter
+function getTodayActivityCount(){
+  try {
+    var raw = localStorage.getItem('gn_activity_today');
+    if(!raw) return 0;
+    var parsed = JSON.parse(raw);
+    if(parsed.date !== todayDateStr()) return 0;
+    return parsed.count || 0;
+  } catch(e){ return 0; }
+}
+
+function bumpTodayActivityCount(){
+  try {
+    var current = getTodayActivityCount();
+    localStorage.setItem('gn_activity_today', JSON.stringify({
+      date: todayDateStr(),
+      count: current + 1
+    }));
+  } catch(e){}
+}
+
+function todayDateStr(){
+  var d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
+// ── Feed loading — aggregates activity from all friends ─────────────
+
+async function loadActivityFeed(){
+  if(!_currentUser) return [];
+  try {
+    // Get friend list
+    var friendsSnap = await fbDb.collection('friendships').doc(_currentUser.uid).collection('list').get();
+    if(friendsSnap.empty) return [];
+    var friendUids = [];
+    friendsSnap.forEach(function(d){ friendUids.push({uid:d.id, username:(d.data()||{}).username||''}); });
+
+    // Fetch last 20 entries from each friend (limited to keep reads sane)
+    var cutoff = Date.now() - ACTIVITY_EXPIRY_MS;
+    var allEntries = [];
+    await Promise.all(friendUids.map(async function(f){
+      try {
+        var snap = await fbDb.collection('activity').doc(f.uid).collection('feed')
+          .orderBy('tsLocal', 'desc').limit(20).get();
+        snap.forEach(function(doc){
+          var d = doc.data();
+          if((d.tsLocal||0) < cutoff) return;  // expired
+          allEntries.push({
+            id: doc.id,
+            uid: f.uid,
+            username: f.username,
+            type: d.type,
+            label: d.label,
+            meta: d.meta,
+            tsLocal: d.tsLocal || 0
+          });
+        });
+      } catch(e){
+        // Friend may have no feed yet or blocked — silently skip
+      }
+    }));
+    // Sort reverse-chronological
+    allEntries.sort(function(a,b){ return (b.tsLocal||0) - (a.tsLocal||0); });
+    return allEntries.slice(0, 50);  // show up to 50 across all friends
+  } catch(e){
+    console.error('[Activity] Load feed failed:', e);
+    return [];
+  }
+}
+
+// Format a relative time ("2h ago", "yesterday", "3d ago")
+function relTime(tsMs){
+  if(!tsMs) return '';
+  var diff = Date.now() - tsMs;
+  var mins = Math.floor(diff / 60000);
+  if(mins < 1) return 'just now';
+  if(mins < 60) return mins + 'm ago';
+  var hrs = Math.floor(mins / 60);
+  if(hrs < 24) return hrs + 'h ago';
+  var days = Math.floor(hrs / 24);
+  if(days === 1) return 'yesterday';
+  if(days < 7) return days + 'd ago';
+  return 'last week';
+}
+
+function renderActivityFeed(entries){
+  if(!entries || !entries.length){
+    return '<div style="font-size:12px;color:var(--muted);padding:10px;text-align:center;">No activity from friends yet.</div>';
+  }
+  return entries.map(function(e){
+    var icon = '📍';
+    if(e.type === 'workout') icon = '💪';
+    else if(e.type === 'weight_goal') icon = '🎯';
+    else if(e.type === 'recipe') icon = '🍳';
+    else if(e.type === 'streak') icon = '🔥';
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">'
+      + renderAvatar(e.username, 34)
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:13px;line-height:1.4;"><strong>@'+e.username+'</strong> '+e.label+'</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+icon+' '+relTime(e.tsLocal)+'</div>'
+      + '</div></div>';
+  }).join('');
+}
+
+// ── Notification banner — shown at top of app when relevant ─────────
+
+// Check for pending friend requests + recent friend activity, and show a
+// dismissible banner. Call on page load and after key navigations.
+async function checkFriendsBanner(){
+  if(!_currentUser) return;
+  var profile = loadUserProfile();
+  if(!profile.isAdult || !profile.username) return;  // no social for this user
+
+  var bannerEl = document.getElementById('friends-banner');
+  if(!bannerEl){
+    // Create it at top of screen
+    bannerEl = document.createElement('div');
+    bannerEl.id = 'friends-banner';
+    bannerEl.style.cssText = 'display:none;position:sticky;top:0;z-index:100;background:linear-gradient(90deg,rgba(99,87,255,.95),rgba(45,212,160,.9));color:#fff;padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+    // Insert into the screen wrapper, not body (so it sits inside the app layout)
+    var screen = document.querySelector('.screen') || document.body;
+    screen.insertBefore(bannerEl, screen.firstChild);
+  }
+
+  try {
+    // Pending requests count
+    var reqSnap = await fbDb.collection('friend_requests').doc(_currentUser.uid).collection('incoming').get();
+    var reqCount = reqSnap.size;
+
+    // New activity since last check
+    var lastCheck = parseInt(localStorage.getItem('gn_friends_last_check')||'0');
+    var newActivityCount = 0;
+    if(lastCheck > 0){
+      var feed = await loadActivityFeed();
+      newActivityCount = feed.filter(function(e){ return (e.tsLocal||0) > lastCheck; }).length;
+    }
+
+    // Unread messages count
+    var unreadMsgs = 0;
+    try { unreadMsgs = await countUnreadMessages(); } catch(e){}
+
+    // Build message
+    var parts = [];
+    if(reqCount > 0) parts.push(reqCount + ' friend request' + (reqCount===1?'':'s'));
+    if(unreadMsgs > 0) parts.push(unreadMsgs + ' new message' + (unreadMsgs===1?'':'s'));
+    if(newActivityCount > 0) parts.push(newActivityCount + ' new activit' + (newActivityCount===1?'y':'ies'));
+    if(parts.length === 0){
+      bannerEl.style.display = 'none';
+      return;
+    }
+    bannerEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<div style="flex:1;">👥 ' + parts.join(' · ') + '</div>'
+      + '<div style="font-size:11px;opacity:.85;">Tap to view</div>'
+      + '</div>';
+    bannerEl.onclick = function(){
+      // Navigate to Friends page
+      localStorage.setItem('gn_friends_last_check', Date.now().toString());
+      bannerEl.style.display = 'none';
+      showPage('more', document.querySelector('.nav-btn:last-child'));
+      setTimeout(function(){ showSubPage('friends'); }, 150);
+    };
+    bannerEl.style.display = 'block';
+  } catch(e){
+    console.error('[Banner] check failed:', e);
+    if(bannerEl) bannerEl.style.display = 'none';
+  }
 }
 
 // Force-expose all social handlers on window so they're findable from onclick
@@ -7446,6 +8323,26 @@ try {
   window.onPrivacyToggleChange = onPrivacyToggleChange;
   window.savePrivacyAndClose = savePrivacyAndClose;
   window.syncPublicProfile = syncPublicProfile;
+  window.postActivity = postActivity;
+  window.loadActivityFeed = loadActivityFeed;
+  window.renderActivityFeed = renderActivityFeed;
+  window.checkFriendsBanner = checkFriendsBanner;
+  window.loadAndRenderActivity = loadAndRenderActivity;
+  window.loadAndRenderFriendsRecipes = loadAndRenderFriendsRecipes;
+  window.importFriendsRecipe = importFriendsRecipe;
+  window.setLeaderboardMetric = setLeaderboardMetric;
+  window.loadAndRenderLeaderboard = loadAndRenderLeaderboard;
+  window.openConversation = openConversation;
+  window.showMessageGuidelines = showMessageGuidelines;
+  window.acceptMessageGuidelines = acceptMessageGuidelines;
+  window.renderConversationView = renderConversationView;
+  window.loadConversationMessages = loadConversationMessages;
+  window.sendMessage = sendMessage;
+  window.markConversationRead = markConversationRead;
+  window.reportMessage = reportMessage;
+  window.loadAndRenderConversations = loadAndRenderConversations;
+  window.countUnreadMessages = countUnreadMessages;
+  window.contentFilterViolations = contentFilterViolations;
   console.log('[Genesis] Social module loaded. Friends features ready.');
   try { localStorage.setItem('gn_debug_social_complete', Date.now()); } catch(e){}
 } catch(e){
@@ -7454,25 +8351,56 @@ try {
 }
 </script>
 <script>
-// TEMPORARY: unregister any existing service worker so users on stale cached
-// versions can get the current app. Once we know users are on a stable
-// current version, re-enable SW registration.
+// ══════════════════════════════════════════════════════════════════════
+// SERVICE WORKER — offline support with aggressive update handling
+//
+// Strategy:
+//   1. Register sw.js on load
+//   2. On each load, call registration.update() to check for new SW versions
+//   3. When a new SW is waiting, activate it immediately (skipWaiting)
+//   4. Reload once after the new SW takes control so users always get fresh code
+//
+// IMPORTANT: sw.js must use versioned cache names (bump APP_VERSION there
+// each deploy). The companion sw.js file is generated alongside this HTML.
+// ══════════════════════════════════════════════════════════════════════
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.getRegistrations().then(function(regs){
-    regs.forEach(function(r){
-      r.unregister().then(function(ok){
-        console.log('[Genesis] SW unregistered:', ok);
-      });
+  // One-time cleanup: if we previously unregistered the SW (v4 debug),
+  // clear the flag and re-register normally going forward.
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('/sw.js', {updateViaCache: 'none'})
+      .then(function(reg){
+        console.log('[Genesis] SW registered:', reg.scope);
+        // Force an update check every time the app loads
+        reg.update().catch(function(){});
+
+        // If a new worker is waiting, activate it right away
+        if(reg.waiting){ reg.waiting.postMessage({type:'SKIP_WAITING'}); }
+
+        // Watch for a new worker being installed
+        reg.addEventListener('updatefound', function(){
+          var newWorker = reg.installing;
+          if(!newWorker) return;
+          newWorker.addEventListener('statechange', function(){
+            if(newWorker.state === 'installed' && navigator.serviceWorker.controller){
+              // A new version is available AND there's an existing controller,
+              // meaning this is an update (not a first install).
+              console.log('[Genesis] New SW installed — activating');
+              newWorker.postMessage({type:'SKIP_WAITING'});
+            }
+          });
+        });
+      })
+      .catch(function(err){ console.log('[Genesis] SW registration failed:', err); });
+
+    // When the active SW changes, reload once so we're running the new app code.
+    var swReloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if(swReloaded) return;
+      swReloaded = true;
+      console.log('[Genesis] New SW activated — reloading page');
+      window.location.reload();
     });
   });
-  // Also clear all caches the app has registered
-  if(window.caches && caches.keys){
-    caches.keys().then(function(names){
-      names.forEach(function(n){
-        caches.delete(n).then(function(ok){ console.log('[Genesis] Cache deleted:', n, ok); });
-      });
-    });
-  }
 }
 </script>
 
