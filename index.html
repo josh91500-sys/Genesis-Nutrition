@@ -2492,7 +2492,7 @@ function renderNutrientResults(){
       highlights.sort(function(a,b){ return b.val - a.val; });
       macroChips = highlights.slice(0,3).map(function(h){
         var v = viewMode==='serving' ? h.val*((f.serving||100)/100) : h.val;
-        var disp = v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2);
+        var disp = v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
         return '<span class="fmacro" style="color:'+h.color+'">'+h.label+' '+disp+h.u+'</span>';
       }).join('');
     } else {
@@ -3129,6 +3129,46 @@ function pickMeal(meal){
 // ══════════════════════════════════════════════════════════════════════
 // PRO PAYWALL
 // ══════════════════════════════════════════════════════════════════════
+// Alternatives lookup — each pro-gated feature has a list of free paths
+// the user can take instead. Shows users what they CAN do before paywalling.
+var PAYWALL_ALTERNATIVES = {
+  'AI Meal Planner': [
+    'Browse your saved recipes',
+    'Quick-add from recently logged meals',
+    'Copy yesterday\'s meals into today'
+  ],
+  'AI Food Search': [
+    'Search the built-in food database',
+    'Scan a product barcode',
+    'Create a custom food manually',
+    'Pick from your saved recipes'
+  ],
+  'AI Food Lookup': [
+    'Search the built-in food database',
+    'Scan a product barcode',
+    'Create a custom food manually'
+  ],
+  'AI Workout Coach': [
+    'Add exercises manually from the exercise list',
+    'Copy a recent workout',
+    'Use a workout template'
+  ],
+  '30-Day History': [
+    'Week view is free — scrolls back any time',
+    'Day view (tap any calendar day) is free'
+  ],
+  'Health AI': [
+    'Set your nutrition goals manually in More → Goals',
+    'Track supplements in More → Supplements',
+    'Use body measurements in More → Measurements'
+  ],
+  'More Meals': [
+    'Browse your own recipes',
+    'Create a new recipe manually with any ingredients',
+    'Use the food database to build meals piece by piece'
+  ]
+};
+
 function showProPaywall(feature, onUnlock){
   var overlay=document.getElementById('pro-paywall-overlay');
   if(!overlay){
@@ -3137,12 +3177,22 @@ function showProPaywall(feature, onUnlock){
     overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(10px);z-index:600;display:flex;align-items:flex-end;justify-content:center;';
     document.body.appendChild(overlay);
   }
+  var alternatives = PAYWALL_ALTERNATIVES[feature] || [];
+  var altHtml = '';
+  if(alternatives.length){
+    altHtml = '<div style="background:var(--bg4);border-radius:12px;padding:14px;margin-bottom:14px;text-align:left;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">✓ You can still do this for free</div>'
+      + '<ul style="list-style:none;padding:0;margin:0;">'
+      + alternatives.map(function(a){ return '<li style="font-size:13px;color:var(--text);padding:4px 0;line-height:1.5;">• '+a+'</li>'; }).join('')
+      + '</ul></div>';
+  }
   overlay.innerHTML='<div style="background:var(--bg2);border-radius:24px 24px 0 0;border:1px solid var(--border2);width:100%;max-width:480px;padding:24px 20px 40px;max-height:90vh;overflow-y:auto;">'
     +'<div style="text-align:center;margin-bottom:16px;">'
     +'<div style="font-size:38px;margin-bottom:8px;">⭐</div>'
-    +'<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;margin-bottom:6px;">Genesis Pro</div>'
-    +'<div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:4px;"><strong style="color:var(--text);">'+feature+'</strong> is a Pro feature.</div>'
+    +'<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;margin-bottom:6px;">'+feature+' is Pro</div>'
+    +'<div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:4px;">This feature uses AI and requires Genesis Pro.</div>'
     +'</div>'
+    +altHtml
     +'<button onclick="startCheckout()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;">Upgrade to Pro — $4.99/month</button>'
     +'<div style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:14px;">Cancel anytime · Secure via Stripe</div>'
     +'<div style="border-top:1px solid var(--border);padding-top:14px;">'
@@ -3198,6 +3248,27 @@ function applyOverlayPromo(){
       var ov=document.getElementById('pro-paywall-overlay');
       if(ov){ ov.style.display='none'; if(ov._onUnlock) ov._onUnlock(); }
       showToast('⭐ Pro unlocked!',3000);
+      // Re-render whatever page the user was viewing so pro content appears
+      // without requiring another tap. Handles:
+      //   - Health AI inline paywall (renderHealthSubPage)
+      //   - any sub-page reload (showSubPage re-call)
+      //   - home screen pro-gated buttons
+      try {
+        var subEl = document.getElementById('sub-page-content');
+        if(subEl && subEl.innerHTML && subEl.innerHTML.indexOf('Genesis Pro') !== -1){
+          // Sub-page is showing a paywall — re-render whichever one
+          if(typeof renderHealthSubPage === 'function' && subEl.innerHTML.indexOf('Health AI') !== -1){
+            renderHealthSubPage(subEl);
+          } else if(typeof showSubPage === 'function'){
+            // Try to figure out which sub-page and re-render
+            var names = ['health','planner','goals','recipes','friends','supplements'];
+            // Default to refreshing health since that's the primary pro feature
+            renderHealthSubPage(subEl);
+          }
+        }
+        // Also refresh the home screen so pro buttons update if that's where they are
+        if(typeof renderNutrition === 'function') renderNutrition();
+      } catch(e){ console.error('Post-unlock refresh error:', e); }
     },800);
   } else if(!code){
     if(status) status.innerHTML='<span style="color:#ff9090;">Enter a promo code.</span>';
@@ -3351,8 +3422,9 @@ function renderNutrientDetailCard(key, info, totals, goalMap){
   var goal = goalMap[key] || info.dv || 1;
   var pct = Math.min(100, (val/goal)*100);
   var sc = val === 0 ? 'var(--muted)' : pct > 110 ? '#ff6b6b' : pct >= 80 ? 'var(--fiber)' : info.color;
-  var valStr = val >= 100 ? Math.round(val) : val >= 10 ? val.toFixed(1) : val.toFixed(2);
-  var goalStr = goal >= 100 ? Math.round(goal) : goal >= 10 ? goal.toFixed(1) : goal.toFixed(2);
+  // Format: whole numbers >= 100, one decimal for smaller values. No 0.01 noise.
+  var valStr = val >= 100 ? String(Math.round(val)) : String(Math.round(val * 10) / 10);
+  var goalStr = goal >= 100 ? String(Math.round(goal)) : String(Math.round(goal * 10) / 10);
   var hasContribution = val > 0;
   var cid = 'ncard-' + key;
   return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:6px;'+(val===0?'opacity:0.6;':'')+'">'
@@ -3420,7 +3492,7 @@ function buildNutrientBreakdownHTML(key){
   return '<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Contributed by '+contributions.length+' food'+(contributions.length===1?'':'s')+'</div>'
     + contributions.map(function(c){
         var pct = Math.round((c.value/total) * 100);
-        var vStr = c.value >= 100 ? Math.round(c.value) : c.value >= 10 ? c.value.toFixed(1) : c.value.toFixed(2);
+        var vStr = c.value >= 100 ? String(Math.round(c.value)) : String(Math.round(c.value * 10) / 10);
         var timeStr = '';
         if(c.eatenAt > 0){
           var d = new Date(c.eatenAt);
@@ -4500,9 +4572,17 @@ function renderHealthSubPage(el){
   if(!isPro()){
     el.innerHTML='<div style="margin:10px 0;background:linear-gradient(135deg,rgba(99,87,255,.15),rgba(245,158,11,.1));border:1px solid var(--accent);border-radius:var(--r2);padding:24px;text-align:center;">'
       +'<div style="font-size:42px;margin-bottom:12px;">⭐</div>'
-      +'<div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;margin-bottom:8px;">Genesis Pro</div>'
-      +'<div style="font-size:14px;color:var(--muted);margin-bottom:18px;line-height:1.6;">Unlock Health AI for $4.99/month.</div>'
-      +'<button onclick="startCheckout()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;">Upgrade to Pro</button>'
+      +'<div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;margin-bottom:8px;">Health AI is Pro</div>'
+      +'<div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Health AI creates personalized nutrition plans and generates meal ideas using AI, which requires Genesis Pro.</div>'
+      +'<div style="background:var(--bg4);border-radius:12px;padding:14px;margin-bottom:16px;text-align:left;">'
+      +'<div style="font-size:12px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">✓ You can still do this for free</div>'
+      +'<ul style="list-style:none;padding:0;margin:0;">'
+      +'<li style="font-size:13px;color:var(--text);padding:4px 0;line-height:1.5;">• Set nutrition goals manually in More → Goals</li>'
+      +'<li style="font-size:13px;color:var(--text);padding:4px 0;line-height:1.5;">• Track supplements in More → Supplements</li>'
+      +'<li style="font-size:13px;color:var(--text);padding:4px 0;line-height:1.5;">• Log body measurements in More → Measurements</li>'
+      +'<li style="font-size:13px;color:var(--text);padding:4px 0;line-height:1.5;">• Create recipes manually from any ingredients</li>'
+      +'</ul></div>'
+      +'<button onclick="startCheckout()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;">Upgrade to Pro — $4.99/month</button>'
       +'<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px;">'
       +'<div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Have a promo code?</div>'
       +'<div style="display:flex;gap:8px;"><input type="text" id="overlay-promo-input" placeholder="Promo code" style="flex:1;text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()">'
@@ -6586,6 +6666,18 @@ function cardioShowSummary(workout, isNew){
     + '<div>'+headerButtons+'</div></div>'
 
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">'
+    + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
+    + '<div style="font-family:Syne,sans-serif;font-size:28px;font-weight:800;color:var(--fiber);">'+mi.toFixed(2)+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">miles</div></div>'
+    + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
+    + '<div style="font-family:Syne,sans-serif;font-size:28px;font-weight:800;color:var(--accent2);">'+Math.round(mins)+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">minutes</div></div>'
+    + '</div>'
+
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">'
+    + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
+    + '<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;color:var(--sugar);">'+Math.round(workout.caloriesBurned)+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);">kcal burned</div></div>'
     + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
     + '<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;">'+paceStr+'</div>'
     + '<div style="font-size:11px;color:var(--muted);">avg pace</div></div>'
