@@ -2426,9 +2426,24 @@ function searchCnfForQuery(query){
       var queryMentionsBaby = words.some(function(w){ return w.indexOf('baby') !== -1 || w.indexOf('infant') !== -1; });
       if(!queryMentionsBaby) babyPenalty = 20;
     }
+    // Penalize industrial/processed forms that rarely match what casual users want:
+    // dried, powdered, substitute, dehydrated, freeze-dried, reconstituted, etc.
+    // Only applies if the user didn't explicitly search for these modifiers.
+    var industrialPenalty = 0;
+    var industrialTerms = ['dried','dehydrated','powder','powdered','substitute','reconstituted',
+      'freeze-dried','freeze dried','commercial','processed','dry mix','dry form','concentrate'];
+    for(var it=0; it<industrialTerms.length; it++){
+      if(descLower.indexOf(industrialTerms[it]) !== -1){
+        var queryHasTerm = words.some(function(w){ return industrialTerms[it].indexOf(w) !== -1 || w.indexOf(industrialTerms[it].split(' ')[0]) !== -1; });
+        if(!queryHasTerm){
+          industrialPenalty = 15;
+          break;
+        }
+      }
+    }
     scored.push({
       food: f,
-      score: matchCount * 10 + coverage * 5 + startsWithMatch * 15 - babyPenalty
+      score: matchCount * 10 + coverage * 5 + startsWithMatch * 15 - babyPenalty - industrialPenalty
     });
   });
   scored.sort(function(a,b){ return b.score - a.score; });
