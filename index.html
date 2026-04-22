@@ -3662,21 +3662,41 @@ function showSubPage(name){
     }
   } else {
     // Diagnostic message — tells us exactly what's missing
+    var socialStart = 'NOT SET';
+    var socialComplete = 'NOT SET';
+    var socialErr = '';
+    var socialStack = '';
+    try {
+      socialStart = localStorage.getItem('gn_debug_social_start') || 'NOT SET';
+      socialComplete = localStorage.getItem('gn_debug_social_complete') || 'NOT SET';
+      socialErr = localStorage.getItem('gn_debug_social_error') || '';
+      socialStack = localStorage.getItem('gn_debug_social_stack') || '';
+    } catch(e){}
     var diag = 'Page "' + name + '" handler is not registered.\n\n';
     diag += 'Runtime checks:\n';
     diag += '• renderFriendsSubPage type: ' + (typeof renderFriendsSubPage) + '\n';
     diag += '• renderAgeGate type: ' + (typeof renderAgeGate) + '\n';
     diag += '• PRIVACY_TOGGLES type: ' + (typeof PRIVACY_TOGGLES) + '\n';
+    diag += '• __genesisSocialStarted: ' + (typeof window.__genesisSocialStarted !== 'undefined') + '\n';
+    diag += '• Social block started timestamp: ' + socialStart + '\n';
+    diag += '• Social block completed timestamp: ' + socialComplete + '\n';
     diag += '• _currentUser: ' + (typeof _currentUser !== 'undefined' && _currentUser ? 'signed in' : 'null') + '\n';
-    diag += '• Build version: 2026-04-22 social-v2\n\n';
-    diag += 'If "renderFriendsSubPage" says "undefined", the social module did not load.\n';
-    diag += 'Most likely: browser cache is serving an old version of the app.\n\n';
-    diag += 'Fix:\n';
-    diag += '1. Close the app completely\n';
-    diag += '2. Clear Safari cache (Settings → Safari → Clear History & Website Data)\n';
-    diag += '3. Reopen app';
+    diag += '• Build version: 2026-04-22 social-v3\n\n';
+    if(socialErr){
+      diag += 'ERROR captured during load:\n' + socialErr + '\n\n';
+      if(socialStack) diag += 'Stack:\n' + socialStack.substring(0, 400) + '\n\n';
+    }
+    if(socialStart === 'NOT SET'){
+      diag += '⚠ Social block NEVER ran. It is either not in the HTML file or the service worker is serving a cached version without it.\n\n';
+      diag += 'Fix: Close Safari completely, then Settings → Safari → Clear History and Website Data. Reopen the app.';
+    } else if(socialComplete === 'NOT SET'){
+      diag += '⚠ Social block STARTED but did not finish. Something inside threw.\n';
+      diag += 'The "ERROR captured" above shows what broke.';
+    } else {
+      diag += '✓ Social block ran to completion, but functions still missing. Script scoping issue.';
+    }
     el.innerHTML = '<div class="card"><div class="card-title">⚠ Diagnostic</div>'
-      + '<div style="color:var(--muted);font-size:12px;font-family:monospace;word-break:break-word;white-space:pre-wrap;background:var(--bg4);padding:10px;border-radius:8px;">'
+      + '<div style="color:var(--muted);font-size:11px;font-family:monospace;word-break:break-word;white-space:pre-wrap;background:var(--bg4);padding:10px;border-radius:8px;">'
       + diag + '</div></div>';
   }
   el.scrollIntoView({behavior:'smooth',block:'start'});
@@ -6564,24 +6584,4 @@ function cardioShowSummary(workout, isNew){
     + '<div style="font-size:11px;color:var(--muted);">kcal burned</div></div>'
     + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:14px;text-align:center;">'
     + '<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;">'+paceStr+'</div>'
-    + '<div style="font-size:11px;color:var(--muted);">avg pace</div></div>'
-    + '</div>'
-
-    + '<div id="cardio-detail-map" style="height:360px;border-radius:var(--r2);overflow:hidden;border:1px solid var(--border);margin-bottom:16px;"></div>'
-
-    + '<div style="font-size:11px;color:var(--muted);text-align:center;">'+workout.points.length+' GPS points · paused '+Math.round(workout.pausedSec/60)+' min</div>'
-    + '</div>';
-
-  overlay.style.display = 'block';
-  overlay.scrollTop = 0;
-
-  // Render route map
-  setTimeout(function(){
-    if(workout.points.length < 2){
-      document.getElementById('cardio-detail-map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px;">Not enough GPS data for map</div>';
-      return;
-    }
-    try {
-      var map = L.map('cardio-detail-map', {zoomControl:true, attributionControl:false}).setView([workout.points[0][0], workout.points[0][1]], 15);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
-      var latlngs = workout.points.map(function(p){ return [p[0], p[1]]; });
+    + '<d
