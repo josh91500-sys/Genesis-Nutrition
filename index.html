@@ -3598,23 +3598,93 @@ async function lookupUPCCode(upc){
     var d=await r.json();
     if(d.status===1&&d.product&&d.product.product_name){
       var p=d.product,n=p.nutriments||{};
+
+      // Helper: pick first non-null/non-zero value from a list of possible field names
+      function pick(){
+        for(var i=0;i<arguments.length;i++){
+          var v = n[arguments[i]];
+          if(v !== undefined && v !== null && v !== '' && !isNaN(parseFloat(v))) return parseFloat(v);
+        }
+        return 0;
+      }
+
+      // Calories — Open Food Facts is inconsistent. Try every known field.
+      // energy-kcal_* are in kcal. energy_* is in kJ (need ÷4.184).
+      var cal = pick('energy-kcal_serving','energy-kcal_100g','energy-kcal','energy-kcal_value');
+      if(cal === 0){
+        // Fall back to kJ and convert
+        var kj = pick('energy_serving','energy_100g','energy','energy_value');
+        if(kj > 0) cal = kj / 4.184;
+      }
+
+      // Sodium — try sodium first (grams), fall back to salt (salt = sodium × 2.5)
+      // All OFF sodium values are in grams, multiply by 1000 for mg.
+      var sodiumG = pick('sodium_serving','sodium_100g','sodium','sodium_value');
+      if(sodiumG === 0){
+        var saltG = pick('salt_serving','salt_100g','salt','salt_value');
+        sodiumG = saltG / 2.5;  // sodium = salt / 2.5
+      }
+
       var sgMatch=(p.serving_size||'').match(/([\d.]+)\s*g/i);
       var sg=sgMatch?parseFloat(sgMatch[1]):100;
-      showFoodPreview({name:p.product_name,serving_desc:p.serving_size||'1 serving',serving_g:sg,
-        cal:Math.round(n['energy-kcal_serving']||n['energy-kcal_100g']||0),
-        protein:parseFloat((n['proteins_serving']||n['proteins_100g']||0).toFixed(1)),
-        carbs:parseFloat((n['carbohydrates_serving']||n['carbohydrates_100g']||0).toFixed(1)),
-        fat:parseFloat((n['fat_serving']||n['fat_100g']||0).toFixed(1)),
-        fiber:parseFloat((n['fiber_serving']||n['fiber_100g']||0).toFixed(1)),
-        sugar:parseFloat((n['sugars_serving']||n['sugars_100g']||0).toFixed(1)),
-        sodium:Math.round((n['sodium_serving']||n['sodium_100g']||0)*1000),
-        potassium:Math.round((n['potassium_serving']||n['potassium_100g']||0)*1000),
-        vitc:0,iron:0,calcium:0,vitd:0,source:'Food Label ('+upc+')'},'barcode-preview');
+
+      // Open Food Facts serving sizes for liquid products are often in "ml"
+      // or "fl oz" with no grams. Treat these as ~1g/ml (reasonable for
+      // water-based drinks like protein shakes, juice, milk).
+      if(!sgMatch){
+        var mlMatch = (p.serving_size||'').match(/([\d.]+)\s*ml/i);
+        if(mlMatch){
+          sg = parseFloat(mlMatch[1]);
+        } else {
+          var flozMatch = (p.serving_size||'').match(/([\d.]+)\s*(?:fl ?oz|fluid ounce)/i);
+          if(flozMatch){
+            sg = parseFloat(flozMatch[1]) * 29.5735;  // fl oz → ml (≈g)
+          } else {
+            // Also look at product quantity if serving_size is just "1 bottle"
+            var qMatch = (p.quantity||'').match(/([\d.]+)\s*(?:ml|g)/i);
+            if(qMatch) sg = parseFloat(qMatch[1]);
+          }
+        }
+      }
+
+      // If energy field is _100g but we have serving size, scale it to serving
+      // (most fields try _serving first so this kicks in only when _serving missing)
+      var isPerHundred = !pick('energy-kcal_serving','energy_serving','sodium_serving','proteins_serving');
+      var scaleFactor = isPerHundred && sg !== 100 ? sg / 100 : 1;
+
+      showFoodPreview({
+        name: p.product_name,
+        serving_desc: p.serving_size || '1 serving',
+        serving_g: sg,
+        cal: Math.round(cal * scaleFactor),
+        protein: parseFloat((pick('proteins_serving','proteins_100g','proteins') * scaleFactor).toFixed(1)),
+        carbs: parseFloat((pick('carbohydrates_serving','carbohydrates_100g','carbohydrates') * scaleFactor).toFixed(1)),
+        fat: parseFloat((pick('fat_serving','fat_100g','fat') * scaleFactor).toFixed(1)),
+        fiber: parseFloat((pick('fiber_serving','fiber_100g','fiber') * scaleFactor).toFixed(1)),
+        sugar: parseFloat((pick('sugars_serving','sugars_100g','sugars') * scaleFactor).toFixed(1)),
+        sodium: Math.round(sodiumG * 1000 * scaleFactor),
+        potassium: Math.round(pick('potassium_serving','potassium_100g','potassium') * 1000 * scaleFactor),
+        satfat: parseFloat((pick('saturated-fat_serving','saturated-fat_100g','saturated-fat') * scaleFactor).toFixed(1)),
+        calcium: Math.round(pick('calcium_serving','calcium_100g','calcium') * 1000 * scaleFactor),
+        iron: Math.round(pick('iron_serving','iron_100g','iron') * 1000 * 100) / 100 * scaleFactor,
+        vitc: Math.round(pick('vitamin-c_serving','vitamin-c_100g','vitamin-c') * 1000 * scaleFactor),
+        vitd: 0,
+        vita: 0,
+        source: 'Food Label ('+upc+')'
+      }, 'barcode-preview');
+
+      // Final check — if cal is STILL 0 after all fallbacks, the product
+      // exists in OFF but has no nutrition data uploaded. Tell the user
+      // and fall back to AI so they get SOMETHING.
+      if(cal === 0){
+        status.innerHTML = '<span style="color:var(--sugar);font-size:12px;">⚠️ Found "'+p.product_name+'" but nutrition data is incomplete. Trying AI…</span>';
+        throw new Error('incomplete_data');
+      }
       status.textContent='';
     } else throw new Error('not found');
   } catch(e){
     try {
-      status.textContent='Looking up...';
+      if(!status.textContent.includes('incomplete')) status.textContent='Looking up...';
       var res=await callClaude({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:'Nutrition facts for UPC '+upc+'. Return ONLY JSON:\n'+getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true})+'\n'+getAINutrientUnitsNote()}]});
       var data=await res.json();
       var text=(data.content&&data.content[0]&&data.content[0].text)||'';
