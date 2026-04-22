@@ -1188,15 +1188,20 @@ function showFoodPreview(food, containerId){
         <div class="ai-preview-name">${food.name}</div>
         <span class="${badgeClass}" style="${badgeStyle}">${badgeText}</span>
       </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Per serving: ${food.serving_desc||food.serving_g+'g'}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;" id="psl-${pid}">Per serving: ${food.serving_desc||food.serving_g+'g'}</div>
 
-      <!-- Servings adjuster -->
-      <div style="display:flex;align-items:center;gap:8px;background:var(--bg4);border:1px solid var(--border2);border-radius:10px;padding:8px 10px;margin-bottom:10px;">
-        <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Servings</div>
-        <div style="flex:1;"></div>
-        <button onclick="adjustPreviewServings('${pid}',-0.5)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:8px;width:32px;height:32px;font-size:16px;font-weight:700;cursor:pointer;">−</button>
-        <input type="number" id="psv-${pid}" value="1" min="0.25" max="20" step="0.25" oninput="updatePreviewServings('${pid}',this.value)" style="width:70px;text-align:center;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:6px;font-size:14px;font-weight:700;color:var(--text);outline:none;">
-        <button onclick="adjustPreviewServings('${pid}',0.5)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:8px;width:32px;height:32px;font-size:16px;font-weight:700;cursor:pointer;">+</button>
+      <!-- Amount adjuster: toggle between Servings and Grams input -->
+      <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:10px;padding:8px 10px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+          <button id="pum-serv-${pid}" onclick="setPreviewUnitMode('${pid}','servings')" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.06em;">Servings</button>
+          <button id="pum-gram-${pid}" onclick="setPreviewUnitMode('${pid}','grams')" style="flex:1;background:var(--bg3);color:var(--muted);border:1px solid var(--border2);border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.06em;">Grams</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button onclick="adjustPreviewAmount('${pid}',-1)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:8px;width:32px;height:32px;font-size:16px;font-weight:700;cursor:pointer;">−</button>
+          <input type="number" id="psv-${pid}" value="1" min="0.25" step="0.25" oninput="updatePreviewAmount('${pid}',this.value)" style="flex:1;text-align:center;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:6px;font-size:14px;font-weight:700;color:var(--text);outline:none;">
+          <div id="pum-unit-${pid}" style="font-size:11px;color:var(--muted);min-width:55px;text-align:right;font-weight:700;">servings</div>
+          <button onclick="adjustPreviewAmount('${pid}',1)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:8px;width:32px;height:32px;font-size:16px;font-weight:700;cursor:pointer;">+</button>
+        </div>
       </div>
 
       <div class="preview-grid" id="pg-${pid}">
@@ -1208,9 +1213,13 @@ function showFoodPreview(food, containerId){
         <button class="btn-secondary" style="flex:1;margin-top:0;background:var(--bg4);border:1px solid var(--border2);" onclick="showAddToRecipeForPreview('${pid}')">🍳 To Recipe</button>
       </div>
     </div>`;
-  // Initialize multiplier cache
+  // Initialize state
   if(!window._previewServings) window._previewServings = {};
   window._previewServings[pid] = 1;
+  if(!window._previewServingDescs) window._previewServingDescs = {};
+  window._previewServingDescs[pid] = food.serving_desc || (food.serving_g + 'g');
+  if(!window._previewUnitModes) window._previewUnitModes = {};
+  window._previewUnitModes[pid] = 'servings';
 }
 
 function renderPreviewGridHTML(food, mult){
@@ -1223,24 +1232,136 @@ function renderPreviewGridHTML(food, mult){
     + '<div class="preview-item"><div class="preview-val">'+Math.round((food.sodium||0)*mult)+'mg</div><div class="preview-key">sodium</div></div>';
 }
 
-function updatePreviewServings(pid, val){
-  var mult = parseFloat(val) || 1;
-  if(mult < 0.25) mult = 0.25;
-  if(mult > 20) mult = 20;
-  if(!window._previewServings) window._previewServings = {};
-  window._previewServings[pid] = mult;
+// Switch a preview between "Servings" and "Grams" input modes.
+// Internally we always store a multiplier vs per-serving values. In grams
+// mode we translate the user's gram input into a multiplier via serving_g.
+function setPreviewUnitMode(pid, mode){
+  if(!window._previewUnitModes) window._previewUnitModes = {};
+  window._previewUnitModes[pid] = mode;
   var food = _previewFoodStore[pid];
-  var grid = document.getElementById('pg-'+pid);
-  if(grid && food){ grid.innerHTML = renderPreviewGridHTML(food, mult); }
+  if(!food) return;
+  var servingG = food.serving_g || 100;
+  var currentMult = (window._previewServings && window._previewServings[pid]) || 1;
+
+  // Update toggle visual state
+  var servBtn = document.getElementById('pum-serv-'+pid);
+  var gramBtn = document.getElementById('pum-gram-'+pid);
+  if(servBtn && gramBtn){
+    if(mode === 'servings'){
+      servBtn.style.background = 'var(--accent)'; servBtn.style.color = '#fff'; servBtn.style.border = 'none';
+      gramBtn.style.background = 'var(--bg3)'; gramBtn.style.color = 'var(--muted)'; gramBtn.style.border = '1px solid var(--border2)';
+    } else {
+      gramBtn.style.background = 'var(--accent)'; gramBtn.style.color = '#fff'; gramBtn.style.border = 'none';
+      servBtn.style.background = 'var(--bg3)'; servBtn.style.color = 'var(--muted)'; servBtn.style.border = '1px solid var(--border2)';
+    }
+  }
+
+  // Update input: servings = multiplier, grams = multiplier × serving_g
+  var input = document.getElementById('psv-'+pid);
+  var unitLabel = document.getElementById('pum-unit-'+pid);
+  if(input){
+    if(mode === 'servings'){
+      input.value = currentMult;
+      input.step = '0.25';
+      input.min = '0.25';
+    } else {
+      input.value = Math.round(currentMult * servingG * 10) / 10;
+      input.step = '1';
+      input.min = '1';
+    }
+  }
+  if(unitLabel){
+    unitLabel.textContent = mode === 'servings' ? (currentMult === 1 ? 'serving' : 'servings') : 'grams';
+  }
 }
 
+// Called on every input change. Converts the raw input value to an internal
+// multiplier based on the current unit mode, then refreshes the grid + label.
+function updatePreviewAmount(pid, val){
+  var food = _previewFoodStore[pid];
+  if(!food) return;
+  var mode = (window._previewUnitModes && window._previewUnitModes[pid]) || 'servings';
+  var servingG = food.serving_g || 100;
+  var raw = parseFloat(val) || 0;
+  var mult;
+  if(mode === 'servings'){
+    mult = raw;
+  } else {
+    // Grams mode: divide user's gram input by base serving to get the multiplier
+    mult = raw / servingG;
+  }
+  // Clamp multiplier to a sensible range
+  if(mult < 0.01) mult = 0.01;
+  if(mult > 50) mult = 50;
+
+  if(!window._previewServings) window._previewServings = {};
+  window._previewServings[pid] = mult;
+
+  // Refresh the nutrient grid
+  var grid = document.getElementById('pg-'+pid);
+  if(grid){ grid.innerHTML = renderPreviewGridHTML(food, mult); }
+
+  // Refresh the serving-description line (scales all numbers by the multiplier)
+  var labelEl = document.getElementById('psl-'+pid);
+  if(labelEl && window._previewServingDescs && window._previewServingDescs[pid] !== undefined){
+    var baseDesc = window._previewServingDescs[pid];
+    labelEl.innerHTML = 'Per serving: ' + scaleServingDesc(baseDesc, mult);
+  }
+
+  // Refresh the "servings"/"serving"/"grams" pluralization next to input
+  var unitLabel = document.getElementById('pum-unit-'+pid);
+  if(unitLabel){
+    if(mode === 'servings'){
+      unitLabel.textContent = Math.abs(raw - 1) < 0.0001 ? 'serving' : 'servings';
+    } else {
+      unitLabel.textContent = 'grams';
+    }
+  }
+}
+
+// +/- buttons — step by 0.25 servings or 10 grams depending on mode
+function adjustPreviewAmount(pid, direction){
+  var input = document.getElementById('psv-'+pid);
+  if(!input) return;
+  var mode = (window._previewUnitModes && window._previewUnitModes[pid]) || 'servings';
+  var step = mode === 'servings' ? 0.5 : 10;
+  var current = parseFloat(input.value) || 0;
+  var next = current + direction * step;
+  // Clamp by mode
+  if(mode === 'servings'){
+    if(next < 0.25) next = 0.25;
+    if(next > 20) next = 20;
+  } else {
+    if(next < 1) next = 1;
+    if(next > 5000) next = 5000;
+  }
+  // Keep numbers clean (no trailing .0 messiness for round values)
+  next = Math.round(next * 100) / 100;
+  input.value = next;
+  updatePreviewAmount(pid, next);
+}
+
+// ── Backwards-compatible aliases: any code that still calls the old names ──
+function updatePreviewServings(pid, val){ updatePreviewAmount(pid, val); }
 function adjustPreviewServings(pid, delta){
   var input = document.getElementById('psv-'+pid);
   if(!input) return;
-  var current = parseFloat(input.value) || 1;
-  var next = Math.max(0.25, Math.min(20, current + delta));
-  input.value = next;
-  updatePreviewServings(pid, next);
+  var current = parseFloat(input.value) || 0;
+  input.value = Math.max(0.25, Math.min(20, current + delta));
+  updatePreviewAmount(pid, input.value);
+}
+
+// Scale every number in a serving description by the given multiplier.
+// "125 ml (≈128g)" at 1.5x → "187.5 ml (≈192g)"
+// "1 large egg, 50g" at 2x → "2 large egg, 100g"
+// "250 g" at 0.5x → "125 g"
+function scaleServingDesc(desc, mult){
+  if(!desc || mult === 1) return desc;
+  return desc.replace(/(\d+(?:\.\d+)?)/g, function(num){
+    var scaled = parseFloat(num) * mult;
+    var rounded = Math.round(scaled * 10) / 10;
+    return String(rounded);
+  });
 }
 
 // Helper: route previewFoodStore item into the recipe picker sheet
@@ -1914,7 +2035,18 @@ async function fetchCnfFoodAsPreview(cnfFood){
   var n = results[0], s = results[1];
   if(!n) return null;
   var servingG = (s && s.serving) ? s.serving : 100;
-  var servingLabel = (s && s.serving_label) ? s.serving_label : (servingG + 'g');
+  var rawLabel = (s && s.serving_label) ? s.serving_label : '';
+  // Build a clear serving label that includes the gram equivalent when the
+  // raw measure doesn't already contain it (e.g., "125 ml" → "125 ml (≈128g)").
+  var hasGramsInLabel = /\b\d+\s*g\b/.test(rawLabel.toLowerCase());
+  var servingLabel;
+  if(!rawLabel){
+    servingLabel = servingG + 'g';
+  } else if(hasGramsInLabel){
+    servingLabel = rawLabel;  // already has a gram number, trust it
+  } else {
+    servingLabel = rawLabel + ' (≈' + Math.round(servingG) + 'g)';
+  }
   // CNF values are per 100g; scale to the serving size
   var mult = servingG / 100;
   var food = {
