@@ -3518,7 +3518,11 @@ document.addEventListener('DOMContentLoaded', function(){
 // ══════════════════════════════════════════════════════════════════════
 // CORE HELPERS
 // ══════════════════════════════════════════════════════════════════════
-function isPro(){ return localStorage.getItem('gn_pro_paid')==='true' || sessionStorage.getItem('gn_pro_session')==='true'; }
+function isPro(){
+  return localStorage.getItem('gn_pro_paid')==='true'
+    || sessionStorage.getItem('gn_pro_session')==='true'
+    || sessionStorage.getItem('gn_lifetime_pro')==='true';
+}
 function getGoals(){ return loadGoals(); }
 function copyYesterday(){
   var y=loadDayLog(dayOffset-1);
@@ -6905,6 +6909,20 @@ function initFirebaseAuth(){
               }
             }
           } catch(e){ console.error('[auth] Pro check error:', e); }
+
+          // Check lifetime Pro whitelist — users in this collection get Pro free.
+          // You add a tester by going to Firebase Console → Firestore → lifetime_pro
+          // and creating a doc with their UID as the doc ID. No app redeploy needed.
+          try {
+            var lifetimeDoc = await fbDb.collection('lifetime_pro').doc(user.uid).get();
+            if(lifetimeDoc.exists){
+              sessionStorage.setItem('gn_lifetime_pro', 'true');
+              console.log('[auth] Lifetime Pro tester — Pro features unlocked');
+            }
+          } catch(e){
+            // Silent fail — not all users have permission to read this collection,
+            // which is fine. If it errors, user just doesn't get lifetime pro.
+          }
           if(typeof renderNutrition === 'function') renderNutrition();
           // Check for pending friend requests / new activity and show banner
           if(typeof checkFriendsBanner === 'function'){
