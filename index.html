@@ -1816,8 +1816,9 @@ function filterCnfByKeywords(list, keywords){
 }
 
 // Score CNF foods by how well they match a user query.
-// Splits the query into words, finds the ones that appear in the CNF food description,
-// and scores by count of matching words with bonuses for rarer words and shorter names.
+// Splits the query into words, stems them to handle plural/singular mismatch
+// (blueberries → "blueberr" matches both "Blueberry, raw" and "Blueberries, frozen"),
+// and scores by count of matching stems with bonuses for whole-food matches.
 function searchCnfForQuery(query){
   if(!_cnfFoodList || !query) return [];
   // Strip punctuation, split into words ≥3 chars (skip common words)
@@ -1828,21 +1829,75 @@ function searchCnfForQuery(query){
     .split(/\s+/)
     .filter(function(w){ return w.length >= 3 && stopWords.indexOf(w) === -1; });
   if(!words.length) return [];
+
+  // Generate a set of candidate "stems" for each word that will match both
+  // singular and plural forms in CNF descriptions.
+  // English plural rules vary: berry↔berries, tomato↔tomatoes, apple↔apples, etc.
+  // We produce several candidate shortenings and match if ANY hits.
+  function stems(w){
+    var out = [w]; // always try the original
+    // "ies" plural (berries) → match root before "ies" (match either "berri" or "berry")
+    if(w.length >= 5 && w.slice(-3) === 'ies'){
+      var root = w.slice(0, -3); // "berr"
+      out.push(root);
+      out.push(root + 'y');       // "berry"
+    }
+    // "y" ending (berry) → also try the "ies" form
+    if(w.length >= 3 && w.slice(-1) === 'y'){
+      var rootY = w.slice(0, -1); // "berr"
+      out.push(rootY);
+      out.push(rootY + 'ies');    // "berries"
+    }
+    // "es" plural (tomatoes, potatoes) → try root without "es" AND without "s"
+    if(w.length >= 4 && w.slice(-2) === 'es'){
+      out.push(w.slice(0, -2));   // "tomato"
+      out.push(w.slice(0, -1));   // "tomatoe"
+    }
+    // Plain "s" plural (apples → apple)
+    if(w.length >= 4 && w.slice(-1) === 's' && w.slice(-3) !== 'ies'){
+      out.push(w.slice(0, -1));
+    }
+    // "ing" / "ed" verb forms — strip suffix
+    if(w.length >= 5 && w.slice(-3) === 'ing') out.push(w.slice(0, -3));
+    if(w.length >= 5 && w.slice(-2) === 'ed')  out.push(w.slice(0, -2));
+    // Dedupe, filter too-short stems (keep at least 3 chars)
+    var seen = {};
+    return out.filter(function(s){ if(s.length < 3) return false; if(seen[s]) return false; seen[s]=1; return true; });
+  }
+  var wordStems = words.map(stems);
+
   var scored = [];
   _cnfFoodList.forEach(function(f){
     var descLower = f.desc.toLowerCase();
     var matchCount = 0;
-    words.forEach(function(w){
-      if(descLower.indexOf(w) !== -1) matchCount++;
+    var anyStartMatch = false;
+    wordStems.forEach(function(candidates){
+      // Word matches if any of its candidate stems appears in the description
+      for(var i=0; i<candidates.length; i++){
+        var idx = descLower.indexOf(candidates[i]);
+        if(idx !== -1){
+          matchCount++;
+          if(idx === 0) anyStartMatch = true;
+          return;
+        }
+      }
     });
     if(matchCount === 0) return;
     // Prefer foods where ALL query words appear
-    var coverage = matchCount / words.length;
-    // Shorter descriptions score slightly higher (more specific match)
-    var lengthBonus = Math.max(0, 1 - (descLower.length / 200));
+    var coverage = matchCount / wordStems.length;
+    // Bonus if the match happens at the very start of the description
+    // (e.g., "Blueberries, raw" > "Babyfood, blueberries")
+    var startsWithMatch = anyStartMatch ? 1 : 0;
+    // Penalize entries with "baby" unless the query was explicitly for baby food,
+    // since those rarely match what a general user wants.
+    var babyPenalty = 0;
+    if(descLower.indexOf('babyfood') !== -1 || descLower.indexOf('baby food') !== -1){
+      var queryMentionsBaby = words.some(function(w){ return w.indexOf('baby') !== -1 || w.indexOf('infant') !== -1; });
+      if(!queryMentionsBaby) babyPenalty = 20;
+    }
     scored.push({
       food: f,
-      score: matchCount * 10 + coverage * 5 + lengthBonus
+      score: matchCount * 10 + coverage * 5 + startsWithMatch * 15 - babyPenalty
     });
   });
   scored.sort(function(a,b){ return b.score - a.score; });
