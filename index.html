@@ -1174,8 +1174,9 @@ function openSectionActions(meal){
   document.getElementById('sas-title').textContent = meal + ' — Actions';
   document.getElementById('sas-body').innerHTML =
       '<button class="btn-primary" style="margin-bottom:8px;" onclick="saveSectionAsMeal(\''+meal+'\')">🍽️ Save as Meal</button>'
-    + '<button class="btn-primary" style="background:var(--accent2);" onclick="openCopyToModal(\'section\',\''+meal+'\',-1)">📋 Copy to another day/meal</button>'
-    + '<div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5;">Save as Meal bundles all foods in this section into your Meals list so you can re-log them quickly. Copy duplicates the foods to another day or meal.</div>';
+    + '<button class="btn-primary" style="margin-bottom:8px;background:var(--accent2);" onclick="openTransferModal(\'copy\',\'section\',\''+meal+'\',-1)">📋 Copy to another day/meal</button>'
+    + '<button class="btn-primary" style="background:var(--sugar);" onclick="openTransferModal(\'move\',\'section\',\''+meal+'\',-1)">↗ Move to another day/meal</button>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5;"><strong>Copy</strong> duplicates the foods (original stays). <strong>Move</strong> removes them from here and puts them where you pick. <strong>Save as Meal</strong> bundles this section into your Meals list for quick re-logging.</div>';
   sheet.classList.add('open');
 }
 function closeSectionActions(){
@@ -1202,8 +1203,9 @@ function openFoodActions(meal, foodIdx){
   var food = mealFoods[foodIdx];
   document.getElementById('fas-title').textContent = food ? food.name : 'Food Actions';
   document.getElementById('fas-body').innerHTML =
-      '<button class="btn-primary" onclick="openCopyToModal(\'food\',\''+meal+'\','+foodIdx+')">📋 Copy to another day/meal</button>'
-    + '<div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5;">Duplicates this food to another day or meal. The original stays where it is.</div>';
+      '<button class="btn-primary" style="margin-bottom:8px;" onclick="openTransferModal(\'copy\',\'food\',\''+meal+'\','+foodIdx+')">📋 Copy to another day/meal</button>'
+    + '<button class="btn-primary" style="background:var(--sugar);" onclick="openTransferModal(\'move\',\'food\',\''+meal+'\','+foodIdx+')">↗ Move to another day/meal</button>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5;"><strong>Copy</strong> duplicates this food (original stays). <strong>Move</strong> fixes it when you put it in the wrong spot — removes it here and places it where you pick.</div>';
   sheet.classList.add('open');
 }
 function closeFoodActions(){
@@ -1211,11 +1213,15 @@ function closeFoodActions(){
   if(sheet) sheet.classList.remove('open');
 }
 
-// Copy-to modal: pick a target day + meal, then duplicates the source
-// (either a full section or a single food) to the target.
-// kind: 'section' | 'food'
-// sourceMeal: string, sourceFoodIdx: number (or -1 for section)
+// Transfer modal: handles both COPY and MOVE of a section or single food
+// to another day/meal. `mode` is 'copy' or 'move'. `kind` is 'section' or 'food'.
+// Keep openCopyToModal as a backward-compat wrapper in case anything else
+// still calls it (e.g. cached old UI).
 function openCopyToModal(kind, sourceMeal, sourceFoodIdx){
+  return openTransferModal('copy', kind, sourceMeal, sourceFoodIdx);
+}
+
+function openTransferModal(mode, kind, sourceMeal, sourceFoodIdx){
   closeSectionActions();
   closeFoodActions();
   var sheet = document.getElementById('copy-to-sheet');
@@ -1225,20 +1231,25 @@ function openCopyToModal(kind, sourceMeal, sourceFoodIdx){
     sheet.className = 'modal-backdrop';
     document.body.appendChild(sheet);
   }
-  // Day options: yesterday, today, tomorrow, +custom date
-  var today = new Date();
+  // Day options: Yesterday/Today/Tomorrow are anchored to the REAL calendar
+  // day, not the currently-viewed day. Otherwise "Today" would mean "whatever
+  // day I'm looking at" — confusing when viewing history.
   var dayOpts = [
-    {label:'Yesterday', offset:dayOffset-1},
-    {label:'Today', offset:dayOffset},
-    {label:'Tomorrow', offset:dayOffset+1}
+    {label:'Yesterday', offset:-1},
+    {label:'Today',     offset:0},
+    {label:'Tomorrow',  offset:1}
   ];
-  var dayOptsHtml = dayOpts.map(function(d,i){
+  var today = new Date();
+  var dayOptsHtml = dayOpts.map(function(d){
     var date = new Date(today); date.setDate(today.getDate() + d.offset);
     var dateStr = (date.getMonth()+1)+'/'+date.getDate();
     return '<option value="'+d.offset+'">'+d.label+' ('+dateStr+')</option>';
   }).join('') + '<option value="CUSTOM">Pick a date…</option>';
 
-  var title = kind === 'section' ? 'Copy '+sourceMeal+' to…' : 'Copy food to…';
+  var verb = mode === 'move' ? 'Move' : 'Copy';
+  var title = kind === 'section' ? verb+' '+sourceMeal+' to…' : verb+' food to…';
+  var btnColor = mode === 'move' ? 'var(--sugar)' : 'var(--accent)';
+  var btnIcon = mode === 'move' ? '↗' : '📋';
   sheet.innerHTML = '<div class="modal-sheet"><div class="modal-handle"></div>'
     + '<div class="modal-title">'+title+'</div>'
     + '<div class="input-group"><label class="input-label">Day</label>'
@@ -1248,17 +1259,100 @@ function openCopyToModal(kind, sourceMeal, sourceFoodIdx){
     + '<div class="input-group"><label class="input-label">Meal</label>'
     + '<select id="copy-to-meal"><option value="Breakfast">🌅 Breakfast</option><option value="Lunch">☀️ Lunch</option><option value="Dinner">🌙 Dinner</option><option value="Snacks">🍎 Snacks</option></select>'
     + '</div>'
-    + '<button class="btn-primary" onclick="performCopyTo(\''+kind+'\',\''+sourceMeal+'\','+sourceFoodIdx+')">📋 Copy</button>'
+    + '<button class="btn-primary" style="background:'+btnColor+';" onclick="performTransfer(\''+mode+'\',\''+kind+'\',\''+sourceMeal+'\','+sourceFoodIdx+')">'+btnIcon+' '+verb+'</button>'
     + '<button class="btn-secondary" style="margin-top:10px;" onclick="closeCopyToModal()">Cancel</button>'
     + '</div>';
-  // Default targets: same meal, tomorrow
+  // Default: real today, same meal slot
   setTimeout(function(){
     var daySel = document.getElementById('copy-to-day');
-    if(daySel) daySel.value = String(dayOffset+1);
+    if(daySel) daySel.value = '0';
     var mealSel = document.getElementById('copy-to-meal');
     if(mealSel) mealSel.value = sourceMeal;
   }, 50);
   sheet.classList.add('open');
+}
+
+function performTransfer(mode, kind, sourceMeal, sourceFoodIdx){
+  var daySel = document.getElementById('copy-to-day');
+  var mealSel = document.getElementById('copy-to-meal');
+  if(!daySel || !mealSel) return;
+  var targetDayOffset;
+  if(daySel.value === 'CUSTOM'){
+    var dateInput = document.getElementById('copy-to-custom-date');
+    var selectedDate = dateInput ? dateInput.value : '';
+    if(!selectedDate){ showToast('Pick a date first'); return; }
+    var parsed = new Date(selectedDate + 'T00:00:00');
+    var now = new Date(); now.setHours(0,0,0,0);
+    targetDayOffset = Math.round((parsed - now) / (24*60*60*1000));
+  } else {
+    targetDayOffset = parseInt(daySel.value);
+  }
+  var targetMeal = mealSel.value;
+
+  // Load source foods — we need to find the specific items being transferred
+  var sourceLog = loadDayLog(dayOffset);
+  var sourceFoodsInMeal = sourceLog.foods.filter(function(f){ return f.meal === sourceMeal; });
+  var itemsToTransfer = [];
+  if(kind === 'section'){
+    if(!sourceFoodsInMeal.length){ showToast('Nothing to '+mode); return; }
+    itemsToTransfer = sourceFoodsInMeal.slice();
+  } else {
+    if(!sourceFoodsInMeal[sourceFoodIdx]){ showToast('Food not found'); return; }
+    itemsToTransfer = [sourceFoodsInMeal[sourceFoodIdx]];
+  }
+
+  // Safety: moving to the same day + same meal would be a no-op that just
+  // churns IDs. Copying to the same spot is fine (intentional duplication).
+  if(mode === 'move' && targetDayOffset === dayOffset && targetMeal === sourceMeal){
+    showToast('Already in '+sourceMeal+' on this day');
+    return;
+  }
+
+  // Build the target entries. For COPY we clone (original stays). For MOVE we
+  // reuse the existing objects but stamp the new meal/ID.
+  var targetLog = (targetDayOffset === dayOffset) ? sourceLog : loadDayLog(targetDayOffset);
+  itemsToTransfer.forEach(function(f){
+    if(mode === 'copy'){
+      var clone = Object.assign({}, f);
+      clone.id = Date.now() + Math.floor(Math.random()*1000);
+      clone.meal = targetMeal;
+      clone.eaten_at = Date.now();
+      targetLog.foods.push(clone);
+    } else {
+      // MOVE: stamp new meal on the existing object; leave eaten_at alone so
+      // user keeps the original timestamp if they care about that.
+      f.meal = targetMeal;
+    }
+  });
+
+  if(mode === 'move'){
+    // Remove originals from source — but only when source and target are
+    // different day logs. If same day, the objects are already in place
+    // with updated meal values (since targetLog === sourceLog).
+    if(targetDayOffset !== dayOffset){
+      sourceLog.foods = sourceLog.foods.filter(function(f){ return itemsToTransfer.indexOf(f) === -1; });
+      // Push the moved items into the target log
+      itemsToTransfer.forEach(function(f){ targetLog.foods.push(f); });
+      saveDayLog(sourceLog, dayOffset);
+    }
+    saveDayLog(targetLog, targetDayOffset);
+  } else {
+    saveDayLog(targetLog, targetDayOffset);
+  }
+
+  closeCopyToModal();
+  var verbPast = mode === 'move' ? 'Moved' : 'Copied';
+  showToast('✓ '+verbPast+' '+itemsToTransfer.length+' item'+(itemsToTransfer.length===1?'':'s')+' to '+targetMeal);
+
+  // Re-render if either source or target day is the one being viewed
+  if(targetDayOffset === dayOffset || mode === 'move'){
+    renderNutrition();
+  }
+}
+
+// Backward-compat shim — in case any old code paths still reference this
+function performCopyTo(kind, sourceMeal, sourceFoodIdx){
+  return performTransfer('copy', kind, sourceMeal, sourceFoodIdx);
 }
 function closeCopyToModal(){
   var sheet = document.getElementById('copy-to-sheet');
@@ -1277,53 +1371,7 @@ function handleCopyToDayChange(){
 }
 
 function performCopyTo(kind, sourceMeal, sourceFoodIdx){
-  var daySel = document.getElementById('copy-to-day');
-  var mealSel = document.getElementById('copy-to-meal');
-  if(!daySel || !mealSel) return;
-  var targetDayOffset;
-  if(daySel.value === 'CUSTOM'){
-    var dateInput = document.getElementById('copy-to-custom-date');
-    var selectedDate = dateInput ? dateInput.value : '';
-    if(!selectedDate){ showToast('Pick a date first'); return; }
-    var parsed = new Date(selectedDate + 'T00:00:00');
-    var now = new Date(); now.setHours(0,0,0,0);
-    targetDayOffset = Math.round((parsed - now) / (24*60*60*1000));
-  } else {
-    targetDayOffset = parseInt(daySel.value);
-  }
-  var targetMeal = mealSel.value;
-
-  // Load source foods
-  var sourceLog = loadDayLog(dayOffset);
-  var sourceFoods = sourceLog.foods.filter(function(f){ return f.meal === sourceMeal; });
-  var toCopy = [];
-  if(kind === 'section'){
-    if(!sourceFoods.length){ showToast('No foods to copy'); return; }
-    toCopy = sourceFoods.slice();
-  } else {
-    if(!sourceFoods[sourceFoodIdx]){ showToast('Food not found'); return; }
-    toCopy = [sourceFoods[sourceFoodIdx]];
-  }
-
-  // Copy to target — shallow clone with new ID and target meal
-  var targetLog = loadDayLog(targetDayOffset);
-  toCopy.forEach(function(f){
-    var clone = Object.assign({}, f);
-    clone.id = Date.now() + Math.floor(Math.random()*1000);
-    clone.meal = targetMeal;
-    // Reset eaten_at — use the target day's start time rather than source time
-    clone.eaten_at = Date.now();
-    targetLog.foods.push(clone);
-  });
-  saveDayLog(targetLog, targetDayOffset);
-
-  closeCopyToModal();
-  showToast('✓ Copied '+toCopy.length+' item'+(toCopy.length===1?'':'s')+' to '+targetMeal);
-
-  // If we copied to the day currently being viewed, re-render
-  if(targetDayOffset === dayOffset){
-    renderNutrition();
-  }
+  return performTransfer('copy', kind, sourceMeal, sourceFoodIdx);
 }
 
 // Save a section's foods as a new Meal in the meals list
@@ -9673,3 +9721,5 @@ if('serviceWorker' in navigator){
 
 </body>
 </html>
+
+ 
