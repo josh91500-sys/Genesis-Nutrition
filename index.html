@@ -549,6 +549,11 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
           <div class="more-label">Settings</div>
           <div class="more-sub">Preferences & data</div>
         </div>
+        <div class="more-item" id="more-admin-card" onclick="showSubPage('admin')" style="display:none;border:1px solid var(--sugar);">
+          <div class="more-icon">🛡️</div>
+          <div class="more-label">Admin</div>
+          <div class="more-sub">Reports &amp; moderation</div>
+        </div>
       </div>
     </div>
 
@@ -1683,26 +1688,28 @@ function renderAddModalRecents(){
     + '</div>';
 }
 
-// Quick-log a recent food from the add-food modal. Uses the currently
-// selected meal slot and the eaten_at time from the modal's time picker.
+// Quick-log a recent food from the add-food modal. Always prompts for the
+// meal slot so the user can decide fresh — they might have tapped + from
+// one section but want to log this recent food to a different meal.
 function quickAddRecentFromModal(idx){
   var cache = window._addModalRecentsCache || [];
   var source = cache[idx];
   if(!source){ showToast('Item not found'); return; }
-  var mealEl = document.getElementById('food-meal');
-  var targetMeal = mealEl ? mealEl.value : 'Breakfast';
-  var log = loadDayLog(dayOffset);
-  // Clone the food with a fresh id and the modal's time. Preserve recipe
-  // ingredients so the Meal badge carries over on re-logs.
-  var clone = Object.assign({}, source);
-  clone.id = Date.now();
-  clone.meal = targetMeal;
-  clone.eaten_at = getEatenAtTimestamp();
-  log.foods.push(clone);
-  saveDayLog(log, dayOffset);
-  closeAddFood();
-  renderNutrition();
-  showToast('✓ '+source.name+' added to '+targetMeal);
+  // Capture the eaten-at time now (before closing the modal wipes the input)
+  var eatenAtTs = getEatenAtTimestamp();
+  // Prompt for the meal slot
+  showMealPicker(source.name, function(targetMeal){
+    var log = loadDayLog(dayOffset);
+    var clone = Object.assign({}, source);
+    clone.id = Date.now();
+    clone.meal = targetMeal;
+    clone.eaten_at = eatenAtTs;
+    log.foods.push(clone);
+    saveDayLog(log, dayOffset);
+    closeAddFood();
+    renderNutrition();
+    showToast('✓ '+source.name+' added to '+targetMeal);
+  });
 }
 function closeAddFood(){
   document.getElementById('add-modal').classList.remove('open');
@@ -1831,6 +1838,8 @@ function showFoodPreview(food, containerId){
     badgeText = '✓ Your Correction';
   } else if(hasBarcodeSource && food._barcode_source === 'verified'){
     badgeText = '✓ Verified';
+  } else if(hasBarcodeSource && food._barcode_source === 'ai_fallback'){
+    badgeText = '🤖 AI — tap to fix';
   }
   var badgeStyle = isCNF ? 'background:rgba(255,107,107,.15);color:#ff9090;' : '';
   if(hasBarcodeSource){
@@ -4733,23 +4742,59 @@ async function saveVerifiedCorrection(upc, food, verification){
   try {
     if(typeof fbDb === 'undefined' || !fbDb){ return false; }
     if(!_currentUser || !_currentUser.uid){ return false; }
+
+    // Check if an existing verified correction is already in the shared pool.
+    // If values match within 10%, bump re_verify_count instead of overwriting.
+    // If values differ (or none exists), save fresh with count=1.
+    var existingSnap = null;
+    try {
+      existingSnap = await fbDb.collection('verified_corrections').doc(upc).get();
+    } catch(e){ /* rules may deny; treat as no existing */ }
+
+    var existing = (existingSnap && existingSnap.exists) ? existingSnap.data() : null;
+    var willBumpCount = false;
+    if(existing && existing.food && nutritionValuesMatch(existing.food, food, 0.10)){
+      willBumpCount = true;
+    }
+
     var payload = {
       food: food,
       verified_at: Date.now(),
       verified_by_uid: _currentUser.uid,
       source_url: verification.source_url || '',
       source_domain: verification.source_domain || '',
-      re_verify_count: 1,
+      re_verify_count: willBumpCount ? ((existing.re_verify_count || 1) + 1) : 1,
       confidence: verification.confidence || 'high'
     };
     await fbDb.collection('verified_corrections').doc(upc).set(payload);
-    // Invalidate cache so the fresh value reloads next time
     delete _verifiedCorrectionsCache[upc];
-    return true;
+    return { success: true, bumped: willBumpCount, count: payload.re_verify_count };
   } catch(e){
     console.warn('[verified_corrections] write failed:', e && e.message);
     return false;
   }
+}
+
+// Compare two nutrition objects — returns true if the key macros all match
+// within the given tolerance (e.g. 0.10 = 10%). We only check macros that
+// aren't near-zero; for things like fiber where small absolute values are
+// common, we allow wider variation. This is forgiving enough to handle label
+// rounding (FDA allows ~20%) while strict enough to catch real mismatches.
+function nutritionValuesMatch(a, b, tolerance){
+  tolerance = tolerance || 0.10;
+  var keys = ['cal', 'protein', 'carbs', 'fat'];
+  for(var i = 0; i < keys.length; i++){
+    var k = keys[i];
+    var av = parseFloat(a[k]) || 0;
+    var bv = parseFloat(b[k]) || 0;
+    // If both are ~0, consider a match
+    if(av < 0.5 && bv < 0.5) continue;
+    // If one is 0 and the other isn't, that's a clear mismatch
+    if(av < 0.5 || bv < 0.5) return false;
+    var pctDiff = Math.abs(av - bv) / Math.max(av, bv);
+    if(pctDiff > tolerance) return false;
+  }
+  return true;
 }
 
 // Shape a verified correction's stored food data into something
@@ -4764,6 +4809,345 @@ function verifiedCorrectionToFood(upc, verifiedData){
     _barcode_source_domain: verifiedData.source_domain || '',
     _barcode_reverify_count: verifiedData.re_verify_count || 1
   });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// ADMIN / MODERATION (Phase 3a)
+// ──────────────────────────────────────────────────────────────────────
+// Admin UIDs are hardcoded. Each admin can see the Admin tab in More and
+// review/action reports on verified corrections. Firestore rules enforce
+// the same list server-side so a non-admin can't read the reports table
+// even if they modify their client-side JS.
+// ──────────────────────────────────────────────────────────────────────
+
+var ADMIN_UIDS = ['57esskOvQpQqa3dxWtJcHmrD2tk1'];
+
+function isAdmin(){
+  if(!_currentUser || !_currentUser.uid) return false;
+  return ADMIN_UIDS.indexOf(_currentUser.uid) !== -1;
+}
+
+// Open a report form for a verified correction.
+function openReportCorrectionForm(pid){
+  var food = _previewFoodStore[pid];
+  if(!food || !food._barcode_upc){ return; }
+  if(!_currentUser || !_currentUser.uid){
+    showToast('Sign in to report');
+    return;
+  }
+  var modal = document.getElementById('report-correction-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'report-correction-modal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+  var productName = food._off_product_name || food.name || 'Unknown product';
+  var upc = food._barcode_upc;
+  modal.innerHTML = '<div class="modal-sheet">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">Report correction</div>'
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px;">This verified correction looks wrong. Tell us what\'s off and we\'ll review it.</div>'
+    + '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;">'
+    + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Reporting</div>'
+    + '<div style="font-size:13px;font-weight:700;">'+productName+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:3px;font-family:monospace;">UPC: '+upc+'</div>'
+    + '</div>'
+    + '<div class="input-group">'
+    + '<label class="input-label">What\'s wrong?</label>'
+    + '<div id="rc-categories" style="display:flex;flex-direction:column;gap:6px;">'
+    + [
+        {v:'wrong_product',label:'Wrong product (UPC points to something else)'},
+        {v:'wrong_values',label:'Wrong nutrition values'},
+        {v:'stale_data',label:'Stale data — product has changed'},
+        {v:'other',label:'Other'}
+      ].map(function(opt, i){
+        return '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;cursor:pointer;">'
+          + '<input type="radio" name="rc-category" value="'+opt.v+'"'+(i===0?' checked':'')+' style="width:18px;height:18px;accent-color:var(--accent);">'
+          + '<span style="font-size:13px;">'+opt.label+'</span>'
+          + '</label>';
+      }).join('')
+    + '</div>'
+    + '</div>'
+    + '<div class="input-group">'
+    + '<label class="input-label">Details (optional)</label>'
+    + '<textarea id="rc-details" rows="3" placeholder="e.g. Label says 220 cal but correction shows 180."></textarea>'
+    + '</div>'
+    + '<button class="btn-primary" onclick="submitCorrectionReport(\''+pid+'\')">Submit report</button>'
+    + '<button class="btn-secondary" style="margin-top:10px;" onclick="closeReportCorrectionForm()">Cancel</button>'
+    + '</div>';
+  modal.classList.add('open');
+}
+
+function closeReportCorrectionForm(){
+  var modal = document.getElementById('report-correction-modal');
+  if(modal) modal.classList.remove('open');
+}
+
+async function submitCorrectionReport(pid){
+  var food = _previewFoodStore[pid];
+  if(!food || !food._barcode_upc){ return; }
+  if(!_currentUser || !_currentUser.uid){ showToast('Sign in to report'); return; }
+  var categoryEl = document.querySelector('input[name="rc-category"]:checked');
+  var category = categoryEl ? categoryEl.value : 'other';
+  var detailsEl = document.getElementById('rc-details');
+  var details = (detailsEl ? detailsEl.value : '').trim().substring(0, 500);
+
+  try {
+    if(typeof fbDb === 'undefined' || !fbDb){
+      showToast('Unable to submit — offline?');
+      return;
+    }
+    var reportId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    var foodSnapshot = {
+      name: food.name || '',
+      brand: food.brand || food._off_brands || '',
+      cal: food.cal || 0,
+      protein: food.protein || 0,
+      carbs: food.carbs || 0,
+      fat: food.fat || 0,
+      sodium: food.sodium || 0,
+      serving_desc: food.serving_desc || '',
+      serving_g: food.serving_g || 0,
+      source: food.source || ''
+    };
+    await fbDb.collection('correction_reports').doc(reportId).set({
+      upc: food._barcode_upc,
+      category: category,
+      details: details,
+      reporter_uid: _currentUser.uid,
+      reporter_email: _currentUser.email || '',
+      food_snapshot: foodSnapshot,
+      source_url: food._barcode_source_url || '',
+      created_at: Date.now(),
+      status: 'pending'
+    });
+    closeReportCorrectionForm();
+    closeBarcodeLabelSource();
+    showToast('✓ Report submitted. Thanks for helping keep data clean.', 4000);
+  } catch(e){
+    console.error('[report] submission failed:', e);
+    showToast('Couldn\'t submit report: ' + (e.message || 'error'));
+  }
+}
+
+// Auto-demote: when admin loads the reports list, any UPC with 3+ distinct
+// pending reporters is automatically removed from the shared verified pool.
+// Triggering reports get status "auto_demoted" so admin sees what happened.
+//
+// This runs admin-side because Firestore rules prevent regular users from
+// counting reports across the collection. In practice: reports pile up, admin
+// opens the app, app auto-actions the ones that crossed threshold.
+// If you want instant auto-demote on every report submission, that requires
+// a Cloud Function (Phase 3c work).
+async function runAutoDemoteScan(pendingReports){
+  if(!isAdmin()) return { demoted: 0 };
+  if(typeof fbDb === 'undefined' || !fbDb) return { demoted: 0 };
+
+  // Group pending reports by UPC, tracking distinct reporters per UPC
+  var byUpc = {};
+  pendingReports.forEach(function(r){
+    if(!r.upc || !r.reporter_uid || r.status !== 'pending') return;
+    if(!byUpc[r.upc]) byUpc[r.upc] = { reporters: {}, reportIds: [] };
+    byUpc[r.upc].reporters[r.reporter_uid] = true;
+    byUpc[r.upc].reportIds.push(r._id);
+  });
+
+  var demotedCount = 0;
+  var upcsToDemote = [];
+  Object.keys(byUpc).forEach(function(upc){
+    var distinctReporters = Object.keys(byUpc[upc].reporters).length;
+    if(distinctReporters >= 3) upcsToDemote.push(upc);
+  });
+
+  for(var i = 0; i < upcsToDemote.length; i++){
+    var upc = upcsToDemote[i];
+    try {
+      // Delete from shared pool
+      await fbDb.collection('verified_corrections').doc(upc).delete();
+      if(typeof _verifiedCorrectionsCache !== 'undefined'){
+        delete _verifiedCorrectionsCache[upc];
+      }
+      // Mark triggering reports as auto_demoted
+      var updates = byUpc[upc].reportIds.map(function(rid){
+        return fbDb.collection('correction_reports').doc(rid).update({
+          status: 'auto_demoted',
+          resolved_at: Date.now()
+        });
+      });
+      await Promise.all(updates);
+      demotedCount++;
+    } catch(e){
+      console.warn('[auto-demote] failed for UPC '+upc+':', e && e.message);
+    }
+  }
+  return { demoted: demotedCount };
+}
+
+// Admin sub-page — shows pending reports with delete/dismiss actions.
+async function renderAdminSubPage(el){
+  if(!isAdmin()){
+    el.innerHTML = '<div class="card"><div class="card-title">🛡️ Admin</div><div style="font-size:13px;color:var(--muted);">Access denied.</div></div>';
+    return;
+  }
+  el.innerHTML = '<div class="card"><div class="card-title">🛡️ Admin — Correction Reports</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Pending reports on verified corrections. Review, then delete the correction or dismiss the report.</div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:12px;">'
+    + '<button id="admin-tab-pending" onclick="loadAdminReports(\'pending\')" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">Pending</button>'
+    + '<button id="admin-tab-resolved" onclick="loadAdminReports(\'resolved\')" style="flex:1;background:var(--bg4);color:var(--muted);border:1px solid var(--border2);border-radius:8px;padding:8px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">Resolved</button>'
+    + '</div>'
+    + '<div id="admin-reports-list"><div style="font-size:12px;color:var(--muted);">Loading…</div></div>'
+    + '</div>';
+  loadAdminReports('pending');
+}
+
+async function loadAdminReports(filter){
+  if(!isAdmin()) return;
+  var listEl = document.getElementById('admin-reports-list');
+  if(!listEl) return;
+  var pendingBtn = document.getElementById('admin-tab-pending');
+  var resolvedBtn = document.getElementById('admin-tab-resolved');
+  if(pendingBtn && resolvedBtn){
+    var active = (filter === 'pending') ? pendingBtn : resolvedBtn;
+    var inactive = (filter === 'pending') ? resolvedBtn : pendingBtn;
+    active.style.background = 'var(--accent)'; active.style.color = '#fff'; active.style.border = 'none';
+    inactive.style.background = 'var(--bg4)'; inactive.style.color = 'var(--muted)'; inactive.style.border = '1px solid var(--border2)';
+  }
+  listEl.innerHTML = '<div style="font-size:12px;color:var(--muted);">Loading…</div>';
+  try {
+    var q = fbDb.collection('correction_reports').orderBy('created_at', 'desc').limit(100);
+    var snap = await q.get();
+    var allReports = [];
+    snap.forEach(function(doc){
+      var d = doc.data(); d._id = doc.id;
+      allReports.push(d);
+    });
+
+    // Run auto-demote scan first (only checks pending reports). If anything
+    // was demoted, re-fetch so we show the updated statuses.
+    var pending = allReports.filter(function(r){ return r.status === 'pending'; });
+    if(pending.length > 0){
+      var demoteResult = await runAutoDemoteScan(pending);
+      if(demoteResult.demoted > 0){
+        showToast('✓ Auto-demoted '+demoteResult.demoted+' correction'+(demoteResult.demoted===1?'':'s')+' (3+ reporters)', 4500);
+        // Re-fetch
+        snap = await q.get();
+        allReports = [];
+        snap.forEach(function(doc){
+          var d = doc.data(); d._id = doc.id;
+          allReports.push(d);
+        });
+      }
+    }
+
+    var reports = allReports.filter(function(r){
+      if(filter === 'pending') return r.status === 'pending';
+      return r.status !== 'pending';
+    });
+
+    if(!reports.length){
+      listEl.innerHTML = '<div style="font-size:13px;color:var(--muted);text-align:center;padding:20px;">'
+        + (filter === 'pending' ? 'No pending reports.' : 'No resolved reports.') + '</div>';
+      return;
+    }
+    var categoryLabels = {
+      wrong_product: 'Wrong product',
+      wrong_values: 'Wrong values',
+      stale_data: 'Stale data',
+      other: 'Other'
+    };
+    var statusLabels = {
+      pending: 'Pending',
+      resolved_deleted: 'Deleted',
+      resolved_dismissed: 'Dismissed',
+      auto_demoted: 'Auto-demoted'
+    };
+    var statusColors = {
+      pending: 'var(--sugar)',
+      resolved_deleted: 'var(--fiber)',
+      resolved_dismissed: 'var(--fiber)',
+      auto_demoted: '#ff9090'
+    };
+    listEl.innerHTML = reports.map(function(r){
+      var f = r.food_snapshot || {};
+      var dateStr = new Date(r.created_at).toLocaleString();
+      var statusBadge = '<span style="background:var(--bg4);color:'
+        + (statusColors[r.status] || 'var(--muted)')
+        + ';padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px;">'
+        + (statusLabels[r.status] || r.status) + '</span>';
+      var actionButtons = r.status === 'pending'
+        ? '<div style="display:flex;gap:6px;margin-top:10px;">'
+          + '<button onclick="adminActionReport(\''+r._id+'\',\''+r.upc+'\',\'delete\')" style="flex:1;background:var(--sugar);color:#fff;border:none;border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">🗑️ Delete correction</button>'
+          + '<button onclick="adminActionReport(\''+r._id+'\',\''+r.upc+'\',\'dismiss\')" style="flex:1;background:var(--bg4);color:var(--text);border:1px solid var(--border2);border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">✓ Dismiss report</button>'
+          + '</div>'
+        : '';
+      var offLink = '<a href="https://world.openfoodfacts.org/product/'+r.upc+'" target="_blank" style="color:var(--accent2);font-size:11px;display:inline-block;margin-top:6px;">View on OFF ↗</a>';
+      var sourceLink = r.source_url ? ' · <a href="'+r.source_url+'" target="_blank" style="color:var(--accent2);font-size:11px;">Source ↗</a>' : '';
+      return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;">'
+        + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">'
+        + '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:700;">'+escapeHtml(f.name||'(no name)')+'</div>'
+        + (f.brand ? '<div style="font-size:11px;color:var(--muted);">'+escapeHtml(f.brand)+'</div>' : '')
+        + '<div style="font-size:10px;color:var(--muted);font-family:monospace;margin-top:2px;">UPC: '+r.upc+'</div>'
+        + '</div>'
+        + '<div>' + statusBadge + '</div>'
+        + '</div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">'
+        + '<strong>'+(categoryLabels[r.category]||r.category)+'</strong> · '
+        + dateStr + ' · '
+        + escapeHtml((r.reporter_email || '').substring(0, 30) || r.reporter_uid.substring(0,8))
+        + '</div>'
+        + (r.details ? '<div style="background:var(--bg3);border-left:3px solid var(--accent);padding:8px 10px;font-size:12px;color:var(--text);margin-bottom:8px;font-style:italic;">"'+escapeHtml(r.details)+'"</div>' : '')
+        + '<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Current values: '
+        + Math.round(f.cal||0)+' kcal · P '+Math.round(f.protein||0)+'g · C '+Math.round(f.carbs||0)+'g · F '+Math.round(f.fat||0)+'g · '
+        + Math.round(f.sodium||0)+'mg sodium · '+escapeHtml(f.serving_desc||'serving unknown')
+        + '</div>'
+        + offLink + sourceLink
+        + actionButtons
+        + '</div>';
+    }).join('');
+  } catch(e){
+    console.error('[admin] load failed:', e);
+    listEl.innerHTML = '<div style="color:#ff9090;font-size:12px;">Failed to load reports: '+(e.message||'error')+'</div>';
+  }
+}
+
+function escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+async function adminActionReport(reportId, upc, action){
+  if(!isAdmin()){ showToast('Not authorized'); return; }
+  var confirmMsg = action === 'delete'
+    ? 'Delete the verified correction for UPC '+upc+'? Other users will fall back to OFF data on next scan.'
+    : 'Dismiss this report? The verified correction stays.';
+  if(!confirm(confirmMsg)) return;
+  try {
+    if(action === 'delete'){
+      await fbDb.collection('verified_corrections').doc(upc).delete();
+      if(typeof _verifiedCorrectionsCache !== 'undefined'){
+        delete _verifiedCorrectionsCache[upc];
+      }
+      await fbDb.collection('correction_reports').doc(reportId).update({
+        status: 'resolved_deleted',
+        resolved_at: Date.now(),
+        resolved_by_uid: _currentUser.uid
+      });
+      showToast('✓ Correction deleted. Report resolved.');
+    } else {
+      await fbDb.collection('correction_reports').doc(reportId).update({
+        status: 'resolved_dismissed',
+        resolved_at: Date.now(),
+        resolved_by_uid: _currentUser.uid
+      });
+      showToast('✓ Report dismissed. Correction kept.');
+    }
+    loadAdminReports('pending');
+  } catch(e){
+    console.error('[admin] action failed:', e);
+    showToast('Action failed: '+(e.message||'error'));
+  }
 }
 
 // Show the label-source popup when user taps the "✓ Label" or "✓ Your
@@ -4782,6 +5166,7 @@ function showBarcodeLabelSource(pid){
   var source = food._barcode_source || 'off';
   var isCorrection = source === 'user_correction';
   var isVerified = source === 'verified';
+  var isAIFallback = source === 'ai_fallback';
   var titleText;
   var subtitleText;
   if(isVerified){
@@ -4790,6 +5175,9 @@ function showBarcodeLabelSource(pid){
   } else if(isCorrection){
     titleText = 'Your Correction';
     subtitleText = 'You corrected this product previously. These nutrition values come from your label photo, not Open Food Facts. Not shared — stored privately on your device.';
+  } else if(isAIFallback){
+    titleText = 'AI Estimate';
+    subtitleText = 'Open Food Facts didn\'t have data for this product, so these values are an AI best-guess. Tap "Fix data — scan my label" to get accurate values from your actual label.';
   } else {
     titleText = 'Label Source';
     subtitleText = 'Open Food Facts is a crowd-sourced nutrition database. If the info below doesn\'t match what\'s on your product, tap "Fix data" to take a label photo.';
@@ -4838,8 +5226,10 @@ function showBarcodeLabelSource(pid){
 
   var actionButtons;
   if(isVerified){
-    // Verified entries can be re-verified but not reverted (they're shared)
-    actionButtons = '<button class="btn-primary" style="margin-bottom:8px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Re-verify — my label differs</button>';
+    // Verified entries can be re-verified AND reported. Can't be reverted —
+    // they're shared data.
+    actionButtons = '<button class="btn-primary" style="margin-bottom:8px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Re-verify — my label differs</button>'
+      + '<button class="btn-primary" style="background:var(--bg4);color:var(--sugar);border:1px solid var(--sugar);margin-bottom:10px;" onclick="openReportCorrectionForm(\''+pid+'\')">🚩 Report this correction</button>';
   } else if(isCorrection){
     actionButtons = '<button class="btn-primary" style="margin-bottom:8px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Re-scan label</button>'
       + '<button class="btn-primary" style="background:var(--sugar);margin-bottom:10px;" onclick="revertBarcodeCorrection(\''+upc+'\')">↶ Revert to Open Food Facts</button>';
@@ -5011,12 +5401,16 @@ async function handleBarcodeCorrectionPhoto(ev){
     if(verification && verification.verified){
       // Web search confirmed the product + values. Save to shared pool.
       var saved = await saveVerifiedCorrection(upc, correctedFood, verification);
-      if(saved){
+      if(saved && saved.success){
         previewSource = 'verified';
         previewSourceUrl = verification.source_url || '';
         previewSourceDomain = verification.source_domain || '';
         if(status) status.textContent = '';
-        showToast('✓ Verified against ' + (verification.source_domain || 'online source') + ' — shared with all users', 5000);
+        if(saved.bumped){
+          showToast('✓ Re-verified against ' + (verification.source_domain || 'online source') + ' — confirmed by ' + saved.count + ' users', 5000);
+        } else {
+          showToast('✓ Verified against ' + (verification.source_domain || 'online source') + ' — shared with all users', 5000);
+        }
       } else {
         // Firestore write failed but photo extraction worked. Private fallback.
         if(status) status.textContent = '';
@@ -5356,7 +5750,26 @@ async function lookupUPCCode(upc){
       var text=(data.content&&data.content[0]&&data.content[0].text)||'';
       var match=text.match(/\{[\s\S]*\}/);
       if(!match) throw new Error();
-      status.textContent=''; showFoodPreview(JSON.parse(match[0]),'barcode-preview');
+      status.textContent='';
+      // Attach barcode metadata so the badge is still tappable — this lets
+      // the user take a label photo and save a correction even when OFF had
+      // no data on the product.
+      var aiFood = JSON.parse(match[0]);
+      aiFood._barcode_upc = upc;
+      aiFood._barcode_source = 'ai_fallback';
+      aiFood._off_product_name = aiFood.name || 'Unknown product';
+      aiFood._off_brands = '';
+      aiFood._off_image_url = null;
+      aiFood._off_url = null;
+      showFoodPreview(aiFood,'barcode-preview');
+      // Also stash for correction flow
+      window._lastBarcodeProduct = {
+        name: aiFood.name || 'Unknown',
+        brands: '',
+        upc: upc,
+        image_url: null,
+        off_url: null
+      };
     } catch(e2){ status.textContent='✗ Not found. Try Scan Label.'; }
   }
 }
@@ -5491,6 +5904,7 @@ function showSubPage(name){
   if(name==='weight'){ showWeightTracker(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   if(name==='health'){ renderHealthSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   if(name==='supplements'){ renderSupplementsSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
+  if(name==='admin'){ renderAdminSubPage(el); el.scrollIntoView({behavior:'smooth',block:'start'}); return; }
   // Resolve handler via window so undefined functions fail gracefully
   // (avoids ReferenceError if a page module hasn't loaded yet)
   var handlers = {
@@ -7981,6 +8395,17 @@ function initFirebaseAuth(){
             // Silent fail — not all users have permission to read this collection,
             // which is fine. If it errors, user just doesn't get lifetime pro.
           }
+
+          // Admin UID check — reveals the Admin card in More menu for allowed UIDs.
+          // The check is client-side (can be bypassed by a tech-savvy user inspecting
+          // the DOM) but Firestore rules enforce actual admin-level reads server-side.
+          try {
+            if(isAdmin()){
+              var adminCard = document.getElementById('more-admin-card');
+              if(adminCard) adminCard.style.display = '';
+              console.log('[auth] Admin UI revealed');
+            }
+          } catch(e){}
           if(typeof renderNutrition === 'function') renderNutrition();
           // Check for pending friend requests / new activity and show banner
           if(typeof checkFriendsBanner === 'function'){
