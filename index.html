@@ -729,6 +729,9 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
       <div id="cnf-search-results"></div>
     </div>
 
+    <!-- Recent foods list — always shown (if any exist), regardless of mode -->
+    <div id="add-modal-recents" style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;"></div>
+
     <button class="btn-secondary" style="margin-top:10px;" onclick="closeAddFood()">Cancel</button>
   </div>
 </div>
@@ -1631,6 +1634,75 @@ function openAddFood(meal){
   setFoodTimeToNow();
   document.getElementById('add-modal').classList.add('open');
   setMode('describe', document.getElementById('mode-describe'));
+  renderAddModalRecents();
+}
+
+// Render a scrollable list of the user's recent foods at the bottom of the
+// add-food modal. Tapping an item quick-logs it to the selected meal slot
+// with its original macros. Hidden entirely when no recents exist.
+function renderAddModalRecents(){
+  var el = document.getElementById('add-modal-recents');
+  if(!el) return;
+  // Pull from last 14 days, dedupe by name, preserve newest-first ordering
+  var seen = {};
+  var recents = [];
+  for(var i = 0; i <= 14; i++){
+    var log = loadDayLog(-i);
+    var foods = (log.foods || []).slice();
+    // Within a single day, sort newest-first by timestamp
+    foods.sort(function(a,b){ return (b.eaten_at||b.id||0) - (a.eaten_at||a.id||0); });
+    foods.forEach(function(f){
+      if(!seen[f.name] && recents.length < 15){
+        seen[f.name] = true;
+        recents.push(f);
+      }
+    });
+    if(recents.length >= 15) break;
+  }
+  if(!recents.length){
+    el.innerHTML = '';
+    return;
+  }
+  // Stash for the tap handler
+  window._addModalRecentsCache = recents;
+  el.innerHTML = '<div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;">Recent — tap to add</div>'
+    + '<div style="max-height:300px;overflow-y:auto;margin:0 -4px;">'
+    + recents.map(function(f, idx){
+        var protein = (f.protein||0).toFixed(0);
+        var carbs = (f.carbs||0).toFixed(0);
+        var fat = (f.fat||0).toFixed(0);
+        return '<button onclick="quickAddRecentFromModal('+idx+')" '
+          + 'style="width:100%;background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:0 0 6px 0;text-align:left;cursor:pointer;color:var(--text);font-family:DM Sans,sans-serif;">'
+          + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">'
+          + '<div style="flex:1;min-width:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+f.name+'</div>'
+          + '<div style="font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;">'+Math.round(f.cal||0)+' kcal</div>'
+          + '</div>'
+          + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">P '+protein+'g · C '+carbs+'g · F '+fat+'g</div>'
+          + '</button>';
+      }).join('')
+    + '</div>';
+}
+
+// Quick-log a recent food from the add-food modal. Uses the currently
+// selected meal slot and the eaten_at time from the modal's time picker.
+function quickAddRecentFromModal(idx){
+  var cache = window._addModalRecentsCache || [];
+  var source = cache[idx];
+  if(!source){ showToast('Item not found'); return; }
+  var mealEl = document.getElementById('food-meal');
+  var targetMeal = mealEl ? mealEl.value : 'Breakfast';
+  var log = loadDayLog(dayOffset);
+  // Clone the food with a fresh id and the modal's time. Preserve recipe
+  // ingredients so the Meal badge carries over on re-logs.
+  var clone = Object.assign({}, source);
+  clone.id = Date.now();
+  clone.meal = targetMeal;
+  clone.eaten_at = getEatenAtTimestamp();
+  log.foods.push(clone);
+  saveDayLog(log, dayOffset);
+  closeAddFood();
+  renderNutrition();
+  showToast('✓ '+source.name+' added to '+targetMeal);
 }
 function closeAddFood(){
   document.getElementById('add-modal').classList.remove('open');
@@ -1757,6 +1829,8 @@ function showFoodPreview(food, containerId){
   var hasBarcodeSource = !!food._barcode_upc;
   if(hasBarcodeSource && food._barcode_source === 'user_correction'){
     badgeText = '✓ Your Correction';
+  } else if(hasBarcodeSource && food._barcode_source === 'verified'){
+    badgeText = '✓ Verified';
   }
   var badgeStyle = isCNF ? 'background:rgba(255,107,107,.15);color:#ff9090;' : '';
   if(hasBarcodeSource){
@@ -4620,6 +4694,78 @@ function deleteUserBarcodeCorrection(upc){
   } catch(e){ return false; }
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// VERIFIED COMMUNITY CORRECTIONS (Part 1B)
+// ──────────────────────────────────────────────────────────────────────
+// When a user corrects a product AND the AI web-search can verify the
+// values against an authoritative online source (brand site, retailer,
+// USDA), we save the correction to the shared `verified_corrections`
+// Firestore collection. Every future user who scans that UPC gets the
+// verified data automatically.
+//
+// In-memory cache to avoid re-fetching Firestore for the same UPC twice
+// in one session.
+// ──────────────────────────────────────────────────────────────────────
+
+var _verifiedCorrectionsCache = {};
+
+async function loadVerifiedCorrection(upc){
+  if(_verifiedCorrectionsCache[upc] !== undefined){
+    return _verifiedCorrectionsCache[upc];
+  }
+  try {
+    if(typeof fbDb === 'undefined' || !fbDb){ return null; }
+    var doc = await fbDb.collection('verified_corrections').doc(upc).get();
+    if(doc.exists){
+      var data = doc.data();
+      _verifiedCorrectionsCache[upc] = data;
+      return data;
+    }
+    _verifiedCorrectionsCache[upc] = null;
+    return null;
+  } catch(e){
+    console.warn('[verified_corrections] read failed:', e && e.message);
+    return null;
+  }
+}
+
+async function saveVerifiedCorrection(upc, food, verification){
+  try {
+    if(typeof fbDb === 'undefined' || !fbDb){ return false; }
+    if(!_currentUser || !_currentUser.uid){ return false; }
+    var payload = {
+      food: food,
+      verified_at: Date.now(),
+      verified_by_uid: _currentUser.uid,
+      source_url: verification.source_url || '',
+      source_domain: verification.source_domain || '',
+      re_verify_count: 1,
+      confidence: verification.confidence || 'high'
+    };
+    await fbDb.collection('verified_corrections').doc(upc).set(payload);
+    // Invalidate cache so the fresh value reloads next time
+    delete _verifiedCorrectionsCache[upc];
+    return true;
+  } catch(e){
+    console.warn('[verified_corrections] write failed:', e && e.message);
+    return false;
+  }
+}
+
+// Shape a verified correction's stored food data into something
+// showFoodPreview can render, attaching barcode metadata for the clickable
+// badge + popup.
+function verifiedCorrectionToFood(upc, verifiedData){
+  return Object.assign({}, verifiedData.food, {
+    _barcode_upc: upc,
+    _barcode_source: 'verified',
+    _barcode_verified_at: verifiedData.verified_at,
+    _barcode_source_url: verifiedData.source_url || '',
+    _barcode_source_domain: verifiedData.source_domain || '',
+    _barcode_reverify_count: verifiedData.re_verify_count || 1
+  });
+}
+
 // Show the label-source popup when user taps the "✓ Label" or "✓ Your
 // Correction" badge. Displays OFF product info + photo + link + "Fix data"
 // entry point into the correction flow.
@@ -4633,33 +4779,73 @@ function showBarcodeLabelSource(pid){
     modal.className = 'modal-backdrop';
     document.body.appendChild(modal);
   }
-  var isCorrection = food._barcode_source === 'user_correction';
-  var titleText = isCorrection ? 'Your Correction' : 'Label Source';
-  var subtitleText = isCorrection
-    ? 'You corrected this product previously. These nutrition values come from your label photo, not Open Food Facts.'
-    : 'Open Food Facts is a crowd-sourced nutrition database. If the info below doesn\'t match what\'s on your product, tap "Fix data" to take a label photo.';
+  var source = food._barcode_source || 'off';
+  var isCorrection = source === 'user_correction';
+  var isVerified = source === 'verified';
+  var titleText;
+  var subtitleText;
+  if(isVerified){
+    titleText = 'Community-Verified Data';
+    subtitleText = 'These values were verified against an authoritative online source and are shared across all users. Tap "Fix data" to re-verify if your label shows different numbers.';
+  } else if(isCorrection){
+    titleText = 'Your Correction';
+    subtitleText = 'You corrected this product previously. These nutrition values come from your label photo, not Open Food Facts. Not shared — stored privately on your device.';
+  } else {
+    titleText = 'Label Source';
+    subtitleText = 'Open Food Facts is a crowd-sourced nutrition database. If the info below doesn\'t match what\'s on your product, tap "Fix data" to take a label photo.';
+  }
 
   var productName = food._off_product_name || food.name || 'Unknown product';
-  var brands = food._off_brands || '';
+  var brands = food._off_brands || food.brand || '';
   var imgUrl = food._off_image_url;
   var offUrl = food._off_url;
   var upc = food._barcode_upc;
 
-  // Build correction date if this is a user correction
-  var correctionAgeHtml = '';
-  if(isCorrection && food._barcode_corrected_at){
-    var days = Math.round((Date.now() - food._barcode_corrected_at) / 86400000);
+  // Age display for user or verified corrections
+  var ageHtml = '';
+  var ts = isVerified ? food._barcode_verified_at : food._barcode_corrected_at;
+  if(ts){
+    var days = Math.round((Date.now() - ts) / 86400000);
     var ageText = days === 0 ? 'today' : days === 1 ? 'yesterday' : days+' days ago';
-    correctionAgeHtml = '<div style="font-size:11px;color:var(--fiber);margin-top:4px;">Saved '+ageText+'</div>';
+    var ageColor = isVerified ? 'var(--accent2)' : 'var(--fiber)';
+    var ageLabel = isVerified ? 'Verified' : 'Saved';
+    ageHtml = '<div style="font-size:11px;color:'+ageColor+';margin-top:4px;">'+ageLabel+' '+ageText;
+    if(isVerified && food._barcode_reverify_count > 1){
+      ageHtml += ' · confirmed by '+food._barcode_reverify_count+' users';
+    }
+    ageHtml += '</div>';
+  }
+
+  // Verified source link
+  var verifiedSourceHtml = '';
+  if(isVerified && food._barcode_source_domain){
+    var domain = food._barcode_source_domain;
+    var sourceUrl = food._barcode_source_url;
+    if(sourceUrl){
+      verifiedSourceHtml = '<div style="font-size:11px;margin-top:6px;">✓ Verified against <a href="'+sourceUrl+'" target="_blank" style="color:var(--accent2);">'+domain+' ↗</a></div>';
+    } else {
+      verifiedSourceHtml = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">✓ Verified against '+domain+'</div>';
+    }
   }
 
   var imgBlock = imgUrl
     ? '<div style="margin-bottom:12px;text-align:center;"><img src="'+imgUrl+'" alt="Product" style="max-width:180px;max-height:200px;border-radius:8px;background:#fff;padding:4px;"></div>'
     : '';
 
-  var offLink = (offUrl && !isCorrection)
+  var offLink = (offUrl && !isCorrection && !isVerified)
     ? '<a href="'+offUrl+'" target="_blank" style="color:var(--accent2);font-size:12px;display:inline-block;margin-top:6px;">View on Open Food Facts ↗</a>'
     : '';
+
+  var actionButtons;
+  if(isVerified){
+    // Verified entries can be re-verified but not reverted (they're shared)
+    actionButtons = '<button class="btn-primary" style="margin-bottom:8px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Re-verify — my label differs</button>';
+  } else if(isCorrection){
+    actionButtons = '<button class="btn-primary" style="margin-bottom:8px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Re-scan label</button>'
+      + '<button class="btn-primary" style="background:var(--sugar);margin-bottom:10px;" onclick="revertBarcodeCorrection(\''+upc+'\')">↶ Revert to Open Food Facts</button>';
+  } else {
+    actionButtons = '<button class="btn-primary" style="background:var(--sugar);margin-bottom:10px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Fix data — scan my label</button>';
+  }
 
   modal.innerHTML = '<div class="modal-sheet">'
     + '<div class="modal-handle"></div>'
@@ -4671,14 +4857,11 @@ function showBarcodeLabelSource(pid){
     + '<div style="font-size:14px;font-weight:700;">'+productName+'</div>'
     + (brands ? '<div style="font-size:12px;color:var(--muted);margin-top:3px;">'+brands+'</div>' : '')
     + '<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:monospace;">UPC: '+upc+'</div>'
-    + correctionAgeHtml
+    + ageHtml
+    + verifiedSourceHtml
     + offLink
     + '</div>'
-    + (isCorrection
-        ? '<button class="btn-primary" style="margin-bottom:8px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Re-scan label</button>'
-          + '<button class="btn-primary" style="background:var(--sugar);margin-bottom:10px;" onclick="revertBarcodeCorrection(\''+upc+'\')">↶ Revert to Open Food Facts</button>'
-        : '<button class="btn-primary" style="background:var(--sugar);margin-bottom:10px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Fix data — scan my label</button>'
-      )
+    + actionButtons
     + '<button class="btn-secondary" onclick="closeBarcodeLabelSource()">Close</button>'
     + '</div>';
   modal.classList.add('open');
@@ -4811,16 +4994,53 @@ async function handleBarcodeCorrectionPhoto(ev){
       source: 'Your Label Photo'
     };
 
-    // Save as user's private correction
+    // Always save privately first — this guarantees the user has working
+    // data even if web verification fails.
     saveUserBarcodeCorrection(upc, correctedFood);
-    if(status) status.textContent = '';
-    showToast('✓ Correction saved. Future scans will use your data.');
 
-    // Show the corrected food in the preview
+    // Now attempt web verification. If successful, also save to shared pool.
+    if(status){
+      status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Verifying against online sources…</div>';
+    }
+    var verification = await verifyCorrectionOnline(upc, correctedFood, product);
+    var previewSource = 'user_correction';
+    var previewCorrectedAt = Date.now();
+    var previewSourceUrl = '';
+    var previewSourceDomain = '';
+
+    if(verification && verification.verified){
+      // Web search confirmed the product + values. Save to shared pool.
+      var saved = await saveVerifiedCorrection(upc, correctedFood, verification);
+      if(saved){
+        previewSource = 'verified';
+        previewSourceUrl = verification.source_url || '';
+        previewSourceDomain = verification.source_domain || '';
+        if(status) status.textContent = '';
+        showToast('✓ Verified against ' + (verification.source_domain || 'online source') + ' — shared with all users', 5000);
+      } else {
+        // Firestore write failed but photo extraction worked. Private fallback.
+        if(status) status.textContent = '';
+        showToast('✓ Saved for your use (couldn\'t sync to community)');
+      }
+    } else {
+      // Couldn't verify online — private only.
+      if(status) status.textContent = '';
+      if(verification && verification.reason === 'values_mismatch'){
+        showToast('✓ Saved for you. Online source had different values — kept private.', 5000);
+      } else {
+        showToast('✓ Saved for your use. Couldn\'t verify online.', 4000);
+      }
+    }
+
+    // Show the corrected food in the preview (reflecting verified status if applicable)
     var previewFood = Object.assign({}, correctedFood, {
       _barcode_upc: upc,
-      _barcode_source: 'user_correction',
-      _barcode_corrected_at: Date.now()
+      _barcode_source: previewSource,
+      _barcode_corrected_at: previewCorrectedAt,
+      _barcode_verified_at: previewSource === 'verified' ? previewCorrectedAt : null,
+      _barcode_source_url: previewSourceUrl,
+      _barcode_source_domain: previewSourceDomain,
+      _barcode_reverify_count: 1
     });
     showFoodPreview(previewFood, 'barcode-preview');
   } catch(e){
@@ -4831,6 +5051,107 @@ async function handleBarcodeCorrectionPhoto(ev){
       showToast('Couldn\'t read label — try a clearer photo');
     }
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// WEB VERIFICATION — checks a user's photo-correction against online sources
+// using Claude's web_search tool. Returns:
+//   { verified: true,  source_url, source_domain, confidence }
+//   { verified: false, reason: 'values_mismatch' | 'not_found' | 'error' }
+// ──────────────────────────────────────────────────────────────────────
+async function verifyCorrectionOnline(upc, correctedFood, product){
+  try {
+    var brand = product.brand || correctedFood.brand || '';
+    var name  = product.name  || correctedFood.name  || '';
+    if(!brand && !name){
+      return { verified: false, reason: 'not_found' };
+    }
+
+    // Ask Claude to web-search for the product and return a comparison.
+    // The tool_use format means Claude can do multiple search turns if needed.
+    var prompt = 'I need to verify nutrition data for a packaged food product. Use web search to find authoritative nutrition info (brand website, USDA FoodData Central, or major retailer page) for this product:\n\n'
+      + 'Brand: ' + brand + '\n'
+      + 'Product: ' + name + '\n'
+      + 'UPC: ' + upc + '\n\n'
+      + 'From the user\'s label photo, the nutrition per serving is:\n'
+      + '- Serving: ' + correctedFood.serving_desc + ' (' + correctedFood.serving_g + 'g)\n'
+      + '- Calories: ' + correctedFood.cal + '\n'
+      + '- Protein: ' + correctedFood.protein + 'g\n'
+      + '- Carbs: ' + correctedFood.carbs + 'g\n'
+      + '- Fat: ' + correctedFood.fat + 'g\n'
+      + '- Sodium: ' + correctedFood.sodium + 'mg\n\n'
+      + 'Search for this product and compare. Return ONLY a JSON object at the end of your response (no other JSON in your response):\n'
+      + '{\n'
+      + '"verified": true/false,\n'
+      + '"source_url": "the full URL you verified against, or empty",\n'
+      + '"source_domain": "just the domain like marzetti.com, or empty",\n'
+      + '"reason": "match" | "values_mismatch" | "not_found",\n'
+      + '"notes": "brief note on what you found"\n'
+      + '}\n\n'
+      + 'Rules:\n'
+      + '- verified=true ONLY if you found an authoritative source AND the calories/protein/carbs/fat match within 10%\n'
+      + '- verified=false with reason="values_mismatch" if you found the product but values differ significantly\n'
+      + '- verified=false with reason="not_found" if you couldn\'t find the product online\n'
+      + '- Never claim verified=true if you didn\'t actually find a source URL';
+
+    var res = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+      messages: [{ role: 'user', content: prompt }]
+    });
+    if(!res.ok){
+      console.warn('[verify] HTTP', res.status);
+      return { verified: false, reason: 'error' };
+    }
+    var data = await res.json();
+    // Claude's response is an array of content blocks. Extract the final text block.
+    var textBlocks = (data.content || []).filter(function(c){ return c && c.type === 'text'; });
+    var fullText = textBlocks.map(function(c){ return c.text || ''; }).join('\n');
+
+    // Look for the JSON object in the response (may come after web search results)
+    // Try to find the LAST JSON object in the text.
+    var jsonMatch = null;
+    var matches = fullText.match(/\{[\s\S]*?\}/g);
+    if(matches){
+      // The last JSON object in the text is our answer
+      for(var i = matches.length - 1; i >= 0; i--){
+        try {
+          var candidate = JSON.parse(matches[i]);
+          if(candidate && typeof candidate.verified !== 'undefined'){
+            jsonMatch = candidate;
+            break;
+          }
+        } catch(e){ /* try next */ }
+      }
+    }
+    if(!jsonMatch){
+      console.warn('[verify] no parseable JSON in response');
+      return { verified: false, reason: 'error' };
+    }
+    if(jsonMatch.verified === true && jsonMatch.source_url){
+      return {
+        verified: true,
+        source_url: jsonMatch.source_url,
+        source_domain: jsonMatch.source_domain || extractDomain(jsonMatch.source_url),
+        confidence: 'high'
+      };
+    }
+    return {
+      verified: false,
+      reason: jsonMatch.reason || 'not_found'
+    };
+  } catch(e){
+    console.warn('[verify] error:', e && e.message);
+    return { verified: false, reason: 'error' };
+  }
+}
+
+function extractDomain(url){
+  try {
+    var m = url.match(/^https?:\/\/([^\/]+)/);
+    return m ? m[1].replace(/^www\./, '') : '';
+  } catch(e){ return ''; }
 }
 
 async function lookupUPCCode(upc){
@@ -4845,7 +5166,24 @@ async function lookupUPCCode(upc){
     return;
   }
 
-  // STEP 0: Check if the user has a private correction saved for this UPC.
+  // STEP 0A: Check if there's a VERIFIED community correction for this UPC.
+  // Verified corrections are shared across all users — any past verification
+  // done by someone else silently benefits this user. Takes precedence over
+  // both the user's private correction and OFF's data.
+  var verifiedCorrection = await loadVerifiedCorrection(upc);
+  if(verifiedCorrection){
+    status.textContent = '';
+    showFoodPreview(verifiedCorrectionToFood(upc, verifiedCorrection), 'barcode-preview');
+    window._lastBarcodeProduct = {
+      name: verifiedCorrection.food.name,
+      brands: verifiedCorrection.food.brand || '',
+      upc: upc,
+      image_url: null
+    };
+    return;
+  }
+
+  // STEP 0B: Check if the user has a private correction saved for this UPC.
   // If yes, use their correction silently — they previously fixed this product.
   var userCorrection = loadUserBarcodeCorrection(upc);
   if(userCorrection){
