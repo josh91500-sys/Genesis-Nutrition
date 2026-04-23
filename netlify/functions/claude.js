@@ -13,10 +13,33 @@ exports.handler = async (event) => {
   try { body = JSON.parse(event.body); } catch(e) {
     return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: { message: 'Invalid JSON' } }) };
   }
+
+  // Detect whether the request wants to use web_search. If so, we need to
+  // include the web-search beta header. Without it, Claude silently ignores
+  // the tool and won't actually search the web.
+  var wantsWebSearch = false;
+  if (Array.isArray(body.tools)) {
+    for (var i = 0; i < body.tools.length; i++) {
+      var t = body.tools[i];
+      if (t && (t.type === 'web_search_20250305' || t.name === 'web_search')) {
+        wantsWebSearch = true;
+        break;
+      }
+    }
+  }
+
   try {
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    };
+    if (wantsWebSearch) {
+      headers['anthropic-beta'] = 'web-search-2025-03-05';
+    }
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      headers: headers,
       body: JSON.stringify(body)
     });
     const data = await response.json();
