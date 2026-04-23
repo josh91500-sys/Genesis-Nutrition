@@ -1751,15 +1751,28 @@ function showFoodPreview(food, containerId){
   // Choose badge class + text
   var badgeClass = (isCNF || isUSDA || isLabel) ? 'verified-badge' : 'ai-badge';
   var badgeText = isCNF ? '🇨🇦 CNF' : isUSDA ? '✓ USDA' : isLabel ? '✓ Label' : '🤖 AI Est.';
+  // If this is a barcode scan (has _barcode_upc), the badge is clickable and
+  // shows the OFF source info + a correction flow. Distinct style so users
+  // notice it's tappable.
+  var hasBarcodeSource = !!food._barcode_upc;
+  if(hasBarcodeSource && food._barcode_source === 'user_correction'){
+    badgeText = '✓ Your Correction';
+  }
   var badgeStyle = isCNF ? 'background:rgba(255,107,107,.15);color:#ff9090;' : '';
+  if(hasBarcodeSource){
+    badgeStyle += 'cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;';
+  }
   // Stash the food with a stable ID and reference it from the button
   const pid = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
   _previewFoodStore[pid] = food;
+  var badgeOnClick = hasBarcodeSource
+    ? ' onclick="showBarcodeLabelSource(\''+pid+'\')" title="Tap to see source / fix data"'
+    : '';
   el.innerHTML = `
     <div class="ai-preview" style="margin-top:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <div class="ai-preview-name">${food.name}</div>
-        <span class="${badgeClass}" style="${badgeStyle}">${badgeText}</span>
+        <span class="${badgeClass}" style="${badgeStyle}"${badgeOnClick}>${badgeText}</span>
       </div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;" id="psl-${pid}">Per serving: ${food.serving_desc||food.serving_g+'g'}</div>
 
@@ -4570,17 +4583,286 @@ function lookupUPC(){
   var upc=(document.getElementById('upc-input').value||'').trim().replace(/[^0-9]/g,'');
   if(!upc){showToast('Enter a UPC number');return;} lookupUPCCode(upc);
 }
+// ══════════════════════════════════════════════════════════════════════
+// BARCODE LABEL CORRECTIONS
+// ══════════════════════════════════════════════════════════════════════
+// Users who scan a barcode and get wrong OFF data can fix it by taking a
+// photo of the actual nutrition label. Corrections are stored PRIVATELY per
+// user (keyed by UPC) and auto-applied on future scans of the same UPC.
+// Shared/verified corrections come in a later session.
+// ══════════════════════════════════════════════════════════════════════
+
+function loadUserBarcodeCorrection(upc){
+  try {
+    var all = JSON.parse(localStorage.getItem('gn_barcode_corrections') || '{}');
+    return all[upc] || null;
+  } catch(e){ return null; }
+}
+
+function saveUserBarcodeCorrection(upc, food){
+  try {
+    var all = JSON.parse(localStorage.getItem('gn_barcode_corrections') || '{}');
+    all[upc] = {
+      food: food,
+      corrected_at: Date.now()
+    };
+    localStorage.setItem('gn_barcode_corrections', JSON.stringify(all));
+    return true;
+  } catch(e){ return false; }
+}
+
+function deleteUserBarcodeCorrection(upc){
+  try {
+    var all = JSON.parse(localStorage.getItem('gn_barcode_corrections') || '{}');
+    delete all[upc];
+    localStorage.setItem('gn_barcode_corrections', JSON.stringify(all));
+    return true;
+  } catch(e){ return false; }
+}
+
+// Show the label-source popup when user taps the "✓ Label" or "✓ Your
+// Correction" badge. Displays OFF product info + photo + link + "Fix data"
+// entry point into the correction flow.
+function showBarcodeLabelSource(pid){
+  var food = _previewFoodStore[pid];
+  if(!food || !food._barcode_upc){ return; }
+  var modal = document.getElementById('barcode-source-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'barcode-source-modal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+  var isCorrection = food._barcode_source === 'user_correction';
+  var titleText = isCorrection ? 'Your Correction' : 'Label Source';
+  var subtitleText = isCorrection
+    ? 'You corrected this product previously. These nutrition values come from your label photo, not Open Food Facts.'
+    : 'Open Food Facts is a crowd-sourced nutrition database. If the info below doesn\'t match what\'s on your product, tap "Fix data" to take a label photo.';
+
+  var productName = food._off_product_name || food.name || 'Unknown product';
+  var brands = food._off_brands || '';
+  var imgUrl = food._off_image_url;
+  var offUrl = food._off_url;
+  var upc = food._barcode_upc;
+
+  // Build correction date if this is a user correction
+  var correctionAgeHtml = '';
+  if(isCorrection && food._barcode_corrected_at){
+    var days = Math.round((Date.now() - food._barcode_corrected_at) / 86400000);
+    var ageText = days === 0 ? 'today' : days === 1 ? 'yesterday' : days+' days ago';
+    correctionAgeHtml = '<div style="font-size:11px;color:var(--fiber);margin-top:4px;">Saved '+ageText+'</div>';
+  }
+
+  var imgBlock = imgUrl
+    ? '<div style="margin-bottom:12px;text-align:center;"><img src="'+imgUrl+'" alt="Product" style="max-width:180px;max-height:200px;border-radius:8px;background:#fff;padding:4px;"></div>'
+    : '';
+
+  var offLink = (offUrl && !isCorrection)
+    ? '<a href="'+offUrl+'" target="_blank" style="color:var(--accent2);font-size:12px;display:inline-block;margin-top:6px;">View on Open Food Facts ↗</a>'
+    : '';
+
+  modal.innerHTML = '<div class="modal-sheet">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">'+titleText+'</div>'
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px;">'+subtitleText+'</div>'
+    + imgBlock
+    + '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px;">'
+    + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Product</div>'
+    + '<div style="font-size:14px;font-weight:700;">'+productName+'</div>'
+    + (brands ? '<div style="font-size:12px;color:var(--muted);margin-top:3px;">'+brands+'</div>' : '')
+    + '<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:monospace;">UPC: '+upc+'</div>'
+    + correctionAgeHtml
+    + offLink
+    + '</div>'
+    + (isCorrection
+        ? '<button class="btn-primary" style="margin-bottom:8px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Re-scan label</button>'
+          + '<button class="btn-primary" style="background:var(--sugar);margin-bottom:10px;" onclick="revertBarcodeCorrection(\''+upc+'\')">↶ Revert to Open Food Facts</button>'
+        : '<button class="btn-primary" style="background:var(--sugar);margin-bottom:10px;" onclick="startBarcodeCorrection(\''+pid+'\')">📷 Fix data — scan my label</button>'
+      )
+    + '<button class="btn-secondary" onclick="closeBarcodeLabelSource()">Close</button>'
+    + '</div>';
+  modal.classList.add('open');
+}
+
+function closeBarcodeLabelSource(){
+  var modal = document.getElementById('barcode-source-modal');
+  if(modal) modal.classList.remove('open');
+}
+
+// User revert: remove their private correction and re-run UPC lookup (which
+// now falls through to OFF since no correction exists).
+function revertBarcodeCorrection(upc){
+  if(!confirm('Remove your correction and use Open Food Facts data again?')) return;
+  deleteUserBarcodeCorrection(upc);
+  closeBarcodeLabelSource();
+  showToast('✓ Correction removed');
+  // Re-run the barcode lookup to show fresh OFF data
+  lookupUPCCode(upc);
+}
+
+// Trigger the photo capture for correction. We reuse the <input type=file>
+// pattern used by scan-label mode — simplest way to get camera access.
+function startBarcodeCorrection(pid){
+  var food = _previewFoodStore[pid];
+  if(!food || !food._barcode_upc){ return; }
+  window._pendingCorrectionUpc = food._barcode_upc;
+  window._pendingCorrectionProduct = {
+    name: food._off_product_name || food.name,
+    brand: food._off_brands || '',
+    upc: food._barcode_upc
+  };
+  closeBarcodeLabelSource();
+  // Create a hidden file input and trigger it
+  var input = document.getElementById('barcode-correction-file');
+  if(!input){
+    input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment';
+    input.id = 'barcode-correction-file';
+    input.style.display = 'none';
+    input.addEventListener('change', handleBarcodeCorrectionPhoto);
+    document.body.appendChild(input);
+  }
+  input.value = ''; // allow re-selecting the same file
+  input.click();
+}
+
+async function handleBarcodeCorrectionPhoto(ev){
+  var file = ev.target.files && ev.target.files[0];
+  if(!file){ return; }
+  var upc = window._pendingCorrectionUpc;
+  var product = window._pendingCorrectionProduct || {};
+  if(!upc){ showToast('Lost the UPC — try again'); return; }
+  var status = document.getElementById('barcode-status');
+  if(status){
+    status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Reading label…</div>';
+  }
+  try {
+    // Convert image to base64 for Claude's vision API
+    var base64 = await new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onload = function(){ resolve(reader.result.split(',')[1]); };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    var mediaType = file.type || 'image/jpeg';
+
+    // Ask Claude to extract nutrition from the label photo
+    var prompt = 'You are reading a nutrition label photo for a product. '
+      + 'Known info: brand="'+(product.brand||'unknown')+'", product="'+(product.name||'unknown')+'", UPC='+upc+'.\n\n'
+      + 'Extract the nutrition values from the label in the image. Return ONLY a JSON object:\n'
+      + '{\n'
+      + '"product_name_from_label": "what the label says",\n'
+      + '"serving_desc": "e.g. 2 tbsp (28g)",\n'
+      + '"serving_g": 28,\n'
+      + '"cal": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0, "sugar": 0,\n'
+      + '"sodium": 0, "potassium": 0, "satfat": 0, "calcium": 0, "iron": 0, '
+      + '"vitc": 0, "vitd": 0, "vita": 0\n'
+      + '}\n\n'
+      + 'Units: cal=kcal, sodium/potassium/calcium/vitc=mg, iron=mg, vitd/vita=µg. '
+      + 'All values for ONE serving (not per 100g). Use 0 for any nutrient not shown on the label.';
+    var res = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      messages: [{
+        role: 'user',
+        content: [
+          {type:'image', source:{type:'base64', media_type:mediaType, data:base64}},
+          {type:'text', text:prompt}
+        ]
+      }]
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data = await res.json();
+    var text = (data.content && data.content[0] && data.content[0].text) || '';
+    var m = text.match(/\{[\s\S]*\}/);
+    if(!m) throw new Error('No JSON in response');
+    var parsed = JSON.parse(m[0]);
+
+    // Sanity check — reject obviously broken values
+    if((parsed.cal||0) === 0 && (parsed.protein||0) === 0 && (parsed.carbs||0) === 0 && (parsed.fat||0) === 0){
+      throw new Error('All zero — label may be unreadable');
+    }
+    if((parsed.cal||0) > 10000){
+      throw new Error('Calories look wrong (> 10000)');
+    }
+
+    // Build the corrected food object
+    var correctedFood = {
+      name: product.name || parsed.product_name_from_label || 'Corrected product',
+      brand: product.brand || '',
+      serving_desc: parsed.serving_desc || '1 serving',
+      serving_g: parsed.serving_g || 100,
+      cal: Math.round(parsed.cal || 0),
+      protein: parseFloat((parsed.protein || 0).toFixed(1)),
+      carbs: parseFloat((parsed.carbs || 0).toFixed(1)),
+      fat: parseFloat((parsed.fat || 0).toFixed(1)),
+      fiber: parseFloat((parsed.fiber || 0).toFixed(1)),
+      sugar: parseFloat((parsed.sugar || 0).toFixed(1)),
+      sodium: Math.round(parsed.sodium || 0),
+      potassium: Math.round(parsed.potassium || 0),
+      satfat: parseFloat((parsed.satfat || 0).toFixed(1)),
+      calcium: Math.round(parsed.calcium || 0),
+      iron: parseFloat((parsed.iron || 0).toFixed(2)),
+      vitc: Math.round(parsed.vitc || 0),
+      vitd: parseFloat((parsed.vitd || 0).toFixed(1)),
+      vita: Math.round(parsed.vita || 0),
+      source: 'Your Label Photo'
+    };
+
+    // Save as user's private correction
+    saveUserBarcodeCorrection(upc, correctedFood);
+    if(status) status.textContent = '';
+    showToast('✓ Correction saved. Future scans will use your data.');
+
+    // Show the corrected food in the preview
+    var previewFood = Object.assign({}, correctedFood, {
+      _barcode_upc: upc,
+      _barcode_source: 'user_correction',
+      _barcode_corrected_at: Date.now()
+    });
+    showFoodPreview(previewFood, 'barcode-preview');
+  } catch(e){
+    console.error('[correction] failed:', e);
+    if(status){
+      status.innerHTML = '<span style="color:#ff9090;font-size:13px;">✗ Couldn\'t read label. Try a clearer photo — good lighting, straight angle, full label visible.</span>';
+    } else {
+      showToast('Couldn\'t read label — try a clearer photo');
+    }
+  }
+}
+
 async function lookupUPCCode(upc){
   var status=document.getElementById('barcode-status'),preview=document.getElementById('barcode-preview');
   status.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
   preview.innerHTML='';
 
-  // Clean and validate UPC. Standard UPCs are 12 digits, EANs are 13.
-  // Scanners occasionally drop a leading zero (11 digits) or add one (13
-  // from a 12-digit). Build a list of candidates to try.
+  // Clean UPC first so we can key on it for private corrections
   upc = (upc||'').replace(/[^0-9]/g,'');
   if(upc.length < 8){
     status.innerHTML='<span style="color:#ff9090;font-size:13px;">✗ Invalid barcode ('+upc.length+' digits). Try scanning again.</span>';
+    return;
+  }
+
+  // STEP 0: Check if the user has a private correction saved for this UPC.
+  // If yes, use their correction silently — they previously fixed this product.
+  var userCorrection = loadUserBarcodeCorrection(upc);
+  if(userCorrection){
+    status.textContent = '';
+    // Stash upc + correction metadata for the label-source popup
+    var correctedFood = Object.assign({}, userCorrection.food, {
+      _barcode_upc: upc,
+      _barcode_source: 'user_correction',
+      _barcode_corrected_at: userCorrection.corrected_at
+    });
+    showFoodPreview(correctedFood, 'barcode-preview');
+    window._lastBarcodeProduct = {
+      name: userCorrection.food.name,
+      brands: userCorrection.food.brand || '',
+      upc: upc,
+      image_url: null
+    };
     return;
   }
   var candidates = [upc];
@@ -4691,30 +4973,25 @@ async function lookupUPCCode(upc){
         vitc: Math.round(pick('vitamin-c_serving','vitamin-c_100g','vitamin-c') * 1000 * scaleFactor),
         vitd: 0,
         vita: 0,
-        source: 'Food Label ('+upc+')'
+        source: 'Food Label ('+upc+')',
+        // Metadata so the "✓ Label" badge can be tapped to show the OFF source
+        // (product name, brand, photo, UPC, link to OFF page) + offer correction.
+        _barcode_upc: upc,
+        _barcode_source: 'off',
+        _off_product_name: p.product_name,
+        _off_brands: p.brands || '',
+        _off_image_url: p.image_front_url || p.image_url || null,
+        _off_url: 'https://world.openfoodfacts.org/product/'+upc
       }, 'barcode-preview');
 
-      // Stash product info for the "data looks wrong" recovery buttons
+      // Stash product info for the correction flow
       window._lastBarcodeProduct = {
         name: p.product_name,
         brands: p.brands || '',
-        upc: upc
+        upc: upc,
+        image_url: p.image_front_url || p.image_url || null,
+        off_url: 'https://world.openfoodfacts.org/product/'+upc
       };
-
-      // Append "data looks wrong" recovery card below the preview. Users
-      // who see OFF returning bad data can one-tap to either scan the
-      // physical label (most accurate) or ask AI for a reliable estimate.
-      var verifyCard = document.createElement('div');
-      verifyCard.id = 'barcode-verify-card';
-      verifyCard.style.cssText = 'background:var(--bg4);border:1px solid var(--border2);border-radius:12px;padding:12px;margin-top:10px;';
-      verifyCard.innerHTML = '<div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Data looks wrong?</div>'
-        + '<div style="font-size:12px;color:var(--muted);line-height:1.4;margin-bottom:10px;">Open Food Facts is crowd-sourced. If the numbers don\'t match the bottle, get accurate data another way:</div>'
-        + '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
-        + '<button onclick="switchToScanLabel()" style="flex:1;min-width:120px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">📷 Scan Label</button>'
-        + '<button onclick="switchToAILookup()" style="flex:1;min-width:120px;background:var(--bg3);color:var(--accent2);border:1px solid var(--border2);border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">🤖 Use AI Instead</button>'
-        + '</div>';
-      var previewEl = document.getElementById('barcode-preview');
-      if(previewEl) previewEl.appendChild(verifyCard);
 
       status.textContent='';
     } else throw new Error('not found');
@@ -9721,5 +9998,3 @@ if('serviceWorker' in navigator){
 
 </body>
 </html>
-
- 
