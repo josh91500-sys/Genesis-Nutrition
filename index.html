@@ -3941,19 +3941,41 @@ function showCompleteDayProjection(){
   try {
     var profile = JSON.parse(localStorage.getItem('gn_profile') || 'null');
     if(profile && latestWeightLb && profile.height_in && profile.age && profile.sex){
-      var kg = latestWeightLb * 0.4536;
-      var cm = profile.height_in * 2.54;
-      // Mifflin-St Jeor BMR
-      var bmr;
-      if((profile.sex||'').toLowerCase() === 'male' || (profile.sex||'').toLowerCase() === 'm'){
-        bmr = (10 * kg) + (6.25 * cm) - (5 * profile.age) + 5;
+      // MANUAL OVERRIDE: if user has entered their known maintenance calories,
+      // use that directly and skip the formula entirely. This is the most
+      // accurate option for anyone who's tracked long enough to know their real maintenance.
+      if(profile.tdee_override && parseInt(profile.tdee_override) >= 1000){
+        tdee = parseInt(profile.tdee_override);
+        tdeeSource = 'override';
       } else {
-        bmr = (10 * kg) + (6.25 * cm) - (5 * profile.age) - 161;
+        var kg = latestWeightLb * 0.4536;
+        var cm = profile.height_in * 2.54;
+        // Mifflin-St Jeor BMR
+        var bmr;
+        if((profile.sex||'').toLowerCase() === 'male' || (profile.sex||'').toLowerCase() === 'm'){
+          bmr = (10 * kg) + (6.25 * cm) - (5 * profile.age) + 5;
+        } else {
+          bmr = (10 * kg) + (6.25 * cm) - (5 * profile.age) - 161;
+        }
+        // NEW: additive factor model using separate job + exercise inputs.
+        // This is more honest than single-axis multipliers which overestimate.
+        //   Base 1.15 (covers sleep, basic existence above BMR)
+        //   + job factor (0.10 - 0.35)
+        //   + exercise factor (0.0 - 0.20)
+        var JOB_FACTORS = {sedentary:0.10, light:0.15, moderate:0.25, active:0.35};
+        var EX_FACTORS = {none:0.0, light:0.05, moderate:0.10, high:0.15, intense:0.20};
+        var jobF = JOB_FACTORS[profile.job_activity] !== undefined ? JOB_FACTORS[profile.job_activity] : 0.10;
+        var exF  = EX_FACTORS[profile.exercise_level] !== undefined ? EX_FACTORS[profile.exercise_level] : 0.10;
+        // Legacy single-axis multiplier fallback (for users who set it before this change)
+        if(profile.activity_mult && profile.job_activity === undefined && profile.exercise_level === undefined){
+          var legacyMult = parseFloat(profile.activity_mult) || 1.375;
+          tdee = Math.round(bmr * legacyMult);
+        } else {
+          var multNew = 1.15 + jobF + exF;
+          tdee = Math.round(bmr * multNew);
+        }
+        tdeeSource = 'mifflin';
       }
-      // Activity multiplier — default sedentary → light (1.375)
-      var mult = parseFloat(profile.activity_mult) || 1.375;
-      tdee = Math.round(bmr * mult);
-      tdeeSource = 'mifflin';
     }
   } catch(e){}
   // Fallback: use user's calorie goal as a proxy for maintenance
@@ -4012,47 +4034,30 @@ function showCompleteDayProjection(){
 
   // Build a helpful note or inline form for profile data
   var tdeeNote;
-  if(tdeeSource === 'mifflin'){
-    tdeeNote = '<div style="font-size:10px;color:var(--muted);margin-top:4px;">TDEE from your profile (Mifflin-St Jeor + activity level)</div>';
+  // Pull current profile for form pre-fill regardless of source
+  var profileForForm = {};
+  try { profileForForm = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
+
+  if(tdeeSource === 'override'){
+    tdeeNote = '<div style="font-size:10px;color:var(--fiber);margin-top:4px;">✓ Using your manual override ('+tdee+' kcal). <a href="#" onclick="clearTdeeOverride();return false;" style="color:var(--accent2);">Clear</a> to return to formula.</div>';
+  } else if(tdeeSource === 'mifflin'){
+    var jobLabel = {sedentary:'sedentary',light:'light',moderate:'moderate',active:'very active'}[profileForForm.job_activity]||'';
+    var exLabel = {none:'no',light:'light',moderate:'moderate',high:'high',intense:'intense'}[profileForForm.exercise_level]||'';
+    var detail = (jobLabel && exLabel) ? jobLabel+' job + '+exLabel+' exercise' : 'activity level';
+    tdeeNote = '<div style="font-size:10px;color:var(--muted);margin-top:4px;">TDEE from Mifflin-St Jeor ('+detail+'). <a href="#" onclick="showTdeeEditor();return false;" style="color:var(--accent2);">Edit</a></div>'
+      + '<div id="tdee-editor-wrap" style="display:none;">' + buildProfileFormHTML(profileForForm, latestWeightLb) + '</div>';
   } else {
-    // Figure out what's missing so we can prompt for exactly those fields
-    var existing = {};
-    try { existing = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
+    // No formula data yet — prompt to fill in
     var missing = [];
-    if(!existing.height_in) missing.push('height');
-    if(!existing.age) missing.push('age');
-    if(!existing.sex) missing.push('sex');
+    if(!profileForForm.height_in) missing.push('height');
+    if(!profileForForm.age) missing.push('age');
+    if(!profileForForm.sex) missing.push('sex');
     if(!latestWeightLb) missing.push('weight');
     var missingText = missing.length ? missing.join(', ') : 'profile data';
-
     tdeeNote = '<div style="background:rgba(99,87,255,.1);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-top:10px;">'
       + '<div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:6px;">📏 Want a more accurate projection?</div>'
-      + '<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px;">Currently using your calorie goal as a TDEE estimate. For personalized math (Mifflin-St Jeor equation), add your ' + missingText + ' below — saved for future projections.</div>'
-      + '<div style="margin-bottom:8px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Height</label>'
-      + '<div style="display:flex;gap:6px;">'
-      + '<input type="number" id="cd-height-ft" value="'+(existing.height_in ? Math.floor(existing.height_in/12) : '')+'" placeholder="ft" min="3" max="8" style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
-      + '<input type="number" id="cd-height-in" value="'+(existing.height_in ? existing.height_in % 12 : '')+'" placeholder="in" min="0" max="11" style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
-      + '</div></div>'
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">'
-      + '<div style="flex:1;min-width:80px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Age</label>'
-      + '<input type="number" id="cd-age" value="'+(existing.age||'')+'" placeholder="e.g. 35" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;"></div>'
-      + '<div style="flex:1;min-width:80px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Sex</label>'
-      + '<select id="cd-sex" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
-      + '<option value="">--</option>'
-      + '<option value="male"'+(existing.sex==='male'?' selected':'')+'>Male</option>'
-      + '<option value="female"'+(existing.sex==='female'?' selected':'')+'>Female</option>'
-      + '</select></div>'
-      + '</div>'
-      + '<div style="margin-bottom:8px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Activity level</label>'
-      + '<select id="cd-activity" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
-      + '<option value="1.2"'+(existing.activity_mult==='1.2'?' selected':'')+'>Sedentary (desk job, no exercise)</option>'
-      + '<option value="1.375"'+((existing.activity_mult==='1.375'||!existing.activity_mult)?' selected':'')+'>Light (1-3 days/week exercise)</option>'
-      + '<option value="1.55"'+(existing.activity_mult==='1.55'?' selected':'')+'>Moderate (3-5 days/week)</option>'
-      + '<option value="1.725"'+(existing.activity_mult==='1.725'?' selected':'')+'>Very active (6-7 days/week)</option>'
-      + '<option value="1.9"'+(existing.activity_mult==='1.9'?' selected':'')+'>Athlete (2x/day or manual labor)</option>'
-      + '</select></div>'
-      + '<button onclick="saveProfileFromCompleteDay()" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">✓ Save & Recalculate</button>'
-      + (!latestWeightLb ? '<div style="font-size:10px;color:var(--sugar);margin-top:8px;">You also need to log your weight — go to More → Measurements.</div>' : '')
+      + '<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px;">Currently using your calorie goal as a TDEE estimate. For personalized math, add your ' + missingText + ' below.</div>'
+      + buildProfileFormHTML(profileForForm, latestWeightLb)
       + '</div>';
   }
 
@@ -4107,14 +4112,18 @@ function saveProfileFromCompleteDay(){
   var heightInEl = document.getElementById('cd-height-in');
   var ageEl = document.getElementById('cd-age');
   var sexEl = document.getElementById('cd-sex');
-  var actEl = document.getElementById('cd-activity');
+  var jobEl = document.getElementById('cd-job');
+  var exEl = document.getElementById('cd-exercise');
+  var overrideEl = document.getElementById('cd-tdee-override');
   if(!heightFtEl || !heightInEl || !ageEl || !sexEl) return;
   var ft = parseInt(heightFtEl.value) || 0;
   var inches = parseInt(heightInEl.value) || 0;
   var totalInches = (ft * 12) + inches;
   var age = parseInt(ageEl.value);
   var sex = sexEl.value;
-  var activity = actEl ? actEl.value : '1.375';
+  var job = jobEl ? jobEl.value : 'sedentary';
+  var exercise = exEl ? exEl.value : 'moderate';
+  var override = overrideEl ? parseInt(overrideEl.value) || 0 : 0;
   // Validation
   if(!totalInches || totalInches < 36 || totalInches > 96){
     showToast('Enter a valid height (3\'0" to 8\'0")');
@@ -4132,15 +4141,86 @@ function saveProfileFromCompleteDay(){
     showToast('Pick a sex for the equation');
     return;
   }
+  if(override > 0 && (override < 1000 || override > 6000)){
+    showToast('Manual TDEE must be 1000-6000 kcal');
+    return;
+  }
   var existing = {};
   try { existing = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
   existing.height_in = totalInches;
   existing.age = age;
   existing.sex = sex;
-  existing.activity_mult = activity;
+  existing.job_activity = job;
+  existing.exercise_level = exercise;
+  existing.tdee_override = override > 0 ? override : null;
+  // Clear legacy single-axis field so new calc takes over
+  delete existing.activity_mult;
   localStorage.setItem('gn_profile', JSON.stringify(existing));
   showToast('✓ Profile saved. Recalculating…');
-  // Close + reopen so the projection re-runs with new data
+  closeCompleteDay();
+  setTimeout(function(){ showCompleteDayProjection(); }, 200);
+}
+
+// Build the profile form HTML — factored out so it can be reused in two
+// places (initial "missing data" card, and the editor toggle when user
+// already has valid data).
+function buildProfileFormHTML(existing, latestWeightLb){
+  existing = existing || {};
+  var ft = existing.height_in ? Math.floor(existing.height_in/12) : '';
+  var inches = existing.height_in ? existing.height_in % 12 : '';
+  var selected = function(field, val){ return existing[field] === val ? ' selected' : ''; };
+  // Default exercise to moderate (user's case) — most common
+  if(!existing.exercise_level) existing.exercise_level = 'moderate';
+  if(!existing.job_activity) existing.job_activity = 'sedentary';
+  return '<div style="margin-bottom:8px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Height</label>'
+    + '<div style="display:flex;gap:6px;">'
+    + '<input type="number" id="cd-height-ft" value="'+ft+'" placeholder="ft" min="3" max="8" style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
+    + '<input type="number" id="cd-height-in" value="'+inches+'" placeholder="in" min="0" max="11" style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
+    + '</div></div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">'
+    + '<div style="flex:1;min-width:80px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Age</label>'
+    + '<input type="number" id="cd-age" value="'+(existing.age||'')+'" placeholder="e.g. 35" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;"></div>'
+    + '<div style="flex:1;min-width:80px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Sex</label>'
+    + '<select id="cd-sex" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
+    + '<option value="">--</option>'
+    + '<option value="male"'+selected('sex','male')+'>Male</option>'
+    + '<option value="female"'+selected('sex','female')+'>Female</option>'
+    + '</select></div></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Job activity</label>'
+    + '<select id="cd-job" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
+    + '<option value="sedentary"'+selected('job_activity','sedentary')+'>Sedentary (desk work, driving)</option>'
+    + '<option value="light"'+selected('job_activity','light')+'>Light (teaching, retail, some walking)</option>'
+    + '<option value="moderate"'+selected('job_activity','moderate')+'>Moderate (nursing, frequent walking)</option>'
+    + '<option value="active"'+selected('job_activity','active')+'>Very active (construction, warehouse, manual labor)</option>'
+    + '</select></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Exercise level</label>'
+    + '<select id="cd-exercise" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
+    + '<option value="none"'+selected('exercise_level','none')+'>None (no structured workouts)</option>'
+    + '<option value="light"'+selected('exercise_level','light')+'>Light (1-2 workouts/week)</option>'
+    + '<option value="moderate"'+selected('exercise_level','moderate')+'>Moderate (3-4 workouts/week)</option>'
+    + '<option value="high"'+selected('exercise_level','high')+'>High (5-6 workouts/week)</option>'
+    + '<option value="intense"'+selected('exercise_level','intense')+'>Intense (daily hard training)</option>'
+    + '</select></div>'
+    + '<div style="margin-bottom:10px;border-top:1px solid var(--border);padding-top:10px;">'
+    + '<label style="font-size:10px;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:4px;">Manual override (optional)</label>'
+    + '<input type="number" id="cd-tdee-override" value="'+(existing.tdee_override||'')+'" placeholder="If you already know your maintenance (e.g. 2800)" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
+    + '<div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.4;">💡 Formulas often overestimate. If you\'ve tracked long enough to know your real maintenance calories, enter it here — it overrides the formula entirely.</div>'
+    + '</div>'
+    + '<button onclick="saveProfileFromCompleteDay()" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">✓ Save & Recalculate</button>'
+    + (!latestWeightLb ? '<div style="font-size:10px;color:var(--sugar);margin-top:8px;">You also need to log your weight — go to More → Measurements.</div>' : '');
+}
+
+function showTdeeEditor(){
+  var wrap = document.getElementById('tdee-editor-wrap');
+  if(wrap) wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
+}
+
+function clearTdeeOverride(){
+  try {
+    var existing = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {};
+    existing.tdee_override = null;
+    localStorage.setItem('gn_profile', JSON.stringify(existing));
+  } catch(e){}
   closeCompleteDay();
   setTimeout(function(){ showCompleteDayProjection(); }, 200);
 }
