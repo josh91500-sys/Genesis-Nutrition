@@ -4028,10 +4028,13 @@ function showCompleteDayProjection(){
     tdeeNote = '<div style="background:rgba(99,87,255,.1);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-top:10px;">'
       + '<div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:6px;">📏 Want a more accurate projection?</div>'
       + '<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px;">Currently using your calorie goal as a TDEE estimate. For personalized math (Mifflin-St Jeor equation), add your ' + missingText + ' below — saved for future projections.</div>'
+      + '<div style="margin-bottom:8px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Height</label>'
+      + '<div style="display:flex;gap:6px;">'
+      + '<input type="number" id="cd-height-ft" value="'+(existing.height_in ? Math.floor(existing.height_in/12) : '')+'" placeholder="ft" min="3" max="8" style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
+      + '<input type="number" id="cd-height-in" value="'+(existing.height_in ? existing.height_in % 12 : '')+'" placeholder="in" min="0" max="11" style="flex:1;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
+      + '</div></div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">'
-      + '<div style="flex:1;min-width:80px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Height (in)</label>'
-      + '<input type="number" id="cd-height" value="'+(existing.height_in||'')+'" placeholder="e.g. 70" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;"></div>'
-      + '<div style="flex:1;min-width:60px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Age</label>'
+      + '<div style="flex:1;min-width:80px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Age</label>'
       + '<input type="number" id="cd-age" value="'+(existing.age||'')+'" placeholder="e.g. 35" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;"></div>'
       + '<div style="flex:1;min-width:80px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;">Sex</label>'
       + '<select id="cd-sex" style="width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;padding:8px;font-size:13px;color:var(--text);outline:none;">'
@@ -4100,18 +4103,25 @@ function closeCompleteDay(){
 // Save profile data collected inside the Complete Day modal, then
 // re-open the projection so the user sees updated numbers immediately.
 function saveProfileFromCompleteDay(){
-  var heightEl = document.getElementById('cd-height');
+  var heightFtEl = document.getElementById('cd-height-ft');
+  var heightInEl = document.getElementById('cd-height-in');
   var ageEl = document.getElementById('cd-age');
   var sexEl = document.getElementById('cd-sex');
   var actEl = document.getElementById('cd-activity');
-  if(!heightEl || !ageEl || !sexEl) return;
-  var height = parseFloat(heightEl.value);
+  if(!heightFtEl || !heightInEl || !ageEl || !sexEl) return;
+  var ft = parseInt(heightFtEl.value) || 0;
+  var inches = parseInt(heightInEl.value) || 0;
+  var totalInches = (ft * 12) + inches;
   var age = parseInt(ageEl.value);
   var sex = sexEl.value;
   var activity = actEl ? actEl.value : '1.375';
-  // Basic validation
-  if(!height || height < 36 || height > 96){
-    showToast('Height must be 36-96 inches');
+  // Validation
+  if(!totalInches || totalInches < 36 || totalInches > 96){
+    showToast('Enter a valid height (3\'0" to 8\'0")');
+    return;
+  }
+  if(inches < 0 || inches > 11){
+    showToast('Inches must be 0-11');
     return;
   }
   if(!age || age < 13 || age > 120){
@@ -4124,7 +4134,7 @@ function saveProfileFromCompleteDay(){
   }
   var existing = {};
   try { existing = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
-  existing.height_in = height;
+  existing.height_in = totalInches;
   existing.age = age;
   existing.sex = sex;
   existing.activity_mult = activity;
@@ -6448,7 +6458,7 @@ function renderFastingTimer(){
   var achieved = hoursSince >= target;
   var color = achieved ? 'var(--fiber)' : hoursSince > target*0.75 ? 'var(--sugar)' : 'var(--accent2)';
 
-  // Second line: fasting hours CHARGED  to today (never reaches past midnight).
+  // Second line: fasting hours CHARGED to today (never reaches past midnight).
   // If last meal was today → equals hoursSince (bars match).
   // If last meal was yesterday → capped at hoursSinceMidnight.
   var hoursChargedToday = Math.min(hoursSince, hoursSinceMidnight);
