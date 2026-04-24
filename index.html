@@ -1691,25 +1691,131 @@ function renderAddModalRecents(){
 // Quick-log a recent food from the add-food modal. Always prompts for the
 // meal slot so the user can decide fresh — they might have tapped + from
 // one section but want to log this recent food to a different meal.
+// Open the "adjust servings" popup for a recent food. Defaults to 1 serving
+// based on what the food entry currently contains — if the user previously
+// logged "3 eggs" as one entry, 1 serving = 3 eggs here. They adjust with +/−.
+// The meal picker is in the same popup so only one tap-confirm is needed.
 function quickAddRecentFromModal(idx){
   var cache = window._addModalRecentsCache || [];
   var source = cache[idx];
   if(!source){ showToast('Item not found'); return; }
-  // Capture the eaten-at time now (before closing the modal wipes the input)
+  // Stash the source for the adjuster's handlers
+  window._recentAdjustSource = source;
+  window._recentAdjustMult = 1;
+
+  var modal = document.getElementById('recent-adjust-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'recent-adjust-modal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+  // Serving description from the stored food
+  var servingDesc = source.serving_desc || ((source.serving || source.serving_g || 100) + 'g');
+  var currentMealSlot = 'Breakfast';
+  var mealEl = document.getElementById('food-meal');
+  if(mealEl && mealEl.value) currentMealSlot = mealEl.value;
+
+  modal.innerHTML = '<div class="modal-sheet">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">'+source.name+'</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:14px;">'+servingDesc+'</div>'
+    + '<div style="background:var(--bg4);border:1px solid var(--border2);border-radius:10px;padding:12px;margin-bottom:12px;">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
+    + '<button onclick="adjustRecentServings(-0.25)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:8px;width:40px;height:40px;font-size:18px;font-weight:700;cursor:pointer;">−</button>'
+    + '<input type="number" id="recent-adjust-input" value="1" min="0.25" step="0.25" oninput="setRecentServings(this.value)" style="flex:1;text-align:center;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px;font-size:16px;font-weight:700;color:var(--text);outline:none;">'
+    + '<div style="font-size:12px;color:var(--muted);min-width:50px;font-weight:700;">servings</div>'
+    + '<button onclick="adjustRecentServings(0.25)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:8px;width:40px;height:40px;font-size:18px;font-weight:700;cursor:pointer;">+</button>'
+    + '</div>'
+    + '<div id="recent-adjust-macros" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;"></div>'
+    + '</div>'
+    + '<div class="input-group">'
+    + '<label class="input-label">Add to</label>'
+    + '<select id="recent-adjust-meal">'
+    + ['Breakfast','Lunch','Dinner','Snacks'].map(function(m){
+        var sel = m === currentMealSlot ? ' selected' : '';
+        var emoji = {Breakfast:'🌅',Lunch:'☀️',Dinner:'🌙',Snacks:'🍎'}[m];
+        return '<option value="'+m+'"'+sel+'>'+emoji+' '+m+'</option>';
+      }).join('')
+    + '</select>'
+    + '</div>'
+    + '<button class="btn-primary" onclick="confirmRecentAdd()">✓ Log</button>'
+    + '<button class="btn-secondary" style="margin-top:10px;" onclick="closeRecentAdjust()">Cancel</button>'
+    + '</div>';
+  modal.classList.add('open');
+  // Render initial macros at 1x
+  updateRecentMacroPreview();
+}
+
+function closeRecentAdjust(){
+  var modal = document.getElementById('recent-adjust-modal');
+  if(modal) modal.classList.remove('open');
+}
+
+function adjustRecentServings(delta){
+  var current = window._recentAdjustMult || 1;
+  var newVal = Math.max(0.25, Math.round((current + delta) * 4) / 4);
+  window._recentAdjustMult = newVal;
+  var inputEl = document.getElementById('recent-adjust-input');
+  if(inputEl) inputEl.value = newVal;
+  updateRecentMacroPreview();
+}
+
+function setRecentServings(val){
+  var num = parseFloat(val) || 1;
+  if(num < 0.25) num = 0.25;
+  if(num > 50) num = 50;
+  window._recentAdjustMult = num;
+  updateRecentMacroPreview();
+}
+
+function updateRecentMacroPreview(){
+  var source = window._recentAdjustSource;
+  var mult = window._recentAdjustMult || 1;
+  var el = document.getElementById('recent-adjust-macros');
+  if(!source || !el) return;
+  el.innerHTML = ''
+    + '<div class="preview-item"><div class="preview-val">'+Math.round((source.cal||0)*mult)+'</div><div class="preview-key">kcal</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--protein)">'+((source.protein||0)*mult).toFixed(1)+'g</div><div class="preview-key">protein</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--carb)">'+((source.carbs||0)*mult).toFixed(1)+'g</div><div class="preview-key">carbs</div></div>'
+    + '<div class="preview-item"><div class="preview-val" style="color:var(--fat)">'+((source.fat||0)*mult).toFixed(1)+'g</div><div class="preview-key">fat</div></div>';
+}
+
+function confirmRecentAdd(){
+  var source = window._recentAdjustSource;
+  var mult = window._recentAdjustMult || 1;
+  if(!source){ showToast('Lost the recent item'); return; }
+  var mealEl = document.getElementById('recent-adjust-meal');
+  var targetMeal = mealEl ? mealEl.value : 'Breakfast';
   var eatenAtTs = getEatenAtTimestamp();
-  // Prompt for the meal slot
-  showMealPicker(source.name, function(targetMeal){
-    var log = loadDayLog(dayOffset);
-    var clone = Object.assign({}, source);
-    clone.id = Date.now();
-    clone.meal = targetMeal;
-    clone.eaten_at = eatenAtTs;
-    log.foods.push(clone);
-    saveDayLog(log, dayOffset);
-    closeAddFood();
-    renderNutrition();
-    showToast('✓ '+source.name+' added to '+targetMeal);
-  });
+  // Clone with scaled values
+  var clone = Object.assign({}, source);
+  clone.id = Date.now();
+  clone.meal = targetMeal;
+  clone.eaten_at = eatenAtTs;
+  clone.cal = Math.round((source.cal||0) * mult);
+  clone.protein = parseFloat(((source.protein||0) * mult).toFixed(2));
+  clone.carbs = parseFloat(((source.carbs||0) * mult).toFixed(2));
+  clone.fat = parseFloat(((source.fat||0) * mult).toFixed(2));
+  clone.fiber = parseFloat(((source.fiber||0) * mult).toFixed(2));
+  clone.sugar = parseFloat(((source.sugar||0) * mult).toFixed(2));
+  clone.sodium = Math.round((source.sodium||0) * mult);
+  if(typeof source.satfat === 'number') clone.satfat = parseFloat((source.satfat * mult).toFixed(2));
+  if(typeof source.calcium === 'number') clone.calcium = Math.round(source.calcium * mult);
+  if(typeof source.iron === 'number') clone.iron = parseFloat((source.iron * mult).toFixed(2));
+  if(typeof source.potassium === 'number') clone.potassium = Math.round(source.potassium * mult);
+  if(typeof source.vitc === 'number') clone.vitc = Math.round(source.vitc * mult);
+  if(typeof source.vitd === 'number') clone.vitd = parseFloat((source.vitd * mult).toFixed(1));
+  if(typeof source.vita === 'number') clone.vita = Math.round(source.vita * mult);
+  if(typeof source.serving === 'number') clone.serving = source.serving * mult;
+  var log = loadDayLog(dayOffset);
+  log.foods.push(clone);
+  saveDayLog(log, dayOffset);
+  closeRecentAdjust();
+  closeAddFood();
+  renderNutrition();
+  var servingsText = mult === 1 ? '1 serving' : mult + ' servings';
+  showToast('✓ '+source.name+' ('+servingsText+') added to '+targetMeal);
 }
 function closeAddFood(){
   document.getElementById('add-modal').classList.remove('open');
