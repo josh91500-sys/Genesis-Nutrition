@@ -8051,13 +8051,108 @@ function saveMeasurementsList(m){ localStorage.setItem('gn_measurements',JSON.st
 function showMeasurementsModal(){
   var logs = loadMeasurements();
   var today = logs.find(function(e){return e.date===dateKey(0);}) || {};
+  // Pull current profile for the static-data fields
+  var profile = {};
+  try { profile = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
+  var ft = profile.height_in ? Math.floor(profile.height_in/12) : '';
+  var inches = profile.height_in ? profile.height_in % 12 : '';
+  var sel = function(field, val){ return profile[field] === val ? ' selected' : ''; };
+
   var modal = document.createElement('div');
   modal.className = 'modal-backdrop open';
   modal.id = 'measurements-modal';
+
+  // Weight chart data — last 30 days for trend visibility
+  var weightLog = loadWeightLog();
+  var todayWeight = weightLog.find(function(e){return e.date===dateKey(0);});
+  var weightChartHtml = '';
+  if(weightLog.length >= 2){
+    var recent = weightLog.slice(-30);
+    var weights = recent.map(function(e){return e.weight;});
+    var minW = Math.min.apply(null, weights) - 2;
+    var maxW = Math.max.apply(null, weights) + 2;
+    var W = 300, H = 100, pad = 10;
+    var pts = recent.map(function(e, i){
+      var x = (i/(recent.length-1))*(W-pad*2) + pad;
+      var y = H - pad - ((e.weight - minW)/(maxW - minW))*(H - pad*2);
+      return x+','+y;
+    }).join(' ');
+    var dots = recent.map(function(e, i){
+      var x = (i/(recent.length-1))*(W-pad*2) + pad;
+      var y = H - pad - ((e.weight - minW)/(maxW - minW))*(H - pad*2);
+      return '<circle cx="'+x+'" cy="'+y+'" r="3" fill="var(--accent2)"/>';
+    }).join('');
+    var startW = recent[0].weight;
+    var endW = recent[recent.length-1].weight;
+    var diff = endW - startW;
+    var diffSign = diff >= 0 ? '+' : '';
+    var diffColor = Math.abs(diff) < 0.5 ? 'var(--muted)' : (diff < 0 ? 'var(--fiber)' : 'var(--sugar)');
+    weightChartHtml = '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;margin-bottom:4px;"><polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="2"/>'+dots+'</svg>'
+      + '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:6px;">'
+      + '<span>'+new Date(recent[0].date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+startW.toFixed(1)+' lb</span>'
+      + '<span style="color:'+diffColor+';font-weight:700;">'+diffSign+diff.toFixed(1)+' lb</span>'
+      + '<span>'+new Date(recent[recent.length-1].date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+endW.toFixed(1)+' lb</span>'
+      + '</div>';
+  } else if(weightLog.length === 1){
+    weightChartHtml = '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;color:var(--muted);text-align:center;margin-bottom:10px;">Log weight on more days to see your trend.</div>';
+  }
+
   var html = '<div class="modal-sheet">'
     +'<div class="modal-handle"></div>'
-    +'<div class="modal-title">📏 Body Measurements</div>'
-    +'<div style="font-size:13px;color:var(--muted);margin-bottom:14px;">Track inches. Only filled values save.</div>'
+    +'<div class="modal-title">📏 Profile &amp; Measurements</div>'
+
+    // ── WEIGHT SECTION ───────────────────────────────────────────────
+    +'<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Weight</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">'
+    +'<input type="number" id="mm-weight" placeholder="Weight (lbs)" value="'+(todayWeight?todayWeight.weight:'')+'" step="0.1" style="flex:1;">'
+    +'<button onclick="logWeightFromMeasurements()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">Log</button>'
+    +'</div>'
+    + weightChartHtml
+
+    // ── PROFILE SECTION ─────────────────────────────────────────────
+    +'<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;margin-top:14px;">Profile</div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5;">Used by Complete Day projections to estimate your maintenance calories.</div>'
+    +'<div class="input-group"><label class="input-label">Height</label>'
+    +'<div style="display:flex;gap:6px;">'
+    +'<input type="number" id="mm-height-ft" value="'+ft+'" placeholder="ft" min="3" max="8" style="flex:1;">'
+    +'<input type="number" id="mm-height-in" value="'+inches+'" placeholder="in" min="0" max="11" style="flex:1;">'
+    +'</div></div>'
+    +'<div class="input-row">'
+    +'<div class="input-group"><label class="input-label">Age</label><input type="number" id="mm-age" placeholder="35" value="'+(profile.age||'')+'"></div>'
+    +'<div class="input-group"><label class="input-label">Sex</label>'
+    +'<select id="mm-sex"><option value="">--</option>'
+    +'<option value="male"'+sel('sex','male')+'>Male</option>'
+    +'<option value="female"'+sel('sex','female')+'>Female</option>'
+    +'</select></div>'
+    +'</div>'
+    +'<div class="input-group"><label class="input-label">Job activity</label>'
+    +'<select id="mm-job">'
+    +'<option value="sedentary"'+sel('job_activity','sedentary')+'>Sedentary (desk work, driving)</option>'
+    +'<option value="light"'+sel('job_activity','light')+'>Light (teaching, retail)</option>'
+    +'<option value="moderate"'+sel('job_activity','moderate')+'>Moderate (nursing, walking)</option>'
+    +'<option value="active"'+sel('job_activity','active')+'>Very active (manual labor)</option>'
+    +'</select></div>'
+    +'<div class="input-group"><label class="input-label">Exercise level</label>'
+    +'<select id="mm-exercise">'
+    +'<option value="none"'+sel('exercise_level','none')+'>None</option>'
+    +'<option value="light"'+sel('exercise_level','light')+'>Light (1-2/week)</option>'
+    +'<option value="moderate"'+sel('exercise_level','moderate')+'>Moderate (3-4/week)</option>'
+    +'<option value="high"'+sel('exercise_level','high')+'>High (5-6/week)</option>'
+    +'<option value="intense"'+sel('exercise_level','intense')+'>Intense (daily hard)</option>'
+    +'</select></div>'
+    +'<div class="input-group"><label class="input-label">Manual TDEE override (optional)</label>'
+    +'<input type="number" id="mm-tdee-override" placeholder="If you know your real maintenance" value="'+(profile.tdee_override||'')+'">'
+    +'<div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.4;">💡 Formulas often overestimate. If tracking has shown you a different maintenance number, enter it here.</div>'
+    +'</div>'
+    +'<div id="mm-tdee-preview" style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px;font-size:12px;color:var(--muted);"></div>'
+
+    // ── BODY MEASUREMENTS — collapsible "More" toggle ─────────────────
+    +'<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:6px;">'
+    +'<button onclick="toggleBodyMeasurements()" id="mm-body-toggle" style="width:100%;background:none;border:none;color:var(--muted);font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:0;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;">'
+    +'<span>📐 Body measurements (optional)</span><span id="mm-body-arrow">▾</span>'
+    +'</button>'
+    +'<div id="mm-body-section" style="display:none;">'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Track inches over time. Only filled values save.</div>'
     +'<div class="input-row">'
     +'<div class="input-group"><label class="input-label">Chest</label><input type="number" id="mm-chest" placeholder="in" value="'+(today.chest||'')+'" step="0.25"></div>'
     +'<div class="input-group"><label class="input-label">Waist</label><input type="number" id="mm-waist" placeholder="in" value="'+(today.waist||'')+'" step="0.25"></div>'
@@ -8070,6 +8165,8 @@ function showMeasurementsModal(){
     +'<div class="input-group"><label class="input-label">Thigh</label><input type="number" id="mm-thigh" placeholder="in" value="'+(today.thigh||'')+'" step="0.25"></div>'
     +'<div class="input-group"><label class="input-label">Neck</label><input type="number" id="mm-neck" placeholder="in" value="'+(today.neck||'')+'" step="0.25"></div>'
     +'</div>'
+    +'</div>'  // close mm-body-section
+    +'</div>'  // close border-top wrapper
     +'<button class="btn-primary" onclick="saveMeasurementLog()">Save</button>';
   if(logs.length){
     html += '<div style="margin-top:14px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:6px;">Recent</div>'
@@ -8082,19 +8179,130 @@ function showMeasurementsModal(){
   html += '<button class="btn-secondary" style="margin-top:10px;" onclick="document.getElementById(\'measurements-modal\').remove()">Close</button></div>';
   modal.innerHTML = html;
   document.body.appendChild(modal);
+  // Show TDEE preview live as fields change
+  ['mm-height-ft','mm-height-in','mm-age','mm-sex','mm-job','mm-exercise','mm-tdee-override'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) el.addEventListener('input', updateMeasurementsTDEEPreview);
+    if(el) el.addEventListener('change', updateMeasurementsTDEEPreview);
+  });
+  updateMeasurementsTDEEPreview();
 }
+
+// Live preview of the Mifflin-St Jeor TDEE estimate based on the form values.
+// Rendered in the #mm-tdee-preview block on the Measurements modal.
+function updateMeasurementsTDEEPreview(){
+  var el = document.getElementById('mm-tdee-preview');
+  if(!el) return;
+  var ft = parseInt((document.getElementById('mm-height-ft')||{}).value) || 0;
+  var inches = parseInt((document.getElementById('mm-height-in')||{}).value) || 0;
+  var totalIn = (ft*12) + inches;
+  var age = parseInt((document.getElementById('mm-age')||{}).value);
+  var sex = (document.getElementById('mm-sex')||{}).value;
+  var job = (document.getElementById('mm-job')||{}).value;
+  var exercise = (document.getElementById('mm-exercise')||{}).value;
+  var override = parseInt((document.getElementById('mm-tdee-override')||{}).value);
+  var weightLb = (typeof getLatestWeight === 'function') ? getLatestWeight() : null;
+
+  if(override && override >= 1000){
+    el.innerHTML = '<div style="color:var(--fiber);font-weight:700;">✓ Manual override: '+override+' kcal/day</div>'
+      + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">Formula will be ignored.</div>';
+    return;
+  }
+  if(!totalIn || !age || !sex || !weightLb){
+    var missing = [];
+    if(!totalIn) missing.push('height');
+    if(!age) missing.push('age');
+    if(!sex) missing.push('sex');
+    if(!weightLb) missing.push('weight');
+    el.innerHTML = '<div>Add '+missing.join(', ')+' to see estimated maintenance calories.</div>'
+      + (!weightLb ? '<div style="font-size:10px;color:var(--sugar);margin-top:4px;">Log weight from More → Weight Tracker.</div>' : '');
+    return;
+  }
+  var kg = weightLb * 0.4536;
+  var cm = totalIn * 2.54;
+  var bmr;
+  if(sex === 'male') bmr = (10*kg)+(6.25*cm)-(5*age)+5;
+  else bmr = (10*kg)+(6.25*cm)-(5*age)-161;
+  var JOB_F = {sedentary:0.10,light:0.15,moderate:0.25,active:0.35};
+  var EX_F = {none:0.0,light:0.05,moderate:0.10,high:0.15,intense:0.20};
+  var jobF = JOB_F[job] !== undefined ? JOB_F[job] : 0.10;
+  var exF = EX_F[exercise] !== undefined ? EX_F[exercise] : 0.10;
+  var mult = 1.15 + jobF + exF;
+  var tdee = Math.round(bmr * mult);
+  el.innerHTML = '<div><strong style="color:var(--accent2);">Estimated maintenance:</strong> '+tdee+' kcal/day</div>'
+    + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">BMR '+Math.round(bmr)+' × '+mult.toFixed(2)+' (base '+1.15+' + job '+jobF.toFixed(2)+' + exercise '+exF.toFixed(2)+')</div>';
+}
+function toggleBodyMeasurements(){
+  var section = document.getElementById('mm-body-section');
+  var arrow = document.getElementById('mm-body-arrow');
+  if(!section) return;
+  if(section.style.display === 'none'){
+    section.style.display = 'block';
+    if(arrow) arrow.textContent = '▴';
+  } else {
+    section.style.display = 'none';
+    if(arrow) arrow.textContent = '▾';
+  }
+}
+
+// Log weight from inside the Measurements modal. Saves and re-renders the
+// modal so the trend chart updates in place.
+function logWeightFromMeasurements(){
+  var input = document.getElementById('mm-weight');
+  if(!input) return;
+  var val = parseFloat(input.value);
+  if(!val){ showToast('Enter a weight'); return; }
+  var log = loadWeightLog();
+  var idx = log.findIndex(function(e){ return e.date === dateKey(0); });
+  if(idx >= 0) log[idx].weight = val;
+  else log.push({ date: dateKey(0), weight: val });
+  log.sort(function(a, b){ return a.date.localeCompare(b.date); });
+  saveWeightLog(log);
+  showToast('✓ '+val+' lbs logged');
+  // Re-render the modal so the chart reflects the new data + TDEE preview updates
+  var modal = document.getElementById('measurements-modal');
+  if(modal) modal.remove();
+  showMeasurementsModal();
+}
+
 function saveMeasurementLog(){
+  // Save profile fields (height/age/sex/activity/override) regardless of whether
+  // any body measurements were entered. These are independent.
+  var ft = parseInt((document.getElementById('mm-height-ft')||{}).value) || 0;
+  var inches = parseInt((document.getElementById('mm-height-in')||{}).value) || 0;
+  var totalIn = (ft*12) + inches;
+  var age = parseInt((document.getElementById('mm-age')||{}).value);
+  var sex = (document.getElementById('mm-sex')||{}).value;
+  var job = (document.getElementById('mm-job')||{}).value;
+  var exercise = (document.getElementById('mm-exercise')||{}).value;
+  var override = parseInt((document.getElementById('mm-tdee-override')||{}).value);
+  var profile = {};
+  try { profile = JSON.parse(localStorage.getItem('gn_profile')||'{}') || {}; } catch(e){}
+  if(totalIn >= 36 && totalIn <= 96) profile.height_in = totalIn;
+  if(age >= 13 && age <= 120) profile.age = age;
+  if(sex === 'male' || sex === 'female') profile.sex = sex;
+  if(job) profile.job_activity = job;
+  if(exercise) profile.exercise_level = exercise;
+  if(override >= 1000 && override <= 6000) profile.tdee_override = override;
+  else if(!override) profile.tdee_override = null;
+  // Clear legacy single-axis multiplier so new calc takes over
+  delete profile.activity_mult;
+  localStorage.setItem('gn_profile', JSON.stringify(profile));
+
+  // Save body measurements (chest/waist/etc.) — only if at least one was filled
   var entry = {date:dateKey(0)};
   ['chest','waist','hips','arm','thigh','neck'].forEach(function(k){
     var v = parseFloat(document.getElementById('mm-'+k).value);
     if(v>0) entry[k] = v;
   });
-  if(Object.keys(entry).length===1){ showToast('Enter at least one'); return; }
-  var logs = loadMeasurements();
-  var idx = logs.findIndex(function(e){return e.date===entry.date;});
-  if(idx>=0) logs[idx] = Object.assign(logs[idx], entry); else logs.push(entry);
-  logs.sort(function(a,b){return a.date.localeCompare(b.date);});
-  saveMeasurementsList(logs);
+  var hasBodyData = Object.keys(entry).length > 1;
+  if(hasBodyData){
+    var logs = loadMeasurements();
+    var idx = logs.findIndex(function(e){return e.date===entry.date;});
+    if(idx>=0) logs[idx] = Object.assign(logs[idx], entry); else logs.push(entry);
+    logs.sort(function(a,b){return a.date.localeCompare(b.date);});
+    saveMeasurementsList(logs);
+  }
   document.getElementById('measurements-modal').remove();
   showToast('✓ Saved');
 }
