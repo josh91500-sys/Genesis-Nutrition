@@ -4342,12 +4342,64 @@ function showCompleteDayProjection(){
     + rowHTML(week, '1 WEEK')
     + rowHTML(month, '1 MONTH')
     + rowHTML(quarter, '3 MONTHS')
+    + buildCompleteDayTargetCard(latestWeightLb, dailyDeficit)
     + '<div style="background:rgba(99,87,255,.1);border:1px solid var(--accent);border-radius:8px;padding:10px;font-size:11px;color:var(--muted);line-height:1.5;margin-top:10px;">'
     + '<strong style="color:var(--accent2);">⚠️ Rough estimate.</strong> Real weight change varies with water retention, muscle gain, sleep, stress, and hormones. 3,500 kcal ≈ 1 lb is a simplified model. For precision, focus on 2-4 week trends, not single days.'
     + '</div>'
     + '<button class="btn-secondary" style="margin-top:14px;" onclick="closeCompleteDay()">Close</button>'
     + '</div>';
   modal.classList.add('open');
+}
+
+// If user has a target weight set, show progress + ETA based on TODAY's
+// calorie balance projected forward. This is "if every day was like today"
+// math, distinct from the weight-trend math in the Measurements modal.
+function buildCompleteDayTargetCard(currentLb, dailyDeficit){
+  var profile = {};
+  try { profile = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
+  if(!profile.target_weight || !currentLb) return '';
+  var target = profile.target_weight;
+  var totalChange = target - currentLb;  // positive = need to gain
+  if(Math.abs(totalChange) < 0.5){
+    return '<div style="background:linear-gradient(135deg,rgba(45,212,160,.15),rgba(99,87,255,.1));border:1px solid var(--fiber);border-radius:8px;padding:10px;margin-top:10px;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--fiber);">🎯 At your target ('+target+' lb)</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Maintain to stay here.</div>'
+      + '</div>';
+  }
+  var direction = target > currentLb ? 'gain' : 'lose';
+  // dailyDeficit positive = surplus (gaining), negative = deficit (losing)
+  // Convert daily kcal to daily lb (3500 kcal ≈ 1 lb)
+  var dailyLbChange = dailyDeficit / 3500;
+  var goingWrongWay = (direction === 'gain' && dailyLbChange < -0.01) || (direction === 'lose' && dailyLbChange > 0.01);
+  if(Math.abs(dailyLbChange) < 0.005){
+    return '<div style="background:rgba(245,158,11,.1);border:1px solid var(--sugar);border-radius:8px;padding:10px;margin-top:10px;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--sugar);">🎯 Target: '+target+' lb · Need to '+direction+' '+Math.abs(totalChange).toFixed(1)+' lb</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Today is roughly maintenance. To reach the goal, you need a calorie '+(direction === 'gain' ? 'surplus' : 'deficit')+'.</div>'
+      + '</div>';
+  }
+  if(goingWrongWay){
+    return '<div style="background:rgba(245,158,11,.1);border:1px solid var(--sugar);border-radius:8px;padding:10px;margin-top:10px;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--sugar);">🎯 Target: '+target+' lb (wrong direction today)</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">If every day was like this, you\'d move further from your goal. Adjust your calories to '+direction+'.</div>'
+      + '</div>';
+  }
+  // On track — project ETA
+  var daysToTarget = Math.abs(totalChange / dailyLbChange);
+  if(daysToTarget > 365 * 3){
+    return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:10px;">'
+      + '<div style="font-size:12px;font-weight:700;">🎯 Target: '+target+' lb</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">At today\'s pace, the goal is more than 3 years out. Adjust calories for faster progress.</div>'
+      + '</div>';
+  }
+  var etaDate = new Date();
+  etaDate.setDate(etaDate.getDate() + Math.round(daysToTarget));
+  var dateStr = etaDate.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+  var weeklyRate = dailyLbChange * 7;
+  return '<div style="background:linear-gradient(135deg,rgba(99,87,255,.15),rgba(45,212,160,.1));border:1px solid var(--accent);border-radius:8px;padding:10px;margin-top:10px;">'
+    + '<div style="font-size:12px;font-weight:700;color:var(--accent2);">🎯 On track for '+target+' lb</div>'
+    + '<div style="font-size:14px;font-weight:700;margin-top:4px;">' + 'ETA: '+dateStr + '</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Today\'s balance projects to '+Math.abs(weeklyRate).toFixed(1)+' lb/week '+(direction === 'gain' ? 'gain' : 'loss')+'. ETA is "if every day was like today."</div>'
+    + '</div>';
 }
 
 function closeCompleteDay(){
@@ -6891,8 +6943,27 @@ function renderHealthSubPage(el){
     return;
   }
   var profile=JSON.parse(localStorage.getItem('gn_health_profile')||'null');
+  // Check if user has body profile (height/age/sex/weight) for context-aware
+  // recommendations. Soft banner — they can still generate without it.
+  var bodyProfile = {};
+  try { bodyProfile = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
+  var latestWeight = (typeof getLatestWeight === 'function') ? getLatestWeight() : null;
+  var missing = [];
+  if(!bodyProfile.height_in) missing.push('height');
+  if(!bodyProfile.age) missing.push('age');
+  if(!bodyProfile.sex) missing.push('sex');
+  if(!latestWeight) missing.push('weight');
+  var profileBanner = '';
+  if(missing.length > 0){
+    profileBanner = '<div style="background:rgba(99,87,255,.1);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-bottom:14px;">'
+      + '<div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:4px;">📏 More accurate recommendations</div>'
+      + '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px;">Adding your '+missing.join(', ')+' lets Health AI tailor calorie targets, macros, and exercise intensity to your body. Without these, the plan uses generic estimates.</div>'
+      + '<button onclick="openMeasurementsFromHealth()" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 14px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">Add my profile data</button>'
+      + '</div>';
+  }
   el.innerHTML='<div class="card"><div class="card-title">🩺 Health AI</div>'
     +'<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Enter conditions, medications, and goals. AI creates a personalized nutrition + workout plan with clinical reasoning. You\'ll choose whether to apply the goals after reviewing.</div>'
+    + profileBanner
     +'<div class="input-group"><label class="input-label">Your Health Profile</label>'
     +'<textarea id="health-input" rows="5" placeholder="e.g. High blood pressure, taking lisinopril, want to lose weight">'+(profile&&profile.rawText?profile.rawText:'')+'</textarea></div>'
     +'<button class="btn-primary" onclick="generateHealthRecs()" id="health-btn">🤖 Generate Full Health Plan</button>'
@@ -8109,6 +8180,14 @@ function showMeasurementsModal(){
     +'</div>'
     + weightChartHtml
 
+    // ── TARGET WEIGHT ────────────────────────────────────────────────
+    +'<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;margin-top:14px;">Target Weight</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">'
+    +'<input type="number" id="mm-target-weight" placeholder="Target (lbs)" value="'+(profile.target_weight||'')+'" step="0.1" style="flex:1;">'
+    +'<button onclick="saveTargetWeight()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">Save</button>'
+    +'</div>'
+    + buildTargetWeightProjection(profile, weightLog)
+
     // ── PROFILE SECTION ─────────────────────────────────────────────
     +'<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;margin-top:14px;">Profile</div>'
     +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5;">Used by Complete Day projections to estimate your maintenance calories.</div>'
@@ -8245,6 +8324,27 @@ function toggleBodyMeasurements(){
   }
 }
 
+// Open Measurements modal from Health AI's profile-incomplete banner.
+// On close (when user finishes filling in data), re-render Health AI so
+// the banner updates / disappears.
+function openMeasurementsFromHealth(){
+  showMeasurementsModal();
+  setTimeout(function(){
+    var modal = document.getElementById('measurements-modal');
+    if(!modal) return;
+    var observer = new MutationObserver(function(mutations){
+      if(!document.getElementById('measurements-modal')){
+        observer.disconnect();
+        var subEl = document.getElementById('sub-page-content');
+        if(subEl && subEl.innerHTML.indexOf('Health AI') !== -1){
+          renderHealthSubPage(subEl);
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: false });
+  }, 50);
+}
+
 // Log weight from inside the Measurements modal. Saves and re-renders the
 // modal so the trend chart updates in place.
 function logWeightFromMeasurements(){
@@ -8263,6 +8363,111 @@ function logWeightFromMeasurements(){
   var modal = document.getElementById('measurements-modal');
   if(modal) modal.remove();
   showMeasurementsModal();
+}
+
+// Save target weight from inside the Measurements modal. No validation on
+// "unrealistic" targets — user autonomy. Just saves and shows the new
+// projection card.
+function saveTargetWeight(){
+  var input = document.getElementById('mm-target-weight');
+  if(!input) return;
+  var val = parseFloat(input.value);
+  var profile = {};
+  try { profile = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
+  if(!val || val <= 0){
+    // Empty/zero = clear the target
+    delete profile.target_weight;
+    delete profile.target_weight_set_at;
+    showToast('Target cleared');
+  } else {
+    profile.target_weight = val;
+    profile.target_weight_set_at = Date.now();
+    showToast('✓ Target set: '+val+' lbs');
+  }
+  localStorage.setItem('gn_profile', JSON.stringify(profile));
+  // Re-render so the projection card updates
+  var modal = document.getElementById('measurements-modal');
+  if(modal) modal.remove();
+  showMeasurementsModal();
+}
+
+// Build the projection card showing ETA based on recent weight trend.
+// Uses last 30 days of weight log to compute average daily change, then
+// projects when target will be hit at that rate.
+function buildTargetWeightProjection(profile, weightLog){
+  if(!profile || !profile.target_weight){
+    return '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;">Set a target above to see projected timeline based on your trend.</div>';
+  }
+  var target = profile.target_weight;
+  var current = (typeof getLatestWeight === 'function') ? getLatestWeight() : null;
+  if(!current || !weightLog || weightLog.length < 2){
+    return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;color:var(--muted);margin-bottom:14px;">Target: '+target+' lbs · log weight on more days to see ETA.</div>';
+  }
+
+  // Compute average daily change from recent weight history (up to 30 days)
+  var recent = weightLog.slice(-30);
+  if(recent.length < 2){
+    return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;color:var(--muted);margin-bottom:14px;">Target: '+target+' lbs · need more weight logs to project ETA.</div>';
+  }
+  var firstDate = new Date(recent[0].date + 'T12:00:00');
+  var lastDate = new Date(recent[recent.length-1].date + 'T12:00:00');
+  var daysSpan = Math.max(1, Math.round((lastDate - firstDate) / 86400000));
+  var weightChange = recent[recent.length-1].weight - recent[0].weight;
+  var dailyRate = weightChange / daysSpan;  // lbs per day, positive = gaining
+  var totalChange = target - current;       // positive = need to gain
+  var direction = target > current ? 'gain' : target < current ? 'lose' : 'same';
+
+  // If they're already at goal
+  if(Math.abs(totalChange) < 0.5){
+    return '<div style="background:linear-gradient(135deg,rgba(45,212,160,.15),rgba(99,87,255,.1));border:1px solid var(--fiber);border-radius:8px;padding:12px;margin-bottom:14px;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--fiber);">🎯 You\'re at your target weight!</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Current: '+current.toFixed(1)+' lb · Target: '+target+' lb</div>'
+      + '</div>';
+  }
+
+  // Going wrong direction
+  var trendDirection = dailyRate > 0.01 ? 'gain' : dailyRate < -0.01 ? 'lose' : 'flat';
+  var goingWrongWay = (direction === 'gain' && trendDirection === 'lose') || (direction === 'lose' && trendDirection === 'gain');
+  if(trendDirection === 'flat' || goingWrongWay){
+    var msg = trendDirection === 'flat'
+      ? 'Your weight has been steady. To '+direction+' to '+target+' lb, you\'ll need a calorie '
+        + (direction === 'gain' ? 'surplus' : 'deficit') + '.'
+      : 'Your trend is going the opposite direction from your goal. Reverse the trend to make progress.';
+    return '<div style="background:rgba(245,158,11,.1);border:1px solid var(--sugar);border-radius:8px;padding:12px;margin-bottom:14px;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--sugar);">⚠️ Not on track</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">'+msg+'</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Current: '+current.toFixed(1)+' lb → Target: '+target+' lb · Need to '+direction+' '+Math.abs(totalChange).toFixed(1)+' lb</div>'
+      + '</div>';
+  }
+
+  // Going right direction — project ETA
+  var daysToTarget = Math.abs(totalChange / dailyRate);
+  var etaDate = new Date();
+  etaDate.setDate(etaDate.getDate() + Math.round(daysToTarget));
+  var dateStr = etaDate.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+
+  // Sanity check — if rate is unreasonably fast, the projection is unreliable
+  var weeklyRate = dailyRate * 7;
+  var rateNote = '';
+  if(Math.abs(weeklyRate) > 3){
+    rateNote = '<div style="font-size:10px;color:var(--sugar);margin-top:6px;">⚠️ Your trend ('+Math.abs(weeklyRate).toFixed(1)+' lb/week) is aggressive. Real progress usually slows over time.</div>';
+  } else if(daysToTarget > 365 * 2){
+    return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px;">'
+      + '<div style="font-size:12px;font-weight:700;">🎯 Target: '+target+' lb</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">At your current pace ('+Math.abs(weeklyRate).toFixed(2)+' lb/week), the goal is more than 2 years out. Adjust your calorie target if you want faster progress.</div>'
+      + '</div>';
+  }
+
+  var changeText = Math.abs(totalChange).toFixed(1) + ' lb to ' + (direction === 'gain' ? 'gain' : 'lose');
+  return '<div style="background:linear-gradient(135deg,rgba(99,87,255,.15),rgba(45,212,160,.1));border:1px solid var(--accent);border-radius:8px;padding:12px;margin-bottom:14px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">'
+    + '<div style="font-size:12px;font-weight:700;color:var(--accent2);">🎯 On track</div>'
+    + '<div style="font-size:11px;color:var(--muted);">'+changeText+'</div>'
+    + '</div>'
+    + '<div style="font-size:14px;font-weight:700;margin-top:6px;">'+target+' lb by ' + dateStr + '</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">At your current pace of '+Math.abs(weeklyRate).toFixed(1)+' lb/week '+(direction === 'gain' ? 'gain' : 'loss')+'. Updates as you log more weights.</div>'
+    + rateNote
+    + '</div>';
 }
 
 function saveMeasurementLog(){
@@ -8720,6 +8925,22 @@ function initFirebaseAuth(){
               console.log('[auth] Admin UI revealed');
             }
           } catch(e){}
+
+          // Identity prompt — if the user has not claimed a username yet,
+          // show the choice modal. Both public and anonymous now have a
+          // username under the hood; only difference is visibility. So the
+          // trigger is simply: no username claimed.
+          try {
+            var userDoc = await fbDb.collection('users').doc(user.uid).get();
+            var data = userDoc.exists ? userDoc.data() : {};
+            var main = data.main || {};
+            var hasUsername = !!data.username || !!main.username;
+            if(!hasUsername){
+              setTimeout(function(){ showIdentityPrompt(); }, 600);
+            }
+          } catch(e){
+            console.warn('[identity] check failed:', e && e.message);
+          }
           if(typeof renderNutrition === 'function') renderNutrition();
           // Check for pending friend requests / new activity and show banner
           if(typeof checkFriendsBanner === 'function'){
@@ -9525,6 +9746,113 @@ function renderUsernameSetup(el){
     + '</div>';
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// IDENTITY PROMPT
+// ──────────────────────────────────────────────────────────────────────
+// Shown once per account on first sign-in (after a username has not been
+// claimed and the user has not explicitly chosen "stay anonymous").
+// Two clear options. No skip — they must pick one. Choice can be changed
+// later from the Friends page.
+// ──────────────────────────────────────────────────────────────────────
+
+function showIdentityPrompt(){
+  if(!_currentUser || !_currentUser.uid) return;
+  var modal = document.getElementById('identity-prompt-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'identity-prompt-modal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+  // Suggested username from email prefix
+  var emailPrefix = '';
+  try {
+    if(_currentUser.email){
+      emailPrefix = _currentUser.email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '');
+      if(emailPrefix.length < 3) emailPrefix = '';
+      if(emailPrefix.length > 20) emailPrefix = emailPrefix.substring(0, 20);
+    }
+  } catch(e){}
+
+  modal.innerHTML = '<div class="modal-sheet">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">Pick a username</div>'
+    + '<div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6;">Pick a unique username. Then choose whether to be findable by other users or stay private.</div>'
+
+    // ── Username input (always required) ──
+    + '<div class="input-group" style="margin-bottom:8px;"><label class="input-label">Username</label>'
+    + '<input type="text" id="ip-username" placeholder="e.g. ' + (emailPrefix || 'fitness_fan_42') + '" value="'+emailPrefix+'" maxlength="20" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,\'\')" style="width:100%;font-size:16px;color:var(--text);-webkit-text-fill-color:var(--text);">'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:4px;">3-20 lowercase letters, numbers, or underscores.</div>'
+    + '</div>'
+    + '<div id="ip-status" style="font-size:12px;min-height:18px;margin-bottom:14px;"></div>'
+
+    // ── Visibility cards ──
+    + '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Choose visibility</div>'
+
+    + '<button onclick="submitIdentityWithVisibility(\'public\')" style="display:block;width:100%;background:var(--bg4);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:8px;text-align:left;cursor:pointer;color:var(--text);font-family:DM Sans,sans-serif;">'
+    + '<div style="font-size:14px;font-weight:700;margin-bottom:4px;">🌐 Public</div>'
+    + '<div style="font-size:11px;color:var(--muted);line-height:1.5;">Friends can find you by your @username. Required for friend requests, leaderboards, and shared meals.</div>'
+    + '</button>'
+
+    + '<button onclick="submitIdentityWithVisibility(\'anonymous\')" style="display:block;width:100%;background:var(--bg4);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:left;cursor:pointer;color:var(--text);font-family:DM Sans,sans-serif;">'
+    + '<div style="font-size:14px;font-weight:700;margin-bottom:4px;">🕶️ Private</div>'
+    + '<div style="font-size:11px;color:var(--muted);line-height:1.5;">Your username stays internal. You won\'t appear in friend search, can\'t send/receive new friend requests. Existing friends keep working normally. All tracking still works fully.</div>'
+    + '</button>'
+
+    + '</div>';
+  modal.classList.add('open');
+}
+
+function closeIdentityPrompt(){
+  var modal = document.getElementById('identity-prompt-modal');
+  if(modal) modal.classList.remove('open');
+}
+
+// Validate username, claim it, set visibility — single combined flow.
+async function submitIdentityWithVisibility(visibility){
+  var input = document.getElementById('ip-username');
+  var status = document.getElementById('ip-status');
+  var username = (input.value || '').trim().toLowerCase();
+  if(!isValidUsername(username)){
+    status.innerHTML = '<span style="color:#ff9090;">Username must be 3-20 chars, lowercase letters/numbers/underscores only.</span>';
+    return;
+  }
+  if(!_currentUser || !_currentUser.uid){ showToast('Sign in first'); return; }
+  status.innerHTML = '<span style="color:var(--muted);">Checking availability…</span>';
+  try {
+    var existing = await fbDb.collection('usernames').doc(username).get();
+    if(existing.exists){
+      status.innerHTML = '<span style="color:#ff9090;">That username is taken — try another.</span>';
+      return;
+    }
+    // Claim the username (regardless of visibility — it's reserved either way)
+    await fbDb.collection('usernames').doc(username).set({
+      uid: _currentUser.uid,
+      visibility: visibility,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    // Update user doc
+    await fbDb.collection('users').doc(_currentUser.uid).set({
+      username: username,
+      identity: visibility,    // 'public' | 'anonymous'
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    // Save to local profile
+    var profile = (typeof loadUserProfile === 'function') ? loadUserProfile() : {};
+    profile.username = username;
+    profile.identity = visibility;
+    if(typeof saveUserProfile === 'function') saveUserProfile(profile);
+    closeIdentityPrompt();
+    var msg = visibility === 'public'
+      ? '✓ @' + username + ' is yours. You\'re findable by friends.'
+      : '✓ @' + username + ' is yours. You\'re private — won\'t appear in search.';
+    showToast(msg, 4000);
+  } catch(e){
+    console.error('[identity] failed:', e);
+    status.innerHTML = '<span style="color:#ff9090;">Failed: ' + (e.message || 'try again') + '</span>';
+  }
+}
+
 async function submitUsername(){
   var input = document.getElementById('fr-username');
   var status = document.getElementById('fr-username-status');
@@ -10217,7 +10545,15 @@ async function searchFriend(){
       resEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">No user found with that username.</div>';
       return;
     }
-    var uid = doc.data().uid;
+    var docData = doc.data();
+    // Privacy: anonymous users are hidden from search even with exact match.
+    // Returns the same "not found" message — no information leak about
+    // whether the username is truly free or just anonymous.
+    if(docData.visibility === 'anonymous'){
+      resEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">No user found with that username.</div>';
+      return;
+    }
+    var uid = docData.uid;
     if(uid === _currentUser.uid){
       resEl.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">That\'s you. 🙂</div>';
       return;
