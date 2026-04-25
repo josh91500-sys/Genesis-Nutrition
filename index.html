@@ -768,8 +768,11 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
     <div class="modal-handle"></div>
     <div class="modal-title">Edit Food</div>
     <div class="input-group"><label class="input-label">Food Name</label><input type="text" id="ef-name"></div>
-    <div class="input-group"><label class="input-label">Meal</label>
-      <select id="ef-meal"><option value="Breakfast">&#x1F305; Breakfast</option><option value="Lunch">&#x2600;&#xFE0F; Lunch</option><option value="Dinner">&#x1F319; Dinner</option><option value="Snacks">&#x1F34E; Snack</option></select>
+    <div class="input-row">
+      <div class="input-group"><label class="input-label">Date</label><input type="date" id="ef-date"></div>
+      <div class="input-group"><label class="input-label">Meal</label>
+        <select id="ef-meal"><option value="Breakfast">&#x1F305; Breakfast</option><option value="Lunch">&#x2600;&#xFE0F; Lunch</option><option value="Dinner">&#x1F319; Dinner</option><option value="Snacks">&#x1F34E; Snack</option></select>
+      </div>
     </div>
     <div class="input-row">
       <div class="input-group"><label class="input-label">Calories</label><input type="number" id="ef-cal" placeholder="0"></div>
@@ -4270,11 +4273,20 @@ function openEditFood(meal,idx){
   var mf=log.foods.filter(function(f){return f.meal===meal;});
   var food=mf[idx]; if(!food) return;
   _editFoodMeal=meal; _editFoodIdx=log.foods.indexOf(food);
+  // Track the source day so we can move the food if user changes the date
+  window._editFoodSourceDayOffset = dayOffset;
   ['name','meal','cal','serving','protein','carbs','fat','fiber','sodium','sugar'].forEach(function(k){
     var el=document.getElementById('ef-'+k);
     if(el) el.value = k==='meal'?(food.meal||meal):(food[k]||0);
   });
   document.getElementById('ef-name').value=food.name||'';
+  // Date defaults to the day this food currently lives on. User can change
+  // it to move the food to a different day. Future dates are blocked.
+  var dateEl = document.getElementById('ef-date');
+  if(dateEl){
+    dateEl.value = dateKey(dayOffset);
+    dateEl.max = dateKey(0);  // block future dates
+  }
   // Populate time-eaten field from stored eaten_at (or fall back to id/now)
   var timeEl = document.getElementById('ef-time');
   if(timeEl){
@@ -4300,7 +4312,22 @@ function closeEditFood(){
 }
 function saveEditFood(){
   if(_editFoodIdx===null) return;
-  var log=loadDayLog(dayOffset), food=log.foods[_editFoodIdx]; if(!food) return;
+  var srcOffset = (window._editFoodSourceDayOffset !== undefined) ? window._editFoodSourceDayOffset : dayOffset;
+  var srcLog = loadDayLog(srcOffset);
+  var food = srcLog.foods[_editFoodIdx];
+  if(!food) return;
+
+  // Determine the destination date from the date picker
+  var dateEl = document.getElementById('ef-date');
+  var newDateStr = dateEl ? dateEl.value : dateKey(srcOffset);
+  var srcDateStr = dateKey(srcOffset);
+  if(newDateStr && newDateStr > dateKey(0)){
+    showToast('Can\'t move to a future date');
+    return;
+  }
+  var dayChanged = newDateStr && newDateStr !== srcDateStr;
+
+  // Apply the field updates to the food object first
   food.name=document.getElementById('ef-name').value.trim()||food.name;
   food.meal=document.getElementById('ef-meal').value;
   food.cal=parseFloat(document.getElementById('ef-cal').value)||0;
@@ -4311,30 +4338,61 @@ function saveEditFood(){
   food.fiber=parseFloat(document.getElementById('ef-fiber').value)||0;
   food.sodium=parseFloat(document.getElementById('ef-sodium').value)||0;
   food.sugar=parseFloat(document.getElementById('ef-sugar').value)||0;
-  // Update eaten_at from time picker (anchored to the day being edited)
+
+  // Compute new eaten_at — anchor to the destination day, not source
+  var destDateStr = newDateStr || srcDateStr;
   var timeVal = (document.getElementById('ef-time').value||'').trim();
   if(timeVal){
     var parts = timeVal.split(':');
     if(parts.length === 2){
       var hh = parseInt(parts[0]), mm = parseInt(parts[1]);
       if(!isNaN(hh) && !isNaN(mm)){
-        var d = new Date();
-        d.setDate(d.getDate() + dayOffset);
+        // Build date from destDateStr (YYYY-MM-DD) + time
+        var d = new Date(destDateStr + 'T12:00:00');
         d.setHours(hh, mm, 0, 0);
         food.eaten_at = d.getTime();
-        // If editing a today food, also keep the fasting anchor fresh
-        if(dayOffset === 0) localStorage.setItem('gn_last_eaten_at', food.eaten_at);
+        if(destDateStr === dateKey(0)) localStorage.setItem('gn_last_eaten_at', food.eaten_at);
       }
     }
+  } else if(dayChanged){
+    // No time given but day changed — anchor eaten_at to noon of the new day
+    var d2 = new Date(destDateStr + 'T12:00:00');
+    food.eaten_at = d2.getTime();
   }
-  saveDayLog(log,dayOffset); closeEditFood(); renderNutrition();
-  showToast('✓ '+food.name+' updated');
+
+  if(dayChanged){
+    // Remove from source day
+    srcLog.foods.splice(_editFoodIdx, 1);
+    saveDayLog(srcLog, srcOffset);
+    // Add to destination day — figure out the offset for destDateStr
+    var destOffset = dateOffsetFromKey(destDateStr);
+    var destLog = loadDayLog(destOffset);
+    destLog.foods.push(food);
+    saveDayLog(destLog, destOffset);
+    closeEditFood();
+    renderNutrition();
+    var humanDate = new Date(destDateStr+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    showToast('✓ '+food.name+' moved to '+humanDate);
+  } else {
+    saveDayLog(srcLog, srcOffset);
+    closeEditFood();
+    renderNutrition();
+    showToast('✓ '+food.name+' updated');
+  }
+}
+
+// Convert a YYYY-MM-DD date string to a day offset (0 = today, -1 = yesterday)
+function dateOffsetFromKey(dateStr){
+  var today = new Date(dateKey(0)+'T12:00:00');
+  var target = new Date(dateStr+'T12:00:00');
+  return Math.round((target - today) / 86400000);
 }
 function deleteEditFood(){
   if(_editFoodIdx===null) return;
-  var log=loadDayLog(dayOffset), food=log.foods[_editFoodIdx]; if(!food) return;
+  var srcOffset = (window._editFoodSourceDayOffset !== undefined) ? window._editFoodSourceDayOffset : dayOffset;
+  var log=loadDayLog(srcOffset), food=log.foods[_editFoodIdx]; if(!food) return;
   var name=food.name; log.foods.splice(_editFoodIdx,1);
-  saveDayLog(log,dayOffset); closeEditFood(); renderNutrition();
+  saveDayLog(log,srcOffset); closeEditFood(); renderNutrition();
   showToast(name+' deleted');
 }
 
@@ -5225,21 +5283,69 @@ function logWeight(){
 // ══════════════════════════════════════════════════════════════════════
 var barcodeScanner=null;
 function startBarcodeScanner(){
-  var wrap=document.getElementById('barcode-scanner-wrap'),btn=document.getElementById('start-scanner-btn');
-  if(wrap) wrap.style.display='block'; if(btn) btn.style.display='none';
-  document.getElementById('barcode-status').textContent='Point camera at barcode...';
+  // Build (or reuse) a fullscreen overlay with the camera centered. This
+  // prevents the camera from rendering below the viewport and forcing the
+  // user to scroll. The overlay covers the whole screen with the camera
+  // viewport in the middle and a Stop button at the bottom.
+  var overlay = document.getElementById('barcode-scanner-overlay');
+  if(!overlay){
+    overlay = document.createElement('div');
+    overlay.id = 'barcode-scanner-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;';
+    overlay.innerHTML = '<div style="position:absolute;top:24px;left:0;right:0;text-align:center;color:#fff;font-family:DM Sans,sans-serif;">'
+      + '<div style="font-size:16px;font-weight:700;margin-bottom:4px;">📷 Scan Barcode</div>'
+      + '<div id="bso-status" style="font-size:12px;color:#bbb;">Point camera at barcode</div>'
+      + '</div>'
+      + '<div id="bso-reader" style="width:100%;max-width:480px;border-radius:16px;overflow:hidden;background:#000;"></div>'
+      + '<button onclick="stopBarcodeScanner()" style="position:absolute;bottom:32px;left:50%;transform:translateX(-50%);background:#fff;color:#000;border:none;border-radius:99px;padding:14px 36px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4);">Stop scanning</button>';
+    document.body.appendChild(overlay);
+  } else {
+    overlay.style.display = 'flex';
+    var statusEl = document.getElementById('bso-status');
+    if(statusEl) statusEl.textContent = 'Point camera at barcode';
+  }
+
+  // Hide the original inline wrap (legacy) so it doesn't still show
+  var wrap = document.getElementById('barcode-scanner-wrap');
+  var btn = document.getElementById('start-scanner-btn');
+  if(wrap) wrap.style.display='none';
+  if(btn) btn.style.display='none';
+
   try {
-    barcodeScanner=new Html5Qrcode('barcode-reader');
-    barcodeScanner.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:150}},
-      function(decoded){ stopBarcodeScanner(); lookupUPCCode(decoded.replace(/[^0-9]/g,'')); },
+    barcodeScanner = new Html5Qrcode('bso-reader');
+    barcodeScanner.start(
+      {facingMode:'environment'},
+      {fps:10, qrbox:{width:280, height:160}},
+      function(decoded){
+        stopBarcodeScanner();
+        lookupUPCCode(decoded.replace(/[^0-9]/g,''));
+      },
       function(){}
-    ).catch(function(){ document.getElementById('barcode-status').textContent='Camera unavailable. Enter UPC manually.'; if(wrap)wrap.style.display='none'; if(btn)btn.style.display='block'; });
-  } catch(e){ document.getElementById('barcode-status').textContent='Scanner unavailable. Enter UPC manually.'; if(wrap)wrap.style.display='none'; if(btn)btn.style.display='block'; }
+    ).catch(function(){
+      var statusEl = document.getElementById('bso-status');
+      if(statusEl) statusEl.textContent = 'Camera unavailable';
+      stopBarcodeScanner();
+      var bs = document.getElementById('barcode-status');
+      if(bs) bs.textContent = 'Camera unavailable. Enter UPC manually.';
+      if(btn) btn.style.display='block';
+    });
+  } catch(e){
+    stopBarcodeScanner();
+    var bs2 = document.getElementById('barcode-status');
+    if(bs2) bs2.textContent = 'Scanner unavailable. Enter UPC manually.';
+    if(btn) btn.style.display='block';
+  }
 }
+
 function stopBarcodeScanner(){
-  if(barcodeScanner){barcodeScanner.stop().catch(function(){});barcodeScanner=null;}
-  var wrap=document.getElementById('barcode-scanner-wrap'),btn=document.getElementById('start-scanner-btn');
-  if(wrap)wrap.style.display='none'; if(btn)btn.style.display='block';
+  if(barcodeScanner){
+    try { barcodeScanner.stop().catch(function(){}); } catch(e){}
+    barcodeScanner = null;
+  }
+  var overlay = document.getElementById('barcode-scanner-overlay');
+  if(overlay) overlay.style.display = 'none';
+  var btn = document.getElementById('start-scanner-btn');
+  if(btn) btn.style.display = 'block';
 }
 function lookupUPC(){
   var upc=(document.getElementById('upc-input').value||'').trim().replace(/[^0-9]/g,'');
