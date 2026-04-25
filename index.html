@@ -653,6 +653,11 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
         <div class="mode-card-label">CNF</div>
         <div class="mode-card-sub">Scientific</div>
       </div>
+      <div class="mode-card" id="mode-photo" onclick="setMode('photo',this)">
+        <div class="mode-card-icon">📸</div>
+        <div class="mode-card-label">Photo</div>
+        <div class="mode-card-sub">AI plate read</div>
+      </div>
     </div>
 
     <!-- Describe mode -->
@@ -732,6 +737,21 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
       <button class="btn-primary" onclick="doCnfSearch()">🔬 Search</button>
       <div id="cnf-search-status" class="ai-status"></div>
       <div id="cnf-search-results"></div>
+    </div>
+
+    <!-- Photo mode -->
+    <div id="mode-photo-content" style="display:none;">
+      <div style="text-align:center;padding:10px 0 14px;">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5;">Take a photo of your plate. AI will identify the foods and estimate portions — you can adjust before logging.</div>
+        <input type="file" id="photo-file" accept="image/*" capture="environment" style="display:none;" onchange="handlePhotoLog(this)">
+        <button class="btn-primary" onclick="document.getElementById('photo-file').click()">📸 Take Photo</button>
+        <div style="margin:8px 0;font-size:12px;color:var(--muted2);">or</div>
+        <input type="file" id="photo-gallery" accept="image/*" style="display:none;" onchange="handlePhotoLog(this)">
+        <button class="btn-secondary" onclick="document.getElementById('photo-gallery').click()">🖼️ Choose from Gallery</button>
+        <div style="font-size:10px;color:var(--sugar);margin-top:14px;line-height:1.5;">⚠️ Photo estimates are rough. Adjust portions before adding.</div>
+      </div>
+      <div id="photo-status" class="ai-status"></div>
+      <div id="photo-preview"></div>
     </div>
 
     <!-- Recent foods list — always shown (if any exist), regardless of mode -->
@@ -833,6 +853,9 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
       <div class="input-group"><label class="input-label">Potassium (mg)</label><input type="number" id="g-potassium" placeholder="4700"></div>
     </div>
     <button class="btn-primary" onclick="saveGoals()">Save Goals</button>
+    <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Your Data</div>
+    <button class="btn-secondary" style="margin-top:0;" onclick="exportUserData()">📥 Export my data (JSON)</button>
+    <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5;">Downloads everything stored locally on this device — food logs, weights, goals, profile, meals, and supplements. Useful for backups or moving to a new phone.</div>
     <button class="btn-secondary" style="margin-top:8px;" onclick="recoverMisdatedLogs()">🔧 Check for misdated food logs</button>
     <button class="btn-secondary" style="margin-top:8px;background:#ff6b6b22;color:#ff9090;border-color:#ff6b6b44;" onclick="if(confirm('Clear all data?'))clearData()">Clear All Data</button>
     <button class="btn-secondary" style="margin-top:8px;" onclick="closeSettings()">Cancel</button>
@@ -1125,7 +1148,7 @@ function renderNutrition(){
           <button onclick="event.stopPropagation();openFoodActions('${meal}',${i})" style="background:var(--bg4);border:1px solid var(--border2);color:var(--muted);border-radius:6px;padding:4px 7px;font-size:11px;cursor:pointer;margin-right:4px;" title="Copy / Actions">⋯</button>
           <button class="food-del" onclick="event.stopPropagation();deleteFood('${meal}',${i})">×</button>
         </div>${ingredientsBlock}`;
-      }).join('') : `<div class="meal-empty">Nothing logged yet</div>`}`;
+      }).join('') : `<div class="meal-empty" style="padding:14px 16px;text-align:center;color:var(--muted);font-size:12px;line-height:1.5;">No foods yet — tap <span style="background:var(--accent);color:#fff;padding:2px 7px;border-radius:99px;font-weight:700;">＋</span> to add your first ${meal.toLowerCase()}.</div>`}`;
   });
 }
 
@@ -1824,6 +1847,10 @@ function closeAddFood(){
   document.getElementById('describe-preview').innerHTML='';
   document.getElementById('scan-status').textContent='';
   document.getElementById('scan-preview').innerHTML='';
+  var photoStatus = document.getElementById('photo-status');
+  var photoPreview = document.getElementById('photo-preview');
+  if(photoStatus) photoStatus.textContent = '';
+  if(photoPreview) photoPreview.innerHTML = '';
 }
 
 // Set the time-eaten input to the current local time (HH:MM)
@@ -1853,7 +1880,7 @@ function getEatenAtTimestamp(){
 }
 
 function setMode(mode, el){
-  ['describe','scan','barcode','manual','meals','cnf'].forEach(function(m){
+  ['describe','scan','barcode','manual','meals','cnf','photo'].forEach(function(m){
     var btn=document.getElementById('mode-'+m), cont=document.getElementById('mode-'+m+'-content');
     if(btn) btn.classList.toggle('active',m===mode);
     if(cont) cont.style.display=m===mode?'block':'none';
@@ -1927,6 +1954,15 @@ ${getAINutrientUnitsNote()}`;
 
 // Global store for preview foods — avoids HTML-attribute-quoting nightmares
 var _previewFoodStore = {};
+// Update the food name in the preview store as the user types in the
+// "type the product name" input. The Add button reads from the store, so
+// no additional wiring needed.
+function updatePreviewName(pid, value){
+  if(_previewFoodStore[pid]){
+    _previewFoodStore[pid].name = (value || '').trim();
+  }
+}
+
 function showFoodPreview(food, containerId){
   const el = document.getElementById(containerId);
   const srcLower = (food.source||'').toLowerCase();
@@ -1957,10 +1993,36 @@ function showFoodPreview(food, containerId){
   var badgeOnClick = hasBarcodeSource
     ? ' onclick="showBarcodeLabelSource(\''+pid+'\')" title="Tap to see source / fix data"'
     : '';
+
+  // Detect ambiguous / missing product names. When the AI returns generic
+  // placeholders (or nothing), show an editable input prompting the user to
+  // type the actual product name. Better than logging "jarred product."
+  var nameLower = (food.name || '').toLowerCase().trim();
+  var ambiguousNames = [
+    'jarred product', 'jarred item', 'packaged product', 'packaged food',
+    'canned product', 'canned item', 'canned food', 'bottled product',
+    'unknown product', 'unknown item', 'generic product', 'generic food',
+    'food product', 'product', 'item', 'unknown', 'nutrition label',
+    'food', 'meal'
+  ];
+  var nameIsAmbiguous = !nameLower
+    || ambiguousNames.indexOf(nameLower) !== -1
+    || nameLower.length < 3;
+
+  var nameDisplay;
+  if(nameIsAmbiguous){
+    nameDisplay = '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:10px;color:var(--sugar);text-transform:uppercase;font-weight:700;letter-spacing:.06em;margin-bottom:4px;">⚠️ Couldn\'t read name — type it</div>'
+      + '<input type="text" id="pname-'+pid+'" placeholder="e.g. Skippy Peanut Butter" oninput="updatePreviewName(\''+pid+'\', this.value)" style="width:100%;background:var(--bg3);border:1px solid var(--sugar);border-radius:8px;padding:8px 10px;font-size:14px;font-weight:700;color:var(--text);outline:none;">'
+      + '</div>';
+  } else {
+    nameDisplay = '<div class="ai-preview-name">'+food.name+'</div>';
+  }
+
   el.innerHTML = `
     <div class="ai-preview" style="margin-top:12px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div class="ai-preview-name">${food.name}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
+        ${nameDisplay}
         <span class="${badgeClass}" style="${badgeStyle}"${badgeOnClick}>${badgeText}</span>
       </div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;" id="psl-${pid}">Per serving: ${food.serving_desc||food.serving_g+'g'}</div>
@@ -2231,6 +2293,27 @@ function showAddToRecipeForPreview(pid){
 function addPreviewFoodById(pid){
   const food = _previewFoodStore[pid];
   if(!food){ showToast('Could not find food data — try again'); return; }
+  // Validate name — block adding if it's still empty/ambiguous after user
+  // had a chance to type one. The "type the product name" prompt set this
+  // to empty if AI couldn't read it.
+  var nameLower = (food.name || '').toLowerCase().trim();
+  var ambiguousNames = [
+    'jarred product', 'jarred item', 'packaged product', 'packaged food',
+    'canned product', 'canned item', 'canned food', 'bottled product',
+    'unknown product', 'unknown item', 'generic product', 'generic food',
+    'food product', 'product', 'item', 'unknown', 'nutrition label',
+    'food', 'meal'
+  ];
+  if(!nameLower || ambiguousNames.indexOf(nameLower) !== -1 || nameLower.length < 3){
+    var nameInput = document.getElementById('pname-' + pid);
+    if(nameInput){
+      nameInput.focus();
+      nameInput.style.boxShadow = '0 0 0 2px rgba(245,158,11,.4)';
+      setTimeout(function(){ if(nameInput) nameInput.style.boxShadow = ''; }, 1500);
+    }
+    showToast('Type the product name first');
+    return;
+  }
   const mult = (window._previewServings && window._previewServings[pid]) || 1;
   const scaled = scalePreviewFood(food, mult);
   addPreviewFood(scaled);
@@ -2285,6 +2368,225 @@ function addPreviewFood(food){
   showToast('✓ '+food.name+' added');
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// PHOTO LOG — multi-food plate identification
+// ──────────────────────────────────────────────────────────────────────
+// User photographs their plate. AI returns multiple food items with
+// estimated nutrition each. Each can be edited/removed before bulk-add.
+// Falls back gracefully if no foods detected.
+// ──────────────────────────────────────────────────────────────────────
+
+async function handlePhotoLog(input){
+  const file = input.files[0];
+  if(!file) return;
+  if(!isPro()){
+    showProPaywall('Photo Logging', function(){ handlePhotoLog(input); });
+    return;
+  }
+  const status = document.getElementById('photo-status');
+  const preview = document.getElementById('photo-preview');
+  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:6px;">Identifying foods on your plate…</div>';
+  preview.innerHTML = '';
+  const reader = new FileReader();
+  reader.onload = async function(e){
+    const b64 = e.target.result.split(',')[1];
+    try {
+      const prompt = 'You are looking at a photo of someone\'s meal/plate. Identify each distinct food item and estimate nutrition for the visible portion of each.\n\n'
+        + 'Return ONLY a JSON object with this exact structure:\n'
+        + '{\n'
+        + '  "is_food": true/false,\n'
+        + '  "foods": [\n'
+        + '    {"name":"Food name", "serving_desc":"e.g. 1 cup or 4 oz", "serving_g":150, "cal":250, "protein":20, "carbs":30, "fat":8, "fiber":3, "sugar":2, "sodium":300, "satfat":2, "potassium":400, "calcium":80, "iron":1.5, "vitc":5, "vitd":0, "vita":50}\n'
+        + '  ],\n'
+        + '  "notes":"any helpful context"\n'
+        + '}\n\n'
+        + 'Rules:\n'
+        + '- If the image is NOT food (selfie, dog, landscape, blank), set is_food:false and return empty foods array\n'
+        + '- Each visible distinct food = a separate entry. Don\'t lump them together.\n'
+        + '- Estimate portions by visual size. Round to common serving sizes.\n'
+        + '- Use real product names where possible (e.g. "Grilled chicken breast" not "Protein"). Never use generic names like "jarred product" or "packaged food".\n'
+        + '- Sodium in mg, vitamins as listed.\n'
+        + '- If you can\'t identify a food clearly, give it your best guess but flag it in notes.';
+      const res = await callClaude({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: file.type, data: b64 } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      });
+      const data = await res.json();
+      const text = (data.content && data.content[0] && data.content[0].text) || '';
+      const match = text.match(/\{[\s\S]*\}/);
+      if(!match) throw new Error('AI response unreadable');
+      const parsed = JSON.parse(match[0]);
+      if(parsed.is_food === false || !parsed.foods || !parsed.foods.length){
+        status.innerHTML = '<span style="color:var(--sugar);font-size:13px;">Couldn\'t identify food in this photo. Try a clearer shot, or use Describe mode for hard-to-photograph meals.</span>';
+        return;
+      }
+      status.textContent = '';
+      window._photoLogFoods = parsed.foods.map(function(f, i){
+        f._photo_id = 'pl_'+i+'_'+Date.now();
+        f._included = true;
+        f.source = 'Photo estimate';
+        return f;
+      });
+      renderPhotoLogPreview(parsed.notes);
+    } catch(err){
+      console.error('[photo log] failed:', err);
+      status.innerHTML = '<span style="color:#ff9090;font-size:13px;">✗ Couldn\'t process photo. Try again or use a clearer image.</span>';
+    }
+  };
+  reader.onerror = function(){
+    status.innerHTML = '<span style="color:#ff9090;">Couldn\'t read image file.</span>';
+  };
+  reader.readAsDataURL(file);
+}
+
+// Render the editable list of foods detected in the photo. Each row has
+// a checkbox (include/skip), name + macros, edit/delete actions.
+function renderPhotoLogPreview(aiNotes){
+  var preview = document.getElementById('photo-preview');
+  if(!preview) return;
+  var foods = window._photoLogFoods || [];
+  if(!foods.length){
+    preview.innerHTML = '';
+    return;
+  }
+  var notesHtml = aiNotes
+    ? '<div style="background:rgba(99,87,255,.08);border:1px solid var(--accent);border-radius:8px;padding:10px;font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:12px;"><strong style="color:var(--accent2);">AI note:</strong> '+aiNotes+'</div>'
+    : '';
+  // Total macros across included foods
+  var totals = foods.reduce(function(acc, f){
+    if(f._included !== false){
+      acc.cal += f.cal || 0;
+      acc.protein += f.protein || 0;
+      acc.carbs += f.carbs || 0;
+      acc.fat += f.fat || 0;
+    }
+    return acc;
+  }, {cal:0, protein:0, carbs:0, fat:0});
+  var includedCount = foods.filter(function(f){ return f._included !== false; }).length;
+  var totalsRow = '<div style="background:linear-gradient(135deg,rgba(99,87,255,.12),rgba(45,212,160,.08));border:1px solid var(--accent);border-radius:10px;padding:12px;margin-bottom:12px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:700;letter-spacing:.06em;">Plate total ('+includedCount+' item'+(includedCount===1?'':'s')+')</div></div>'
+    + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center;margin-top:8px;">'
+    + '<div><div style="font-size:18px;font-weight:800;">'+Math.round(totals.cal)+'</div><div style="font-size:10px;color:var(--muted);">kcal</div></div>'
+    + '<div><div style="font-size:18px;font-weight:800;color:var(--protein);">'+Math.round(totals.protein)+'g</div><div style="font-size:10px;color:var(--muted);">protein</div></div>'
+    + '<div><div style="font-size:18px;font-weight:800;color:var(--carb);">'+Math.round(totals.carbs)+'g</div><div style="font-size:10px;color:var(--muted);">carbs</div></div>'
+    + '<div><div style="font-size:18px;font-weight:800;color:var(--fat);">'+Math.round(totals.fat)+'g</div><div style="font-size:10px;color:var(--muted);">fat</div></div>'
+    + '</div></div>';
+
+  var rowsHtml = foods.map(function(f, idx){
+    var checked = f._included !== false;
+    var rowOpacity = checked ? '1' : '.4';
+    return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:6px;opacity:'+rowOpacity+';">'
+      + '<div style="display:flex;align-items:center;gap:10px;">'
+      + '<input type="checkbox" '+(checked?'checked':'')+' onchange="togglePhotoFood('+idx+', this.checked)" style="width:18px;height:18px;cursor:pointer;accent-color:var(--accent);">'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:13px;font-weight:700;">'+escapeHtml(f.name||'(unknown)')+'</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+escapeHtml(f.serving_desc||(f.serving_g+'g'))+' · '+Math.round(f.cal||0)+' kcal · P '+Math.round(f.protein||0)+'g · C '+Math.round(f.carbs||0)+'g · F '+Math.round(f.fat||0)+'g</div>'
+      + '</div>'
+      + '<button onclick="editPhotoFood('+idx+')" style="background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:6px;" title="Edit">✎</button>'
+      + '</div>'
+      + '<div id="photo-edit-'+idx+'" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">'
+      + '<div class="input-row">'
+      + '<div class="input-group" style="margin-bottom:6px;"><label class="input-label">Name</label><input type="text" id="ple-name-'+idx+'" value="'+escapeHtml(f.name||'')+'"></div>'
+      + '<div class="input-group" style="margin-bottom:6px;"><label class="input-label">Serving</label><input type="text" id="ple-serv-'+idx+'" value="'+escapeHtml(f.serving_desc||'')+'"></div>'
+      + '</div>'
+      + '<div class="input-row">'
+      + '<div class="input-group" style="margin-bottom:6px;"><label class="input-label">Cal</label><input type="number" id="ple-cal-'+idx+'" value="'+Math.round(f.cal||0)+'"></div>'
+      + '<div class="input-group" style="margin-bottom:6px;"><label class="input-label">Protein g</label><input type="number" id="ple-pro-'+idx+'" value="'+(f.protein||0)+'" step="0.1"></div>'
+      + '</div>'
+      + '<div class="input-row">'
+      + '<div class="input-group" style="margin-bottom:6px;"><label class="input-label">Carbs g</label><input type="number" id="ple-carb-'+idx+'" value="'+(f.carbs||0)+'" step="0.1"></div>'
+      + '<div class="input-group" style="margin-bottom:6px;"><label class="input-label">Fat g</label><input type="number" id="ple-fat-'+idx+'" value="'+(f.fat||0)+'" step="0.1"></div>'
+      + '</div>'
+      + '<button onclick="savePhotoFoodEdit('+idx+')" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;width:100%;">Save changes</button>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+
+  preview.innerHTML = notesHtml
+    + totalsRow
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Tap ✎ to edit any item. Uncheck to skip.</div>'
+    + rowsHtml
+    + '<button class="btn-primary" style="margin-top:10px;" onclick="addAllPhotoFoodsToLog()">＋ Add '+includedCount+' item'+(includedCount===1?'':'s')+' to log</button>';
+}
+
+function togglePhotoFood(idx, checked){
+  var foods = window._photoLogFoods || [];
+  if(foods[idx]){
+    foods[idx]._included = checked;
+    renderPhotoLogPreview();
+  }
+}
+
+function editPhotoFood(idx){
+  var editEl = document.getElementById('photo-edit-'+idx);
+  if(editEl){
+    editEl.style.display = editEl.style.display === 'none' ? 'block' : 'none';
+  }
+}
+
+function savePhotoFoodEdit(idx){
+  var foods = window._photoLogFoods || [];
+  if(!foods[idx]) return;
+  var f = foods[idx];
+  var nameEl = document.getElementById('ple-name-'+idx);
+  var servEl = document.getElementById('ple-serv-'+idx);
+  var calEl = document.getElementById('ple-cal-'+idx);
+  var proEl = document.getElementById('ple-pro-'+idx);
+  var carbEl = document.getElementById('ple-carb-'+idx);
+  var fatEl = document.getElementById('ple-fat-'+idx);
+  if(nameEl) f.name = nameEl.value.trim() || f.name;
+  if(servEl) f.serving_desc = servEl.value.trim() || f.serving_desc;
+  if(calEl) f.cal = parseFloat(calEl.value) || 0;
+  if(proEl) f.protein = parseFloat(proEl.value) || 0;
+  if(carbEl) f.carbs = parseFloat(carbEl.value) || 0;
+  if(fatEl) f.fat = parseFloat(fatEl.value) || 0;
+  renderPhotoLogPreview();
+  showToast('✓ Updated');
+}
+
+function addAllPhotoFoodsToLog(){
+  var foods = window._photoLogFoods || [];
+  var included = foods.filter(function(f){ return f._included !== false; });
+  if(!included.length){
+    showToast('Check at least one item to add');
+    return;
+  }
+  // Validate names — block if any are still ambiguous
+  var ambiguousNames = ['jarred product', 'packaged food', 'unknown product', 'food product', 'product', 'item', 'unknown', 'food', 'meal'];
+  var bad = included.find(function(f){
+    var n = (f.name||'').toLowerCase().trim();
+    return !n || ambiguousNames.indexOf(n) !== -1 || n.length < 3;
+  });
+  if(bad){
+    showToast('Edit "'+bad.name+'" — needs a real name');
+    return;
+  }
+  var meal = document.getElementById('food-meal').value;
+  var log = loadDayLog(dayOffset);
+  var eatenAt = getEatenAtTimestamp();
+  included.forEach(function(f, i){
+    var entry = Object.assign({}, f);
+    entry.id = Date.now() + i;
+    entry.meal = meal;
+    entry.eaten_at = eatenAt + i;  // stagger by 1ms so order is preserved
+    delete entry._photo_id;
+    delete entry._included;
+    log.foods.push(entry);
+  });
+  saveDayLog(log, dayOffset);
+  closeAddFood();
+  renderNutrition();
+  showToast('✓ '+included.length+' item'+(included.length===1?'':'s')+' added to '+meal, 4000);
+  window._photoLogFoods = [];
+}
+
 async function handleScan(input){
   const file = input.files[0];
   if(!file) return;
@@ -2301,6 +2603,7 @@ async function handleScan(input){
         {type:'text',text:'Read this nutrition label exactly as printed. Return ONLY JSON matching this schema (use 0 for any nutrient not shown on the label):\n'
           + getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true}) + '\n'
           + getAINutrientUnitsNote() + '\n'
+          + 'For "name": use the actual product name visible on the package. If the product name is not visible in the photo (e.g. label is cropped or you only see the nutrition panel), set "name" to "" (empty string) — do NOT invent a generic name like "jarred product", "packaged food", or similar.\n'
           + 'Set "source":"Food Label".'}
       ]}]});
       const data = await res.json();
@@ -4758,6 +5061,58 @@ function openSettings(){
   document.getElementById('settings-modal').classList.add('open');
 }
 function closeSettings(){ document.getElementById('settings-modal').classList.remove('open'); }
+
+// Export all locally-stored user data to a JSON file. Captures everything
+// under gn_* keys (food logs, weights, goals, profile, meals, etc.) and
+// triggers a download. Useful for backups, doctor visits, app migration.
+function exportUserData(){
+  try {
+    var bundle = {
+      app: 'Genesis Nutrition',
+      version: 1,
+      exported_at: new Date().toISOString(),
+      user_email: (_currentUser && _currentUser.email) || 'unknown',
+      data: {}
+    };
+    // Grab everything under gn_*
+    var foundCount = 0;
+    for(var i = 0; i < localStorage.length; i++){
+      var key = localStorage.key(i);
+      if(!key || !key.startsWith('gn_')) continue;
+      // Skip auth/session-only flags that aren't useful in an export
+      if(key === 'gn_anon_id' || key === 'gn_lifetime_pro') continue;
+      try {
+        var raw = localStorage.getItem(key);
+        // Try to parse as JSON; if it fails, store as string
+        try { bundle.data[key] = JSON.parse(raw); }
+        catch(e){ bundle.data[key] = raw; }
+        foundCount++;
+      } catch(e){}
+    }
+    if(foundCount === 0){
+      showToast('No data to export yet');
+      return;
+    }
+    // Generate file
+    var json = JSON.stringify(bundle, null, 2);
+    var blob = new Blob([json], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var dateStr = new Date().toISOString().slice(0, 10);
+    var filename = 'genesis-nutrition-'+dateStr+'.json';
+    // Trigger download
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    showToast('✓ Exported '+foundCount+' data sections to '+filename, 4000);
+  } catch(e){
+    console.error('[export] failed:', e);
+    showToast('Export failed: '+(e.message || 'unknown error'));
+  }
+}
 function saveGoals(){
   var g=getGoals();
   ['calories','protein','carbs','fat','fiber','sugar','sodium','potassium'].forEach(function(k){
@@ -5894,11 +6249,18 @@ async function lookupUPCCode(upc){
       var errMsg = (e && e.message) || '';
       if(errMsg.indexOf('incomplete_data:') === 0){
         var productName = errMsg.substring('incomplete_data:'.length);
-        aiQuery = 'Nutrition facts for: ' + productName + ' (UPC ' + upc + '). Return ONLY JSON:\n'
+        aiQuery = 'Nutrition facts for: ' + productName + ' (UPC ' + upc + '). '
+          + 'If you don\'t know this exact product, return {"unknown": true} instead of guessing. '
+          + 'Use the product name as-is — do not return generic descriptors like "jarred product" or "packaged food". '
+          + 'Return ONLY JSON:\n'
           + getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true}) + '\n'
           + getAINutrientUnitsNote();
       } else {
-        aiQuery = 'Nutrition facts for UPC ' + upc + '. Return ONLY JSON:\n'
+        aiQuery = 'Nutrition facts for UPC ' + upc + '. '
+          + 'IMPORTANT: If you don\'t actually know what product this UPC is, return {"unknown": true} instead of guessing. '
+          + 'Do not invent product names — never return generic names like "jarred product", "packaged food", "canned item", or similar placeholders. '
+          + 'If you can identify the product confidently, return its real name. '
+          + 'Return ONLY JSON:\n'
           + getAINutrientSchemaJSON({includeServingDesc:true, includeServingG:true, includeSource:true}) + '\n'
           + getAINutrientUnitsNote();
         if(!status.textContent.includes('incomplete')) status.textContent='Looking up...';
@@ -5908,11 +6270,27 @@ async function lookupUPCCode(upc){
       var text=(data.content&&data.content[0]&&data.content[0].text)||'';
       var match=text.match(/\{[\s\S]*\}/);
       if(!match) throw new Error();
+      var aiFood = JSON.parse(match[0]);
+      // If AI flagged unknown, OR returned a generic placeholder name, treat as not found
+      var nm = (aiFood.name || '').toLowerCase().trim();
+      var ambiguousNames = [
+        'jarred product', 'jarred item', 'packaged product', 'packaged food',
+        'canned product', 'canned item', 'canned food', 'bottled product',
+        'unknown product', 'unknown item', 'generic product', 'generic food',
+        'food product', 'product', 'item', 'unknown'
+      ];
+      var isAmbiguous = aiFood.unknown === true
+        || !nm
+        || ambiguousNames.indexOf(nm) !== -1
+        || nm.length < 3;
+      if(isAmbiguous){
+        status.textContent = '✗ Couldn\'t identify this product. Try Scan Label to read the nutrition info from the package.';
+        return;
+      }
       status.textContent='';
       // Attach barcode metadata so the badge is still tappable — this lets
       // the user take a label photo and save a correction even when OFF had
       // no data on the product.
-      var aiFood = JSON.parse(match[0]);
       aiFood._barcode_upc = upc;
       aiFood._barcode_source = 'ai_fallback';
       aiFood._off_product_name = aiFood.name || 'Unknown product';
@@ -6512,7 +6890,7 @@ async function recipeSearchIngredientsAI(){
     window._recipeSearchResults = [{name:ing.name||query, cal:ing.cal||0, protein:ing.protein||0, serving:100}];
     // Merge full perHundred onto the cached entry so add path works
     window._recipeSearchResults[0]._perHundred = perHundred;
-    resultsEl.innerHTML = '<div onclick="addAIIngredient(0)" style="padding:10px;border:1px solid var(--accent2);border-radius:8px;cursor:pointer;background:rgba(99,87,255,.1);"><div style="font-size:13px;font-weight:700;color:var(--accent2);">🤖 '+(ing.name||query)+'</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">'+Math.round(ing.cal||0)+' kcal / 100g · P '+(ing.protein||0).toFixed(1)+'g · C '+(ing.carbs||0).toFixed(1)+'g · F '+(ing.fat||0).toFixed(1)+'g</div><div style="font-size:11px;color:var(--fiber);margin-top:4px;">Tap to add →</div></div>';
+    resultsEl.innerHTML = '<div onclick="addAIIngredient(0)" style="padding:10px;border:1px solid var(--accent2);border-radius:8px;cursor:pointer;background:rgba(99,87,255,.1);"><div style="font-size:13px;font-weight:700;color:var(--accent2);">🤖 '+(ing.name||query)+'</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">'+Math.round(ing.cal||0)+' kcal / 100g · P '+(ing.protein||0).toFixed(1)+'g ·  C '+(ing.carbs||0).toFixed(1)+'g · F '+(ing.fat||0).toFixed(1)+'g</div><div style="font-size:11px;color:var(--fiber);margin-top:4px;">Tap to add →</div></div>';
   } catch(e){
     resultsEl.innerHTML = '<div style="font-size:12px;color:#ff9090;padding:8px;text-align:center;">✗ Lookup failed. Try a different phrasing.</div>';
   }
@@ -8016,6 +8394,12 @@ function renderSupplementsSubPage(el){
         +'</div>';
     });
     html += '</div>';
+  } else {
+    html += '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:18px 14px;text-align:center;margin-bottom:14px;">'
+      +'<div style="font-size:24px;margin-bottom:6px;">💊</div>'
+      +'<div style="font-size:13px;font-weight:700;margin-bottom:4px;">No supplements yet</div>'
+      +'<div style="font-size:11px;color:var(--muted);line-height:1.5;">Add the supplements or vitamins you take daily, then check them off each morning.</div>'
+      +'</div>';
   }
   html += '<div class="input-group"><label class="input-label">Add Supplement</label>'
     +'<div style="display:flex;gap:8px;"><input type="text" id="new-sup-name" placeholder="Name"><input type="text" id="new-sup-dose" placeholder="Dose" style="flex:0 0 100px;"></div></div>'
@@ -8174,11 +8558,15 @@ function showMeasurementsModal(){
 
     // ── WEIGHT SECTION ───────────────────────────────────────────────
     +'<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Weight</div>'
-    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">'
-    +'<input type="number" id="mm-weight" placeholder="Weight (lbs)" value="'+(todayWeight?todayWeight.weight:'')+'" step="0.1" style="flex:1;">'
-    +'<button onclick="logWeightFromMeasurements()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;">Log</button>'
+    +'<div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;">'
+    +'<div style="flex:1;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:2px;">lbs</label>'
+    +'<input type="number" id="mm-weight" placeholder="245.0" value="'+(todayWeight?todayWeight.weight:'')+'" step="0.1" style="width:100%;"></div>'
+    +'<div style="flex:1;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:2px;">Date</label>'
+    +'<input type="date" id="mm-weight-date" value="'+dateKey(0)+'" max="'+dateKey(0)+'" style="width:100%;"></div>'
+    +'<button onclick="logWeightFromMeasurements()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:12px 16px;font-weight:700;cursor:pointer;white-space:nowrap;height:fit-content;">Log</button>'
     +'</div>'
     + weightChartHtml
+    + buildRecentWeightsList(weightLog)
 
     // ── TARGET WEIGHT ────────────────────────────────────────────────
     +'<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;margin-top:14px;">Target Weight</div>'
@@ -8345,21 +8733,84 @@ function openMeasurementsFromHealth(){
   }, 50);
 }
 
-// Log weight from inside the Measurements modal. Saves and re-renders the
-// modal so the trend chart updates in place.
+// Log weight from inside the Measurements modal. Uses the date picker
+// (defaults to today, blocks future). Saves and re-renders the modal so
+// the chart and list reflect the change.
 function logWeightFromMeasurements(){
-  var input = document.getElementById('mm-weight');
-  if(!input) return;
-  var val = parseFloat(input.value);
-  if(!val){ showToast('Enter a weight'); return; }
+  var weightEl = document.getElementById('mm-weight');
+  var dateEl = document.getElementById('mm-weight-date');
+  if(!weightEl) return;
+  var val = parseFloat(weightEl.value);
+  if(!val || val <= 0){ showToast('Enter a weight'); return; }
+  if(val > 1500){ showToast('That weight looks unusual — double-check'); return; }
+  var dateStr = dateEl ? dateEl.value : dateKey(0);
+  if(!dateStr){ showToast('Pick a date'); return; }
+  // Block future dates
+  if(dateStr > dateKey(0)){ showToast('Can\'t log a future date'); return; }
   var log = loadWeightLog();
-  var idx = log.findIndex(function(e){ return e.date === dateKey(0); });
+  var idx = log.findIndex(function(e){ return e.date === dateStr; });
+  var wasOverwrite = idx >= 0;
   if(idx >= 0) log[idx].weight = val;
-  else log.push({ date: dateKey(0), weight: val });
+  else log.push({ date: dateStr, weight: val });
   log.sort(function(a, b){ return a.date.localeCompare(b.date); });
   saveWeightLog(log);
-  showToast('✓ '+val+' lbs logged');
-  // Re-render the modal so the chart reflects the new data + TDEE preview updates
+  showToast(wasOverwrite ? '✓ Updated to '+val+' lbs' : '✓ '+val+' lbs logged');
+  // Re-render the modal so chart, list, and TDEE preview update
+  var modal = document.getElementById('measurements-modal');
+  if(modal) modal.remove();
+  showMeasurementsModal();
+}
+
+// Build the recent weights list — last 10 entries, newest first, each tappable
+// to edit or delete. Hidden entirely when there are no entries.
+function buildRecentWeightsList(weightLog){
+  if(!weightLog || !weightLog.length) return '';
+  var recent = weightLog.slice().reverse().slice(0, 10);
+  var rowsHtml = recent.map(function(entry){
+    var d = new Date(entry.date+'T12:00:00');
+    var dateStr = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--bg4);border:1px solid var(--border);border-radius:8px;margin-bottom:4px;">'
+      + '<div style="font-size:12px;color:var(--muted);">'+dateStr+'</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;">'
+      + '<div style="font-size:13px;font-weight:700;">'+entry.weight.toFixed(1)+' lb</div>'
+      + '<button onclick="editWeightEntry(\''+entry.date+'\')" style="background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:4px 6px;" title="Edit">✎</button>'
+      + '<button onclick="deleteWeightEntry(\''+entry.date+'\')" style="background:none;border:none;color:#ff9090;font-size:16px;cursor:pointer;padding:4px 6px;" title="Delete">×</button>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+  var moreNote = weightLog.length > 10
+    ? '<div style="font-size:10px;color:var(--muted);text-align:center;margin-top:4px;">Showing 10 of '+weightLog.length+' entries.</div>'
+    : '';
+  return '<div style="margin-top:10px;margin-bottom:6px;"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Recent entries</div>'
+    + rowsHtml
+    + moreNote
+    + '</div>';
+}
+
+// Pre-fill the weight + date inputs from an existing entry so user can update.
+function editWeightEntry(dateStr){
+  var log = loadWeightLog();
+  var entry = log.find(function(e){ return e.date === dateStr; });
+  if(!entry){ showToast('Entry not found'); return; }
+  var weightEl = document.getElementById('mm-weight');
+  var dateEl = document.getElementById('mm-weight-date');
+  if(weightEl) weightEl.value = entry.weight;
+  if(dateEl) dateEl.value = entry.date;
+  // Scroll the inputs into view
+  if(weightEl){
+    weightEl.focus();
+    weightEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  showToast('Edit '+entry.weight+' lb on '+dateStr+', then tap Log');
+}
+
+function deleteWeightEntry(dateStr){
+  if(!confirm('Delete weight entry for '+dateStr+'?')) return;
+  var log = loadWeightLog();
+  log = log.filter(function(e){ return e.date !== dateStr; });
+  saveWeightLog(log);
+  showToast('✓ Entry deleted');
+  // Re-render modal
   var modal = document.getElementById('measurements-modal');
   if(modal) modal.remove();
   showMeasurementsModal();
@@ -8425,17 +8876,27 @@ function buildTargetWeightProjection(profile, weightLog){
       + '</div>';
   }
 
-  // Going wrong direction
+  // Going wrong direction or flat — different messaging for each
   var trendDirection = dailyRate > 0.01 ? 'gain' : dailyRate < -0.01 ? 'lose' : 'flat';
   var goingWrongWay = (direction === 'gain' && trendDirection === 'lose') || (direction === 'lose' && trendDirection === 'gain');
-  if(trendDirection === 'flat' || goingWrongWay){
-    var msg = trendDirection === 'flat'
-      ? 'Your weight has been steady. To '+direction+' to '+target+' lb, you\'ll need a calorie '
-        + (direction === 'gain' ? 'surplus' : 'deficit') + '.'
-      : 'Your trend is going the opposite direction from your goal. Reverse the trend to make progress.';
+
+  // Flat trend — neutral framing, no warning. Just informational.
+  if(trendDirection === 'flat'){
+    var dataNote = recent.length < 5
+      ? 'Log weight on more days for a clearer trend.'
+      : 'Over the past '+daysSpan+' days your weight has held steady. To '+direction+', adjust your daily calorie balance.';
+    return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px;">'
+      + '<div style="font-size:12px;font-weight:700;">🎯 Target: '+target+' lb</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">'+dataNote+'</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Current: '+current.toFixed(1)+' lb · Need to '+direction+' '+Math.abs(totalChange).toFixed(1)+' lb</div>'
+      + '</div>';
+  }
+
+  // Wrong direction — warning is appropriate here
+  if(goingWrongWay){
     return '<div style="background:rgba(245,158,11,.1);border:1px solid var(--sugar);border-radius:8px;padding:12px;margin-bottom:14px;">'
-      + '<div style="font-size:12px;font-weight:700;color:var(--sugar);">⚠️ Not on track</div>'
-      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">'+msg+'</div>'
+      + '<div style="font-size:12px;font-weight:700;color:var(--sugar);">⚠️ Trending opposite of your goal</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5;">Your recent weight is moving away from '+target+' lb. Reverse the trend to make progress.</div>'
       + '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Current: '+current.toFixed(1)+' lb → Target: '+target+' lb · Need to '+direction+' '+Math.abs(totalChange).toFixed(1)+' lb</div>'
       + '</div>';
   }
@@ -8718,6 +9179,261 @@ function continueAsGuest(){
   showToast('Continuing as guest — data saves to this device');
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// ONBOARDING
+// ──────────────────────────────────────────────────────────────────────
+// 6-screen guided flow shown once after first signup. Captures goal,
+// profile basics, exercise level, current + target weight. Each step
+// saves immediately so a partial completion is still better than none.
+// ──────────────────────────────────────────────────────────────────────
+
+var _onboardingStep = 0;
+var _onboardingDraft = {};
+
+function startOnboarding(){
+  _onboardingStep = 0;
+  _onboardingDraft = {};
+  try {
+    var existing = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {};
+    _onboardingDraft = Object.assign({}, existing);
+  } catch(e){}
+  showOnboardingStep();
+}
+
+function showOnboardingStep(){
+  var modal = document.getElementById('onboarding-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'onboarding-modal';
+    modal.className = 'modal-backdrop';
+    modal.style.zIndex = '500';
+    document.body.appendChild(modal);
+  }
+  var totalSteps = 6;
+  var dots = '';
+  for(var i = 0; i < totalSteps; i++){
+    var active = i === _onboardingStep;
+    dots += '<div style="width:'+(active?'24px':'8px')+';height:8px;border-radius:99px;background:'+(i <= _onboardingStep ? 'var(--accent)' : 'var(--border2)')+';transition:width .2s;"></div>';
+  }
+  var dotsBar = '<div style="display:flex;justify-content:center;gap:6px;margin-bottom:18px;">'+dots+'</div>';
+
+  var content;
+  switch(_onboardingStep){
+    case 0: content = onboardingScreenWelcome(); break;
+    case 1: content = onboardingScreenGoal(); break;
+    case 2: content = onboardingScreenProfile(); break;
+    case 3: content = onboardingScreenExercise(); break;
+    case 4: content = onboardingScreenWeights(); break;
+    case 5: content = onboardingScreenDone(); break;
+    default: finishOnboarding(); return;
+  }
+  modal.innerHTML = '<div class="modal-sheet" style="max-height:92vh;">'
+    + dotsBar
+    + content
+    + '</div>';
+  modal.classList.add('open');
+}
+
+function onboardingScreenWelcome(){
+  return '<div style="text-align:center;padding:10px 0 20px;">'
+    + '<div style="font-size:48px;margin-bottom:12px;">👋</div>'
+    + '<div class="modal-title" style="font-size:22px;text-align:center;">Welcome to Genesis</div>'
+    + '<div style="font-size:13px;color:var(--muted);line-height:1.6;margin-top:8px;padding:0 8px;">Let\'s set you up in about 60 seconds. We\'ll ask a few quick questions so your calorie targets and projections are accurate from day one.</div>'
+    + '</div>'
+    + '<button class="btn-primary" onclick="onboardingNext()">Let\'s go →</button>'
+    + '<button class="btn-secondary" style="margin-top:8px;" onclick="onboardingSkip()">Skip — I\'ll set up later</button>';
+}
+
+function onboardingScreenGoal(){
+  var current = _onboardingDraft.primary_goal;
+  var btn = function(val, emoji, label, sub){
+    var sel = current === val;
+    return '<button onclick="setOnboardingGoal(\''+val+'\')" style="width:100%;background:'+(sel?'rgba(99,87,255,.15)':'var(--bg4)')+';border:2px solid '+(sel?'var(--accent)':'var(--border)')+';border-radius:12px;padding:14px;margin-bottom:8px;text-align:left;cursor:pointer;color:var(--text);font-family:DM Sans,sans-serif;display:flex;align-items:center;gap:12px;">'
+      + '<div style="font-size:28px;">'+emoji+'</div>'
+      + '<div style="flex:1;"><div style="font-size:15px;font-weight:700;">'+label+'</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+sub+'</div></div>'
+      + (sel ? '<div style="color:var(--accent2);font-size:18px;">✓</div>' : '')
+      + '</button>';
+  };
+  return '<div class="modal-title" style="text-align:center;">What\'s your main goal?</div>'
+    + '<div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;line-height:1.5;">This shapes your default calorie targets. You can change it anytime.</div>'
+    + btn('lose', '📉', 'Lose weight', 'Calorie deficit, gradual loss')
+    + btn('maintain', '⚖️', 'Maintain weight', 'Stay where you are')
+    + btn('gain', '📈', 'Gain weight', 'Build muscle or recover weight')
+    + '<button class="btn-primary" style="margin-top:14px;'+(current?'':'opacity:.5;')+'" onclick="onboardingNext()">Continue →</button>'
+    + '<button class="btn-secondary" style="margin-top:8px;" onclick="onboardingBack()">← Back</button>';
+}
+
+function onboardingScreenProfile(){
+  var ft = _onboardingDraft.height_in ? Math.floor(_onboardingDraft.height_in/12) : '';
+  var inches = _onboardingDraft.height_in ? _onboardingDraft.height_in % 12 : '';
+  var sex = _onboardingDraft.sex || '';
+  var age = _onboardingDraft.age || '';
+  return '<div class="modal-title" style="text-align:center;">About you</div>'
+    + '<div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;line-height:1.5;">Used to calculate your maintenance calories. We don\'t share this with anyone.</div>'
+    + '<div class="input-group"><label class="input-label">Height</label>'
+    + '<div style="display:flex;gap:6px;">'
+    + '<input type="number" id="ob-ft" value="'+ft+'" placeholder="ft" min="3" max="8" style="flex:1;">'
+    + '<input type="number" id="ob-in" value="'+inches+'" placeholder="in" min="0" max="11" style="flex:1;">'
+    + '</div></div>'
+    + '<div class="input-row">'
+    + '<div class="input-group"><label class="input-label">Age</label><input type="number" id="ob-age" placeholder="35" value="'+age+'"></div>'
+    + '<div class="input-group"><label class="input-label">Sex</label>'
+    + '<select id="ob-sex"><option value="">--</option>'
+    + '<option value="male"'+(sex==='male'?' selected':'')+'>Male</option>'
+    + '<option value="female"'+(sex==='female'?' selected':'')+'>Female</option>'
+    + '</select></div>'
+    + '</div>'
+    + '<button class="btn-primary" style="margin-top:8px;" onclick="onboardingSaveProfile()">Continue →</button>'
+    + '<button class="btn-secondary" style="margin-top:8px;" onclick="onboardingBack()">← Back</button>';
+}
+
+function onboardingScreenExercise(){
+  var job = _onboardingDraft.job_activity || 'sedentary';
+  var ex = _onboardingDraft.exercise_level || 'moderate';
+  return '<div class="modal-title" style="text-align:center;">How active are you?</div>'
+    + '<div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;line-height:1.5;">Used to estimate calories burned beyond your basic metabolism. Be honest — better targets that way.</div>'
+    + '<div class="input-group"><label class="input-label">Job activity</label>'
+    + '<select id="ob-job">'
+    + '<option value="sedentary"'+(job==='sedentary'?' selected':'')+'>Sedentary (desk work, driving)</option>'
+    + '<option value="light"'+(job==='light'?' selected':'')+'>Light (teaching, retail)</option>'
+    + '<option value="moderate"'+(job==='moderate'?' selected':'')+'>Moderate (nursing, walking)</option>'
+    + '<option value="active"'+(job==='active'?' selected':'')+'>Very active (manual labor)</option>'
+    + '</select></div>'
+    + '<div class="input-group"><label class="input-label">Exercise outside of work</label>'
+    + '<select id="ob-ex">'
+    + '<option value="none"'+(ex==='none'?' selected':'')+'>None</option>'
+    + '<option value="light"'+(ex==='light'?' selected':'')+'>Light (1-2/week)</option>'
+    + '<option value="moderate"'+(ex==='moderate'?' selected':'')+'>Moderate (3-4/week)</option>'
+    + '<option value="high"'+(ex==='high'?' selected':'')+'>High (5-6/week)</option>'
+    + '<option value="intense"'+(ex==='intense'?' selected':'')+'>Intense (daily hard)</option>'
+    + '</select></div>'
+    + '<button class="btn-primary" style="margin-top:8px;" onclick="onboardingSaveExercise()">Continue →</button>'
+    + '<button class="btn-secondary" style="margin-top:8px;" onclick="onboardingBack()">← Back</button>';
+}
+
+function onboardingScreenWeights(){
+  var current = _onboardingDraft.current_weight || '';
+  var target = _onboardingDraft.target_weight || '';
+  var goal = _onboardingDraft.primary_goal;
+  var hint = goal === 'lose' ? 'less than current' : goal === 'gain' ? 'more than current' : 'roughly current';
+  return '<div class="modal-title" style="text-align:center;">Where you are, where you\'re going</div>'
+    + '<div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px;line-height:1.5;">Set your starting weight and target. Both editable later from More → Profile & Measurements.</div>'
+    + '<div class="input-row">'
+    + '<div class="input-group"><label class="input-label">Current weight (lbs)</label><input type="number" id="ob-current" placeholder="180" value="'+current+'" step="0.1"></div>'
+    + '<div class="input-group"><label class="input-label">Target weight (lbs)</label><input type="number" id="ob-target" placeholder="'+hint+'" value="'+target+'" step="0.1"></div>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:-4px;margin-bottom:14px;line-height:1.5;">💡 Pick a realistic target — you can adjust as you progress. No commitment forever.</div>'
+    + '<button class="btn-primary" style="margin-top:8px;" onclick="onboardingSaveWeights()">Continue →</button>'
+    + '<button class="btn-secondary" style="margin-top:8px;" onclick="onboardingBack()">← Back</button>';
+}
+
+function onboardingScreenDone(){
+  return '<div style="text-align:center;padding:10px 0 20px;">'
+    + '<div style="font-size:48px;margin-bottom:12px;">🎉</div>'
+    + '<div class="modal-title" style="font-size:22px;text-align:center;">You\'re all set!</div>'
+    + '<div style="font-size:13px;color:var(--muted);line-height:1.6;margin-top:10px;padding:0 8px;">Tap the <span style="background:var(--accent);color:#fff;padding:2px 7px;border-radius:99px;font-weight:700;">＋</span> on any meal section to log your first food. Use barcode, label scan, AI describe, or manual — whatever\'s easiest.</div>'
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.6;margin-top:16px;padding:0 8px;">Tip: Log 3-4 days consistently to see useful trends and projections.</div>'
+    + '</div>'
+    + '<button class="btn-primary" onclick="finishOnboarding()">Start tracking →</button>';
+}
+
+function setOnboardingGoal(val){
+  _onboardingDraft.primary_goal = val;
+  showOnboardingStep();
+}
+
+function onboardingSaveProfile(){
+  var ft = parseInt(document.getElementById('ob-ft').value) || 0;
+  var inches = parseInt(document.getElementById('ob-in').value) || 0;
+  var totalIn = (ft*12) + inches;
+  var age = parseInt(document.getElementById('ob-age').value);
+  var sex = document.getElementById('ob-sex').value;
+  if(totalIn < 36 || totalIn > 96){ showToast('Enter your height (e.g. 5 ft 10 in)'); return; }
+  if(!age || age < 13 || age > 120){ showToast('Enter your age'); return; }
+  if(sex !== 'male' && sex !== 'female'){ showToast('Pick your sex'); return; }
+  _onboardingDraft.height_in = totalIn;
+  _onboardingDraft.age = age;
+  _onboardingDraft.sex = sex;
+  onboardingNext();
+}
+
+function onboardingSaveExercise(){
+  _onboardingDraft.job_activity = document.getElementById('ob-job').value;
+  _onboardingDraft.exercise_level = document.getElementById('ob-ex').value;
+  onboardingNext();
+}
+
+function onboardingSaveWeights(){
+  var current = parseFloat(document.getElementById('ob-current').value);
+  var target = parseFloat(document.getElementById('ob-target').value);
+  if(!current || current <= 0 || current > 1500){ showToast('Enter your current weight'); return; }
+  if(target && (target <= 0 || target > 1500)){ showToast('Target weight looks off'); return; }
+  _onboardingDraft.current_weight = current;
+  if(target) _onboardingDraft.target_weight = target;
+  onboardingNext();
+}
+
+function onboardingNext(){
+  if(_onboardingStep === 1 && !_onboardingDraft.primary_goal){
+    showToast('Pick a goal first');
+    return;
+  }
+  _onboardingStep++;
+  showOnboardingStep();
+}
+
+function onboardingBack(){
+  if(_onboardingStep > 0) _onboardingStep--;
+  showOnboardingStep();
+}
+
+function onboardingSkip(){
+  if(!confirm('Skip setup? You\'ll need to add this later from More → Profile & Measurements.')) return;
+  localStorage.setItem('gn_onboarding_done', '1');
+  closeOnboardingModal();
+  showToast('You can run setup anytime from More → Profile & Measurements');
+}
+
+function finishOnboarding(){
+  try {
+    var profile = {};
+    try { profile = JSON.parse(localStorage.getItem('gn_profile') || '{}') || {}; } catch(e){}
+    if(_onboardingDraft.height_in) profile.height_in = _onboardingDraft.height_in;
+    if(_onboardingDraft.age) profile.age = _onboardingDraft.age;
+    if(_onboardingDraft.sex) profile.sex = _onboardingDraft.sex;
+    if(_onboardingDraft.job_activity) profile.job_activity = _onboardingDraft.job_activity;
+    if(_onboardingDraft.exercise_level) profile.exercise_level = _onboardingDraft.exercise_level;
+    if(_onboardingDraft.target_weight){
+      profile.target_weight = _onboardingDraft.target_weight;
+      profile.target_weight_set_at = Date.now();
+    }
+    if(_onboardingDraft.primary_goal) profile.primary_goal = _onboardingDraft.primary_goal;
+    delete profile.activity_mult;
+    localStorage.setItem('gn_profile', JSON.stringify(profile));
+    if(_onboardingDraft.current_weight){
+      var log = loadWeightLog();
+      var idx = log.findIndex(function(e){ return e.date === dateKey(0); });
+      if(idx >= 0) log[idx].weight = _onboardingDraft.current_weight;
+      else log.push({ date: dateKey(0), weight: _onboardingDraft.current_weight });
+      log.sort(function(a, b){ return a.date.localeCompare(b.date); });
+      saveWeightLog(log);
+    }
+  } catch(e){
+    console.warn('[onboarding] commit failed:', e);
+  }
+  localStorage.setItem('gn_onboarding_done', '1');
+  closeOnboardingModal();
+  if(typeof renderNutrition === 'function') renderNutrition();
+  var firstName = _currentUser && _currentUser.displayName ? _currentUser.displayName.split(' ')[0] : 'friend';
+  showToast('✓ Welcome aboard, '+firstName+'!', 4000);
+}
+
+function closeOnboardingModal(){
+  var modal = document.getElementById('onboarding-modal');
+  if(modal) modal.classList.remove('open');
+}
+
 async function handlePostSignup(user){
   var hasLocal = false;
   Object.keys(localStorage).forEach(function(k){
@@ -8732,6 +9448,13 @@ async function handlePostSignup(user){
   }
   localStorage.removeItem('gn_guest_mode');
   hideAuthGate();
+  // Brand new signup with no migrated data → run onboarding flow.
+  // Migrating users skip it since they already have history.
+  if(!hasLocal){
+    setTimeout(function(){
+      try { startOnboarding(); } catch(e){ console.error('[onboarding] failed to start:', e); }
+    }, 800);
+  }
 }
 
 async function doSignOut(){
