@@ -10421,7 +10421,7 @@ function cardioSaveWorkout(){
   // Post to friend activity feed (respects privacy toggle)
   try {
     if(typeof postActivity === 'function'){
-      var mins = Math.round((w.durationSeconds||0)/60);
+      var mins = Math.round((w.durationSec||0)/60);
       var label = 'logged a workout' + (mins>0 ? ' ('+mins+' min)' : '');
       postActivity('workout', label, {kind:'cardio', minutes:mins});
     }
