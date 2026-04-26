@@ -375,6 +375,7 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
     <!-- Quick re-add recent foods -->
     <div id="end-of-day-insight" style="margin:10px 16px 0;"></div>
     <div id="adaptive-target" style="margin:10px 16px 0;"></div>
+    <div id="feature-hint" style="margin:10px 16px 0;"></div>
     <div id="weekly-summary" style="margin:10px 16px 0;"></div>
     <div id="quick-recent" style="margin:10px 16px 0;"></div>
 
@@ -553,6 +554,11 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
           <div class="more-icon">✋</div>
           <div class="more-label">Portions</div>
           <div class="more-sub">Hand-size guide</div>
+        </div>
+        <div class="more-item" onclick="showInsightsModal()">
+          <div class="more-icon">📊</div>
+          <div class="more-label">Insights</div>
+          <div class="more-sub">Your habits</div>
         </div>
         <div class="more-item" onclick="openSettings()">
           <div class="more-icon">⚙️</div>
@@ -1725,11 +1731,12 @@ async function selectCnfResult(idx){
 }
 
 function renderQuickRecent(){
-  // Adaptive calorie target check + weekly summary + end-of-day insight.
+  // Adaptive calorie target check + weekly summary + end-of-day insight + hints.
   // All appear above quick-log.
   renderAdaptiveTargetPrompt();
   renderEndOfDayInsight();
   renderWeeklySummary();
+  renderFeatureHint();
   const el = document.getElementById('quick-recent');
   // Build a frequency map across the last 30 days. Most-logged foods rank
   // higher than just-recent ones — better signal for "things I eat all the time."
@@ -2186,6 +2193,7 @@ async function generateEndOfDayInsight(){
     showProPaywall('AI Daily Insights', generateEndOfDayInsight);
     return;
   }
+  trackFeatureUse('eod_insight');
   var el = document.getElementById('end-of-day-insight');
   if(el){
     el.innerHTML = '<div style="background:linear-gradient(135deg,rgba(45,212,160,.10),rgba(99,87,255,.06));border:1px solid var(--accent2);border-radius:12px;padding:14px;text-align:center;">'
@@ -2255,6 +2263,182 @@ async function generateEndOfDayInsight(){
 function dismissEndOfDayInsight(){
   localStorage.setItem('gn_eod_dismissed', dateKey(0));
   var el = document.getElementById('end-of-day-insight');
+  if(el) el.innerHTML = '';
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// FEATURE USAGE TRACKING + HINTS
+// ──────────────────────────────────────────────────────────────────────
+// Tracks which features the user has actually used (locally, no third-party
+// analytics, no PII). Used to:
+//   1. Surface contextual hints for unused features
+//   2. Power the user-facing "Insights" page so users see their own habits
+//   3. Help YOU (admin) understand which features matter
+// ──────────────────────────────────────────────────────────────────────
+
+// Record that user used a feature. Increments count + updates last-used date.
+// Stored locally only; visible to user via the Insights view.
+function trackFeatureUse(featureKey){
+  if(!featureKey) return;
+  try {
+    var stats = JSON.parse(localStorage.getItem('gn_feature_stats')||'{}') || {};
+    if(!stats[featureKey]) stats[featureKey] = {count:0, firstUsed:Date.now(), lastUsed:0};
+    stats[featureKey].count++;
+    stats[featureKey].lastUsed = Date.now();
+    localStorage.setItem('gn_feature_stats', JSON.stringify(stats));
+  } catch(e){}
+}
+
+function getFeatureStats(){
+  try { return JSON.parse(localStorage.getItem('gn_feature_stats')||'{}') || {}; }
+  catch(e){ return {}; }
+}
+
+function hasUsedFeature(featureKey){
+  var stats = getFeatureStats();
+  return !!(stats[featureKey] && stats[featureKey].count > 0);
+}
+
+// Show ONE contextual hint about a feature the user hasn't discovered yet.
+// Only one hint at a time. Each one is dismissable. Hints cycle through
+// based on what's relevant given the user's current state.
+function renderFeatureHint(){
+  var el = document.getElementById('feature-hint');
+  if(!el) return;
+  // Don't show on backward day navigation (only today)
+  if(typeof dayOffset !== 'undefined' && dayOffset !== 0){ el.innerHTML = ''; return; }
+
+  // Check global hints-disabled flag
+  if(localStorage.getItem('gn_hints_off') === '1'){ el.innerHTML = ''; return; }
+
+  // Don't show if user dismissed a hint in the last 24h (avoid being naggy)
+  var lastDismiss = parseInt(localStorage.getItem('gn_hint_last_dismiss')||'0');
+  if(Date.now() - lastDismiss < 86400000){ el.innerHTML = ''; return; }
+
+  // Check what user has been doing
+  var todayLog = loadDayLog(0);
+  var foodCount = (todayLog.foods||[]).length;
+  var stats = getFeatureStats();
+  var dismissedHints = JSON.parse(localStorage.getItem('gn_hints_dismissed')||'[]');
+
+  // Build candidate hints — ranked by likely relevance
+  var candidates = [];
+
+  // Voice logging — show after they've manually typed in describe a few times
+  if(!hasUsedFeature('voice') && hasUsedFeature('describe') && (stats.describe||{}).count >= 3){
+    candidates.push({
+      id: 'voice',
+      icon: '🎤',
+      title: 'Try voice logging',
+      desc: 'Tap the mic in Describe mode and speak — "two scrambled eggs and a slice of toast." Way faster than typing.',
+      cta: 'Got it'
+    });
+  }
+
+  // Photo logging — for users who eat out / have varied meals
+  if(!hasUsedFeature('photo') && foodCount >= 5){
+    candidates.push({
+      id: 'photo',
+      icon: '📸',
+      title: 'Photo logging is faster for plates',
+      desc: 'Take a photo of your meal and AI identifies each food. Useful for restaurant plates with multiple items.',
+      cta: 'Cool'
+    });
+  }
+
+  // Restaurant lookup — for users logging known restaurant items
+  if(!hasUsedFeature('restaurant') && foodCount >= 3){
+    candidates.push({
+      id: 'restaurant',
+      icon: '🏪',
+      title: 'Logging from a chain?',
+      desc: 'Restaurant mode pulls menu items from common chains (Chipotle, Olive Garden, etc.) so you don\'t have to estimate.',
+      cta: 'Got it'
+    });
+  }
+
+  // Recipe URL — for users with recipes saved
+  if(!hasUsedFeature('recipe_url') && hasUsedFeature('meal_create')){
+    candidates.push({
+      id: 'recipe_url',
+      icon: '🔗',
+      title: 'Import recipes from URLs',
+      desc: 'Paste a recipe URL into the Recipe mode and AI extracts ingredients + nutrition. Saves it to My Meals.',
+      cta: 'Nice'
+    });
+  }
+
+  // Hand portion guide — when no food scale is implied (most casual users)
+  if(!hasUsedFeature('portion_guide') && foodCount >= 10){
+    candidates.push({
+      id: 'portion_guide',
+      icon: '✋',
+      title: 'No food scale?',
+      desc: 'More → Portions has a hand-size reference guide. Palm = 4 oz protein, fist = 1 cup carbs, etc.',
+      cta: 'Got it'
+    });
+  }
+
+  // Carb cycling — for serious lifters who already track workouts
+  var workoutsLogged = 0;
+  for(var i = 0; i >= -7; i--){
+    var w = loadDayWorkout(i);
+    if(w.exercises && w.exercises.length) workoutsLogged++;
+  }
+  if(!hasUsedFeature('carb_cycle') && workoutsLogged >= 3){
+    candidates.push({
+      id: 'carb_cycle',
+      icon: '📊',
+      title: 'Try carb cycling',
+      desc: 'Higher cal/carbs on training days, lower on rest days. Configure in More → Goals. Great for body recomp.',
+      cta: 'Maybe later'
+    });
+  }
+
+  // Fasting — for users who haven't tried IF
+  if(!hasUsedFeature('fasting') && hasUsedFeature('describe') && Object.keys(stats).length >= 3){
+    candidates.push({
+      id: 'fasting',
+      icon: '⏱️',
+      title: 'Fasting timer is set up',
+      desc: 'Tap the fasting bar on home to pick a protocol (16:8, 18:6, OMAD). Tracks time since your last meal.',
+      cta: 'Got it'
+    });
+  }
+
+  // Filter out already-dismissed hints
+  candidates = candidates.filter(function(h){ return dismissedHints.indexOf(h.id) === -1; });
+  if(!candidates.length){ el.innerHTML = ''; return; }
+
+  // Show the first one in priority order
+  var hint = candidates[0];
+  el.innerHTML = '<div style="background:linear-gradient(135deg,rgba(99,87,255,.10),rgba(45,212,160,.06));border:1px solid var(--accent);border-radius:12px;padding:14px;position:relative;">'
+    + '<button onclick="dismissFeatureHint(\''+hint.id+'\', true)" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1;" title="Don\'t show again">×</button>'
+    + '<div style="display:flex;align-items:flex-start;gap:12px;">'
+    + '<div style="font-size:28px;flex-shrink:0;">'+hint.icon+'</div>'
+    + '<div style="flex:1;min-width:0;">'
+    + '<div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;">💡 Tip</div>'
+    + '<div style="font-size:13px;font-weight:700;margin-bottom:4px;">'+hint.title+'</div>'
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:8px;">'+hint.desc+'</div>'
+    + '<button onclick="dismissFeatureHint(\''+hint.id+'\', true)" style="background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:6px;padding:5px 12px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">'+hint.cta+'</button>'
+    + '</div></div></div>';
+}
+
+// Dismiss a hint. If permanent=true, never show this hint again.
+// If permanent=false, just hide for the next 24h.
+function dismissFeatureHint(hintId, permanent){
+  if(permanent && hintId){
+    try {
+      var d = JSON.parse(localStorage.getItem('gn_hints_dismissed')||'[]') || [];
+      if(d.indexOf(hintId) === -1){
+        d.push(hintId);
+        localStorage.setItem('gn_hints_dismissed', JSON.stringify(d));
+      }
+    } catch(e){}
+  }
+  // Always set the 24h cooldown so other hints don't immediately appear
+  localStorage.setItem('gn_hint_last_dismiss', Date.now());
+  var el = document.getElementById('feature-hint');
   if(el) el.innerHTML = '';
 }
 
@@ -2539,6 +2723,7 @@ function toggleVoiceLogging(){
 }
 
 function startVoiceLogging(){
+  trackFeatureUse('voice');
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SR){
     showToast('Voice not supported on this browser. Try Chrome on Android.');
@@ -2644,6 +2829,7 @@ function stopVoiceLogging(autoEnded){
 async function doDescribeLookup(){
   const input = document.getElementById('describe-input').value.trim();
   if(!input) return;
+  trackFeatureUse('describe');
   const btn = document.getElementById('describe-btn');
   const status = document.getElementById('describe-status');
   btn.disabled=true;
@@ -3192,6 +3378,7 @@ async function doRecipeImport(){
   if(!input) return;
   var url = input.value.trim();
   if(!url){ showToast('Paste a recipe URL first'); return; }
+  trackFeatureUse('recipe_url');
   // Basic URL validation
   if(!/^https?:\/\//i.test(url)){
     showToast('URL must start with http:// or https://');
@@ -3415,6 +3602,7 @@ async function doRestaurantLookup(){
   var name = input.value.trim();
   if(!name){ showToast('Type a restaurant name first'); return; }
   if(name.length < 2){ showToast('Restaurant name too short'); return; }
+  trackFeatureUse('restaurant');
 
   try {
     var recent = JSON.parse(localStorage.getItem('gn_recent_restaurants') || '[]') || [];
@@ -3566,6 +3754,7 @@ function addRestaurantItemToLog(idx){
 async function handlePhotoLog(input){
   const file = input.files[0];
   if(!file) return;
+  trackFeatureUse('photo');
   if(!isPro()){
     showProPaywall('Photo Logging', function(){ handlePhotoLog(input); });
     return;
@@ -3912,6 +4101,7 @@ function addAllPhotoFoodsToLog(){
 async function handleScan(input){
   const file = input.files[0];
   if(!file) return;
+  trackFeatureUse('scan_label');
   const status = document.getElementById('scan-status');
   const preview = document.getElementById('scan-preview');
   status.innerHTML='<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>';
@@ -4068,6 +4258,7 @@ function renderHistory(){
 // Generate a Canvas-based progress card and share it via the Web Share API
 // (with a download fallback for browsers that don't support sharing files).
 async function shareProgressCard(){
+  trackFeatureUse('share_progress');
   showToast('Generating your progress card…');
   try {
     // Compute the stats we'll display
@@ -6824,6 +7015,7 @@ function logWeight(){
 // ══════════════════════════════════════════════════════════════════════
 var barcodeScanner=null;
 function startBarcodeScanner(){
+  trackFeatureUse('barcode');
   // Build (or reuse) a fullscreen overlay with the camera centered. This
   // prevents the camera from rendering below the viewport and forcing the
   // user to scroll. The overlay covers the whole screen with the camera
@@ -8345,6 +8537,7 @@ function toggleCarbCycleDay(dayIdx){
 }
 
 function saveCarbCycle(){
+  trackFeatureUse('carb_cycle');
   var c = null;
   try { c = JSON.parse(localStorage.getItem('gn_carb_cycle')||'null'); } catch(e){}
   if(!c){ c = {enabled:true, dayTypes:{}, schedule:['low','high','low','high','low','high','low']}; }
@@ -8490,6 +8683,7 @@ function toggleRecipeIngredients(idx){
 }
 
 function showCreateRecipe(){
+  trackFeatureUse('meal_create');
   // Reset draft unless a caller has asked us to preserve it (e.g. we were
   // navigated here from "Add to new recipe" with a pre-loaded ingredient).
   if(!window._recipePreserveDraft){
@@ -10410,6 +10604,7 @@ function manualStartFast(){
 }
 
 function setFastingTarget(hours){
+  trackFeatureUse('fasting');
   localStorage.setItem('gn_fasting_target', hours);
   var modal = document.getElementById('fasting-menu');
   if(modal) modal.remove();
@@ -10691,7 +10886,168 @@ function saveMeasurementsList(m){ localStorage.setItem('gn_measurements',JSON.st
 // Uses standard portion-by-hand-size guidance from sports nutrition.
 // ──────────────────────────────────────────────────────────────────────
 
+// ──────────────────────────────────────────────────────────────────────
+// INSIGHTS MODAL
+// ──────────────────────────────────────────────────────────────────────
+// User-facing analytics page. Shows their app usage habits + overall stats.
+// Privacy-first: all data is local, nothing transmitted.
+// ──────────────────────────────────────────────────────────────────────
+
+var FEATURE_LABELS = {
+  describe: {icon:'💬', name:'AI Describe', tagline:'"What did you eat?" lookups'},
+  voice: {icon:'🎤', name:'Voice Logging', tagline:'Spoken food entries'},
+  scan_label: {icon:'📷', name:'Label Scan', tagline:'Photo of nutrition labels'},
+  barcode: {icon:'📊', name:'Barcode Scan', tagline:'UPC scans'},
+  photo: {icon:'📸', name:'Photo Logging', tagline:'AI plate identification'},
+  restaurant: {icon:'🏪', name:'Restaurant Lookup', tagline:'Menu searches'},
+  recipe_url: {icon:'🔗', name:'Recipe Import', tagline:'URL-based imports'},
+  meal_create: {icon:'👨‍🍳', name:'Meal Builder', tagline:'Custom meal creations'},
+  fasting: {icon:'⏱️', name:'Fasting Timer', tagline:'IF protocol changes'},
+  carb_cycle: {icon:'📊', name:'Carb Cycling', tagline:'Cycle adjustments'},
+  portion_guide: {icon:'✋', name:'Portion Guide', tagline:'Hand-size reference'},
+  eod_insight: {icon:'💡', name:'Daily Insights', tagline:'AI day summaries'},
+  share_progress: {icon:'📤', name:'Progress Share', tagline:'Shareable cards'}
+};
+
+function showInsightsModal(){
+  var modal = document.getElementById('insights-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'insights-modal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+  var stats = getFeatureStats();
+  var daysWithFood = 0, totalFoods = 0, firstLog = null;
+  for(var i = 0; i >= -365; i--){
+    var log = loadDayLog(i);
+    if(log.foods && log.foods.length){
+      daysWithFood++;
+      totalFoods += log.foods.length;
+      if(!firstLog) firstLog = i;
+    }
+  }
+  var weightLogs = 0;
+  try { weightLogs = (loadWeightLog()||[]).length; } catch(e){}
+  var workoutDays = 0;
+  for(var j = 0; j >= -365; j--){
+    var w = loadDayWorkout(j);
+    if(w.exercises && w.exercises.length) workoutDays++;
+  }
+  var allFeatures = Object.keys(FEATURE_LABELS);
+  var used = [], unused = [];
+  allFeatures.forEach(function(k){
+    var s = stats[k];
+    if(s && s.count > 0){
+      used.push({key:k, count:s.count, lastUsed:s.lastUsed, label:FEATURE_LABELS[k]});
+    } else {
+      unused.push({key:k, label:FEATURE_LABELS[k]});
+    }
+  });
+  used.sort(function(a,b){ return b.count - a.count; });
+  var daysSinceFirst = firstLog !== null ? Math.abs(firstLog) : 0;
+
+  var statBox = function(value, label, color){
+    return '<div style="background:var(--bg4);border-radius:10px;padding:12px;text-align:center;">'
+      + '<div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;color:'+(color||'var(--text)')+';">'+value+'</div>'
+      + '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">'+label+'</div>'
+      + '</div>';
+  };
+
+  var html = '<div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">📊 Your Genesis Insights</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5;">All stats are local to your device. Nothing is sent to anyone.</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">'
+    + statBox(daysWithFood, 'days logged', 'var(--accent2)')
+    + statBox(totalFoods, 'foods logged', 'var(--protein)')
+    + statBox(workoutDays, 'workout days', 'var(--carbs)')
+    + statBox(weightLogs, 'weight entries', 'var(--fiber)')
+    + '</div>';
+
+  if(daysSinceFirst > 0){
+    html += '<div style="background:linear-gradient(135deg,rgba(99,87,255,.10),rgba(45,212,160,.06));border:1px solid var(--accent);border-radius:10px;padding:10px;margin-bottom:14px;font-size:12px;color:var(--muted);text-align:center;line-height:1.5;">'
+      + '🎯 You\'ve been tracking for <strong style="color:var(--text);">'+daysSinceFirst+' days</strong>'
+      + (daysWithFood > 0 ? ' — that\'s '+Math.round((daysWithFood/Math.max(daysSinceFirst,1))*100)+'% consistency' : '')
+      + '</div>';
+  }
+
+  if(used.length){
+    html += '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">⭐ Your most-used features</div>';
+    used.slice(0, 5).forEach(function(u){
+      var ago = u.lastUsed ? formatTimeAgo(u.lastUsed) : '';
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg4);border-radius:8px;margin-bottom:6px;">'
+        + '<div style="font-size:22px;width:30px;text-align:center;flex-shrink:0;">'+u.label.icon+'</div>'
+        + '<div style="flex:1;min-width:0;">'
+        + '<div style="font-size:13px;font-weight:700;">'+u.label.name+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);">'+u.label.tagline+(ago?' · '+ago:'')+'</div>'
+        + '</div>'
+        + '<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:var(--accent2);flex-shrink:0;">'+u.count+'×</div>'
+        + '</div>';
+    });
+  }
+
+  if(unused.length){
+    html += '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px;">🆕 Haven\'t tried yet</div>';
+    unused.forEach(function(u){
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg4);border-radius:8px;margin-bottom:6px;opacity:.7;">'
+        + '<div style="font-size:22px;width:30px;text-align:center;flex-shrink:0;">'+u.label.icon+'</div>'
+        + '<div style="flex:1;min-width:0;">'
+        + '<div style="font-size:13px;font-weight:600;">'+u.label.name+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);">'+u.label.tagline+'</div>'
+        + '</div></div>';
+    });
+  }
+
+  var hintsOff = localStorage.getItem('gn_hints_off') === '1';
+  html += '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;">'
+    + '<div><div style="font-size:13px;font-weight:600;">Show feature tips on home</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4;">Contextual hints about features you haven\'t tried.</div></div>'
+    + '<button onclick="toggleHintsGlobal()" style="background:'+(hintsOff?'var(--bg5)':'var(--accent)')+';color:'+(hintsOff?'var(--muted)':'#fff')+';border:none;border-radius:99px;padding:6px 14px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;">'+(hintsOff?'OFF':'ON')+'</button>'
+    + '</div></div>'
+    + '<button class="btn-secondary" style="margin-top:14px;" onclick="closeInsightsModal()">Close</button>'
+    + '</div>';
+
+  modal.innerHTML = html;
+  modal.classList.add('open');
+}
+
+function closeInsightsModal(){
+  var modal = document.getElementById('insights-modal');
+  if(modal) modal.classList.remove('open');
+}
+
+function toggleHintsGlobal(){
+  var off = localStorage.getItem('gn_hints_off') === '1';
+  if(off){
+    localStorage.removeItem('gn_hints_off');
+    showToast('Tips enabled');
+  } else {
+    localStorage.setItem('gn_hints_off', '1');
+    showToast('Tips disabled');
+  }
+  showInsightsModal();
+}
+
+function formatTimeAgo(ts){
+  if(!ts) return '';
+  var diff = Date.now() - ts;
+  if(diff < 0) return 'just now';
+  var min = Math.floor(diff / 60000);
+  if(min < 1) return 'just now';
+  if(min < 60) return min+'m ago';
+  var hr = Math.floor(min / 60);
+  if(hr < 24) return hr+'h ago';
+  var d = Math.floor(hr / 24);
+  if(d < 30) return d+'d ago';
+  var mo = Math.floor(d / 30);
+  if(mo < 12) return mo+'mo ago';
+  return Math.floor(mo/12)+'y ago';
+}
+
 function showPortionGuide(){
+  trackFeatureUse('portion_guide');
   var modal = document.getElementById('portion-guide-modal');
   if(!modal){
     modal = document.createElement('div');
@@ -11395,7 +11751,7 @@ var SYNC_KEYS = [
   'gn_privacy','gn_onboarding_done','gn_weekly_summary_dismissed',
   'gn_streak_freezes','gn_adaptive_dismissed','gn_adaptive_history',
   'gn_eod_dismissed','gn_eod_insight_cache','gn_fasting_target',
-  'gn_carb_cycle'
+  'gn_carb_cycle','gn_feature_stats','gn_hints_dismissed','gn_hints_off'
 ];
 
 function setAuthMode(mode){
