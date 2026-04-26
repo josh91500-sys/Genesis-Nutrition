@@ -666,13 +666,22 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
         <div class="mode-card-label">Restaurant</div>
         <div class="mode-card-sub">Menu lookup</div>
       </div>
+      <div class="mode-card" id="mode-recipe" onclick="setMode('recipe',this)">
+        <div class="mode-card-icon">🔗</div>
+        <div class="mode-card-label">Recipe</div>
+        <div class="mode-card-sub">From URL</div>
+      </div>
     </div>
 
     <!-- Describe mode -->
     <div id="mode-describe-content">
       <div class="input-group">
         <label class="input-label">What did you eat?</label>
-        <textarea id="describe-input" rows="2" placeholder="e.g. 2 scrambled eggs with cheese, large bowl of oatmeal with berries..."></textarea>
+        <div style="position:relative;">
+          <textarea id="describe-input" rows="2" placeholder="e.g. 2 scrambled eggs with cheese, large bowl of oatmeal with berries..." style="padding-right:50px;"></textarea>
+          <button id="describe-mic-btn" onclick="toggleVoiceLogging()" type="button" title="Tap to speak" style="position:absolute;top:8px;right:8px;background:var(--bg4);border:1px solid var(--border2);color:var(--accent2);border-radius:99px;width:38px;height:38px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;">🎤</button>
+        </div>
+        <div id="voice-log-status" style="font-size:11px;color:var(--muted);margin-top:6px;display:none;line-height:1.4;"></div>
       </div>
       <button class="btn-primary" onclick="if(isPro())doDescribeLookup();else showProPaywall('AI Food Lookup',doDescribeLookup)" id="describe-btn">🤖 Look Up Nutrition</button>
       <div id="describe-status" class="ai-status"></div>
@@ -776,6 +785,18 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
       <button class="btn-primary" onclick="if(isPro())doRestaurantLookup();else showProPaywall('Restaurant Menu Lookup', doRestaurantLookup)" id="restaurant-btn">🏪 Look Up Menu</button>
       <div id="restaurant-status" class="ai-status"></div>
       <div id="restaurant-results"></div>
+    </div>
+
+    <!-- Recipe URL Import mode -->
+    <div id="mode-recipe-content" style="display:none;">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5;">Paste a recipe URL (blog post, recipe site). AI extracts ingredients, servings, and per-serving nutrition — saved as a reusable Meal.</div>
+      <div class="input-group">
+        <label class="input-label">Recipe URL</label>
+        <input type="url" id="recipe-url-input" placeholder="https://allrecipes.com/recipe/..." maxlength="500" onkeydown="if(event.key==='Enter') doRecipeImport()">
+      </div>
+      <button class="btn-primary" onclick="if(isPro())doRecipeImport();else showProPaywall('Recipe URL Import', doRecipeImport)" id="recipe-import-btn">🔗 Import Recipe</button>
+      <div id="recipe-import-status" class="ai-status"></div>
+      <div id="recipe-import-preview"></div>
     </div>
 
     <!-- Recent foods list — always shown (if any exist), regardless of mode -->
@@ -1993,6 +2014,10 @@ function confirmRecentAdd(){
   showToast('✓ '+source.name+' ('+servingsText+') added to '+targetMeal);
 }
 function closeAddFood(){
+  // Stop any active voice recording before closing
+  if(typeof _voiceActive !== 'undefined' && _voiceActive){
+    try { stopVoiceLogging(); } catch(e){}
+  }
   document.getElementById('add-modal').classList.remove('open');
   document.getElementById('describe-input').value='';
   document.getElementById('describe-status').textContent='';
@@ -2007,6 +2032,12 @@ function closeAddFood(){
   var restResults = document.getElementById('restaurant-results');
   if(restStatus) restStatus.textContent = '';
   if(restResults) restResults.innerHTML = '';
+  var recipeUrl = document.getElementById('recipe-url-input');
+  var recipeStatus = document.getElementById('recipe-import-status');
+  var recipePreview = document.getElementById('recipe-import-preview');
+  if(recipeUrl) recipeUrl.value = '';
+  if(recipeStatus) recipeStatus.textContent = '';
+  if(recipePreview) recipePreview.innerHTML = '';
 }
 
 // Set the time-eaten input to the current local time (HH:MM)
@@ -2036,11 +2067,134 @@ function getEatenAtTimestamp(){
 }
 
 function setMode(mode, el){
-  ['describe','scan','barcode','manual','meals','cnf','photo','restaurant'].forEach(function(m){
+  ['describe','scan','barcode','manual','meals','cnf','photo','restaurant','recipe'].forEach(function(m){
     var btn=document.getElementById('mode-'+m), cont=document.getElementById('mode-'+m+'-content');
     if(btn) btn.classList.toggle('active',m===mode);
     if(cont) cont.style.display=m===mode?'block':'none';
   });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// VOICE LOGGING
+// ──────────────────────────────────────────────────────────────────────
+// Uses the browser's Web Speech API to transcribe spoken food descriptions
+// directly into the Describe input. Auto-stops on long silence and offers
+// a one-tap path to AI lookup.
+// ──────────────────────────────────────────────────────────────────────
+
+var _voiceRecognition = null;
+var _voiceActive = false;
+var _voicePreviousText = '';
+
+function toggleVoiceLogging(){
+  if(_voiceActive){
+    stopVoiceLogging();
+  } else {
+    startVoiceLogging();
+  }
+}
+
+function startVoiceLogging(){
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){
+    showToast('Voice not supported on this browser. Try Chrome on Android.');
+    return;
+  }
+  var input = document.getElementById('describe-input');
+  var statusEl = document.getElementById('voice-log-status');
+  var btn = document.getElementById('describe-mic-btn');
+  if(!input || !statusEl || !btn) return;
+
+  _voicePreviousText = input.value.trim();
+
+  try {
+    _voiceRecognition = new SR();
+    _voiceRecognition.continuous = true;
+    _voiceRecognition.interimResults = true;
+    _voiceRecognition.lang = 'en-US';
+    _voiceRecognition.maxAlternatives = 1;
+
+    _voiceRecognition.onstart = function(){
+      _voiceActive = true;
+      btn.style.background = 'var(--accent)';
+      btn.style.color = '#fff';
+      btn.style.borderColor = 'var(--accent)';
+      btn.innerHTML = '⏹';
+      btn.title = 'Tap to stop';
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = '<span style="color:var(--accent2);">🎤 Listening… speak naturally, then tap the button when done.</span>';
+    };
+
+    _voiceRecognition.onresult = function(event){
+      var finalTranscript = '';
+      var interimTranscript = '';
+      for(var i = event.resultIndex; i < event.results.length; i++){
+        var result = event.results[i];
+        if(result.isFinal){
+          finalTranscript += result[0].transcript;
+        } else {
+          interimTranscript += result[0].transcript;
+        }
+      }
+      var combined = (_voicePreviousText ? _voicePreviousText + ' ' : '')
+        + (finalTranscript || '').trim()
+        + (interimTranscript ? ' ' + interimTranscript : '');
+      input.value = combined.trim();
+      if(finalTranscript){
+        _voicePreviousText = (_voicePreviousText ? _voicePreviousText + ' ' : '') + finalTranscript.trim();
+      }
+    };
+
+    _voiceRecognition.onerror = function(event){
+      console.warn('[voice] error:', event.error);
+      var msg = 'Voice error';
+      if(event.error === 'no-speech') msg = 'No speech detected. Tap mic and try again.';
+      else if(event.error === 'not-allowed') msg = 'Microphone permission denied. Allow it in browser settings.';
+      else if(event.error === 'audio-capture') msg = 'No microphone found.';
+      else if(event.error === 'network') msg = 'Voice needs internet. Check connection.';
+      statusEl.innerHTML = '<span style="color:#ff9090;">'+msg+'</span>';
+      stopVoiceLogging();
+    };
+
+    _voiceRecognition.onend = function(){
+      if(_voiceActive){ stopVoiceLogging(true); }
+    };
+
+    _voiceRecognition.start();
+  } catch(e){
+    console.error('[voice] failed to start:', e);
+    showToast('Couldn\'t start voice. Try again.');
+    stopVoiceLogging();
+  }
+}
+
+function stopVoiceLogging(autoEnded){
+  if(_voiceRecognition){
+    try { _voiceRecognition.stop(); } catch(e){}
+    _voiceRecognition = null;
+  }
+  _voiceActive = false;
+  var btn = document.getElementById('describe-mic-btn');
+  var statusEl = document.getElementById('voice-log-status');
+  var input = document.getElementById('describe-input');
+  if(btn){
+    btn.style.background = 'var(--bg4)';
+    btn.style.color = 'var(--accent2)';
+    btn.style.borderColor = 'var(--border2)';
+    btn.innerHTML = '🎤';
+    btn.title = 'Tap to speak';
+  }
+  if(statusEl && input){
+    var text = (input.value || '').trim();
+    if(text && text !== _voicePreviousText.trim()){
+      statusEl.innerHTML = '<span style="color:var(--fiber);">✓ Got it. Tap "Look Up Nutrition" or edit first.</span>';
+    } else if(autoEnded){
+      statusEl.innerHTML = '<span style="color:var(--muted);">Stopped (no speech). Tap mic to retry.</span>';
+    } else {
+      statusEl.style.display = 'none';
+    }
+  }
+  _voicePreviousText = '';
 }
 
 async function doDescribeLookup(){
@@ -2531,6 +2685,259 @@ function addPreviewFood(food){
 // estimated nutrition each. Each can be edited/removed before bulk-add.
 // Falls back gracefully if no foods detected.
 // ──────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────
+// RECIPE URL IMPORT
+// ──────────────────────────────────────────────────────────────────────
+// User pastes a recipe URL. Claude fetches the page (via web_search), then
+// extracts ingredients, servings, and per-serving nutrition. The result is
+// saved to My Meals (gn_recipes) and optionally logged to today.
+// Available from: + add food modal (Recipe mode) AND My Meals page.
+// ──────────────────────────────────────────────────────────────────────
+
+// Standalone modal entry point — used by the "Import URL" button on the
+// My Meals management page. Builds a temporary modal that reuses the same
+// import logic as the in-modal Recipe mode.
+function showImportRecipeModal(){
+  if(!isPro()){
+    showProPaywall('Recipe URL Import', showImportRecipeModal);
+    return;
+  }
+  var modal = document.getElementById('recipe-import-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'recipe-import-modal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = '<div class="modal-sheet">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">🔗 Import Recipe</div>'
+    + '<div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5;">Paste a recipe URL. AI extracts ingredients and nutrition, saves it to My Meals.</div>'
+    + '<div class="input-group"><label class="input-label">Recipe URL</label>'
+    + '<input type="url" id="recipe-url-input" placeholder="https://allrecipes.com/recipe/..." maxlength="500" onkeydown="if(event.key===\'Enter\') doRecipeImport()">'
+    + '</div>'
+    + '<button class="btn-primary" onclick="doRecipeImport()" id="recipe-import-btn">🔗 Import Recipe</button>'
+    + '<div id="recipe-import-status" class="ai-status"></div>'
+    + '<div id="recipe-import-preview"></div>'
+    + '<button class="btn-secondary" style="margin-top:10px;" onclick="closeImportRecipeModal()">Close</button>'
+    + '</div>';
+  modal.classList.add('open');
+}
+
+function closeImportRecipeModal(){
+  var modal = document.getElementById('recipe-import-modal');
+  if(modal) modal.classList.remove('open');
+  // Refresh the My Meals list so newly-imported recipe shows up
+  if(typeof renderMorePage === 'function'){
+    var morePage = document.getElementById('page-more');
+    if(morePage && morePage.classList.contains('active')){
+      // Re-render the recipes sub-page if it's currently visible
+      var subEl = document.getElementById('subpage-content');
+      if(subEl && subEl.dataset.section === 'recipes'){
+        renderRecipesSubPage(subEl);
+      }
+    }
+  }
+}
+
+async function doRecipeImport(){
+  var input = document.getElementById('recipe-url-input');
+  var status = document.getElementById('recipe-import-status');
+  var preview = document.getElementById('recipe-import-preview');
+  if(!input) return;
+  var url = input.value.trim();
+  if(!url){ showToast('Paste a recipe URL first'); return; }
+  // Basic URL validation
+  if(!/^https?:\/\//i.test(url)){
+    showToast('URL must start with http:// or https://');
+    return;
+  }
+
+  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:6px;">Fetching recipe…</div>';
+  preview.innerHTML = '';
+
+  try {
+    var prompt = 'Read this recipe page: ' + url + '\n\n'
+      + 'Extract the recipe and return ONLY a JSON object:\n'
+      + '{\n'
+      + '  "found": true/false,\n'
+      + '  "name": "Recipe name",\n'
+      + '  "servings": 4,\n'
+      + '  "per_serving": {"cal":450, "protein":28, "carbs":35, "fat":18, "fiber":4, "sugar":6, "sodium":650, "satfat":5, "potassium":500, "calcium":80, "iron":2, "vitc":15, "vitd":0, "vita":80},\n'
+      + '  "ingredients": [\n'
+      + '    {"name":"chicken breast", "qty":"1 lb", "qtyG":454, "cal":680, "protein":126, "carbs":0, "fat":15}\n'
+      + '  ]\n'
+      + '}\n\n'
+      + 'Rules:\n'
+      + '- If you can\'t find a recipe at this URL (404, paywall, not a recipe page), set found:false\n'
+      + '- Servings = how many portions the recipe makes\n'
+      + '- per_serving values are TOTAL nutrition divided by servings (so user logs 1 serving = these values)\n'
+      + '- ingredients: each one with realistic gram weight + nutrition for the amount used in the recipe\n'
+      + '- Sodium in mg, all other amounts in grams\n'
+      + '- Use real ingredient names (no generic "main ingredient")\n'
+      + '- If the page lists nutrition info, use it. Otherwise estimate from ingredients.';
+
+    // Use web_search tool — claude.js Netlify function adds beta header automatically
+    var res = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 3500,
+      tools: [{type: 'web_search_20250305', name: 'web_search'}],
+      messages: [{role: 'user', content: prompt}]
+    });
+    var data = await res.json();
+    // Claude's response may include tool use blocks + text. Find the text.
+    var text = '';
+    if(data.content && data.content.length){
+      data.content.forEach(function(block){
+        if(block.type === 'text' && block.text) text += block.text + '\n';
+      });
+    }
+    var match = text.match(/\{[\s\S]*\}/);
+    if(!match) throw new Error('AI response unreadable');
+    var parsed = JSON.parse(match[0]);
+
+    if(parsed.found === false || !parsed.name || !parsed.ingredients || !parsed.ingredients.length){
+      status.innerHTML = '<span style="color:var(--sugar);font-size:13px;">Couldn\'t find a recipe at that URL. Make sure it\'s a direct recipe page (not a list/index page).</span>';
+      return;
+    }
+    status.textContent = '';
+    window._importedRecipe = parsed;
+    renderRecipeImportPreview();
+  } catch(err){
+    console.error('[recipe import] failed:', err);
+    status.innerHTML = '<span style="color:#ff9090;font-size:13px;">✗ Couldn\'t fetch recipe. Site may block scrapers, or URL might be wrong.</span>';
+  }
+}
+
+function renderRecipeImportPreview(){
+  var preview = document.getElementById('recipe-import-preview');
+  var r = window._importedRecipe;
+  if(!preview || !r) return;
+
+  var ps = r.per_serving || {};
+  var html = '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:14px;">'
+    + '<div class="input-group" style="margin-bottom:8px;"><label class="input-label">Recipe Name</label><input type="text" id="ri-name" value="'+escapeHtml(r.name||'')+'"></div>'
+    + '<div class="input-group" style="margin-bottom:12px;"><label class="input-label">Servings</label><input type="number" id="ri-servings" value="'+(r.servings||1)+'" min="1" step="1"></div>'
+    + '<div style="background:linear-gradient(135deg,rgba(99,87,255,.12),rgba(45,212,160,.08));border:1px solid var(--accent);border-radius:8px;padding:10px;margin-bottom:12px;">'
+    + '<div style="font-size:10px;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:6px;">Per serving</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center;">'
+    + '<div><div style="font-size:18px;font-weight:800;">'+Math.round(ps.cal||0)+'</div><div style="font-size:10px;color:var(--muted);">kcal</div></div>'
+    + '<div><div style="font-size:18px;font-weight:800;color:var(--protein);">'+Math.round(ps.protein||0)+'g</div><div style="font-size:10px;color:var(--muted);">protein</div></div>'
+    + '<div><div style="font-size:18px;font-weight:800;color:var(--carb);">'+Math.round(ps.carbs||0)+'g</div><div style="font-size:10px;color:var(--muted);">carbs</div></div>'
+    + '<div><div style="font-size:18px;font-weight:800;color:var(--fat);">'+Math.round(ps.fat||0)+'g</div><div style="font-size:10px;color:var(--muted);">fat</div></div>'
+    + '</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;">Ingredients ('+r.ingredients.length+')</div>'
+    + '<div style="max-height:200px;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;">';
+  r.ingredients.forEach(function(ing){
+    html += '<div style="font-size:12px;padding:4px 0;border-bottom:1px dashed var(--border);">'
+      + '<strong>'+escapeHtml(ing.qty || '')+'</strong> '+escapeHtml(ing.name||'')
+      + ' <span style="color:var(--muted);">— '+Math.round(ing.cal||0)+' kcal</span>'
+      + '</div>';
+  });
+  var fromAddModal = !!document.getElementById('food-meal') && document.getElementById('add-modal') && document.getElementById('add-modal').classList.contains('open');
+  html += '</div>'
+    + '<button class="btn-primary" style="margin-top:14px;" onclick="saveImportedRecipe(false)">💾 Save as Meal</button>'
+    + (fromAddModal ? '<button class="btn-secondary" style="margin-top:8px;" onclick="saveImportedRecipe(true)">💾 Save & Log 1 Serving</button>' : '')
+    + '</div>';
+  preview.innerHTML = html;
+}
+
+function saveImportedRecipe(alsoLog){
+  var r = window._importedRecipe;
+  if(!r){ showToast('No recipe to save'); return; }
+  // Pull edited values from form
+  var nameEl = document.getElementById('ri-name');
+  var servEl = document.getElementById('ri-servings');
+  var name = nameEl ? nameEl.value.trim() : r.name;
+  var servings = servEl ? (parseInt(servEl.value) || 1) : (r.servings || 1);
+  if(!name){ showToast('Recipe needs a name'); return; }
+
+  var ps = r.per_serving || {};
+  // Build the recipe object matching the existing My Meals schema. Per-serving
+  // values become the "totals" since logging the meal logs 1 serving.
+  var newRecipe = {
+    name: name,
+    servings: servings,
+    source: 'Imported recipe',
+    created: Date.now(),
+    cal: Math.round(ps.cal || 0),
+    protein: parseFloat((ps.protein || 0).toFixed(1)),
+    carbs: parseFloat((ps.carbs || 0).toFixed(1)),
+    fat: parseFloat((ps.fat || 0).toFixed(1)),
+    fiber: parseFloat((ps.fiber || 0).toFixed(1)),
+    sugar: parseFloat((ps.sugar || 0).toFixed(1)),
+    sodium: Math.round(ps.sodium || 0),
+    satfat: parseFloat((ps.satfat || 0).toFixed(1)),
+    potassium: Math.round(ps.potassium || 0),
+    calcium: Math.round(ps.calcium || 0),
+    iron: parseFloat((ps.iron || 0).toFixed(2)),
+    vitc: Math.round(ps.vitc || 0),
+    vitd: parseFloat((ps.vitd || 0).toFixed(1)),
+    vita: Math.round(ps.vita || 0),
+    ingredients: (r.ingredients || []).map(function(ing){
+      return {
+        name: ing.name,
+        qtyG: ing.qtyG || 100,
+        qty: ing.qty || '',
+        cal: ing.cal || 0,
+        protein: ing.protein || 0,
+        carbs: ing.carbs || 0,
+        fat: ing.fat || 0
+      };
+    })
+  };
+
+  var recipes = loadRecipes();
+  recipes.push(newRecipe);
+  saveRecipes(recipes);
+
+  if(alsoLog){
+    // Add 1 serving to today's log — only available from the add-food modal
+    // path, since that's where the meal picker exists. From the standalone
+    // Meals modal, alsoLog is always false.
+    var mealEl = document.getElementById('food-meal');
+    var meal = mealEl ? mealEl.value : 'Snacks';
+    var log = loadDayLog(dayOffset);
+    log.foods.push({
+      id: Date.now(),
+      name: name,
+      meal: meal,
+      eaten_at: getEatenAtTimestamp(),
+      serving_desc: '1 serving',
+      cal: newRecipe.cal,
+      protein: newRecipe.protein,
+      carbs: newRecipe.carbs,
+      fat: newRecipe.fat,
+      fiber: newRecipe.fiber,
+      sugar: newRecipe.sugar,
+      sodium: newRecipe.sodium,
+      satfat: newRecipe.satfat,
+      potassium: newRecipe.potassium,
+      calcium: newRecipe.calcium,
+      iron: newRecipe.iron,
+      vitc: newRecipe.vitc,
+      vitd: newRecipe.vitd,
+      vita: newRecipe.vita,
+      source: 'Imported recipe'
+    });
+    saveDayLog(log, dayOffset);
+    closeAddFood();
+    renderNutrition();
+    showToast('✓ Saved & logged: '+name, 4000);
+  } else {
+    // Close whichever modal is open (add-food or standalone)
+    var addModal = document.getElementById('add-modal');
+    if(addModal && addModal.classList.contains('open')){
+      closeAddFood();
+    }
+    var importModal = document.getElementById('recipe-import-modal');
+    if(importModal && importModal.classList.contains('open')){
+      closeImportRecipeModal();
+    }
+    showToast('✓ Saved to My Meals: '+name, 4000);
+  }
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // RESTAURANT MENU LOOKUP
@@ -7423,7 +7830,10 @@ function sumRecipeTotals(ingredients){
 function renderRecipesSubPage(el){
   var recipes = loadRecipes();
   var html = '<div class="card"><div class="card-title">🍽️ My Meals</div>'
-    + '<button class="btn-primary" style="margin-bottom:12px;" onclick="showCreateRecipe()">+ Create Recipe</button>';
+    + '<div style="display:flex;gap:8px;margin-bottom:12px;">'
+    + '<button class="btn-primary" style="flex:1;margin:0;" onclick="showCreateRecipe()">+ Create</button>'
+    + '<button class="btn-primary" style="flex:1;margin:0;background:var(--accent2);" onclick="showImportRecipeModal()">🔗 Import URL</button>'
+    + '</div>';
   if(recipes.length){
     // Build a list of [recipe, originalIdx] sorted newest-first by `created` timestamp.
     // We keep the ORIGINAL index for all click handlers so storage operations work correctly.
