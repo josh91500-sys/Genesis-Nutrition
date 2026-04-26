@@ -786,9 +786,9 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
 
     <!-- Restaurant mode -->
     <div id="mode-restaurant-content" style="display:none;">
-      <div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5;">Type a restaurant name. AI returns common menu items so you can quick-pick what you ordered.</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.5;">Type a restaurant name OR photograph the menu — AI reads calories directly when printed (more accurate than estimates).</div>
       <div class="input-group">
-        <label class="input-label">Restaurant</label>
+        <label class="input-label">Restaurant name</label>
         <input type="text" id="restaurant-input" placeholder="e.g. Olive Garden, Chipotle" maxlength="60" onkeydown="if(event.key==='Enter') doRestaurantLookup()">
       </div>
       <div id="restaurant-recent-row" style="margin-bottom:12px;display:none;">
@@ -796,6 +796,14 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
         <div id="restaurant-recent-chips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
       </div>
       <button class="btn-primary" onclick="if(isPro())doRestaurantLookup();else showProPaywall('Restaurant Menu Lookup', doRestaurantLookup)" id="restaurant-btn">🏪 Look Up Menu</button>
+      <div style="text-align:center;margin:10px 0;font-size:11px;color:var(--muted2);">— or —</div>
+      <input type="file" id="menu-photo-file" accept="image/*" capture="environment" style="display:none;" onchange="handleMenuPhoto(this)">
+      <input type="file" id="menu-photo-gallery" accept="image/*" style="display:none;" onchange="handleMenuPhoto(this)">
+      <div style="display:flex;gap:6px;">
+        <button onclick="if(isPro())document.getElementById('menu-photo-file').click();else showProPaywall('Menu Photo OCR', function(){document.getElementById('menu-photo-file').click();})" style="flex:1;background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:10px;padding:10px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">📷 Photo Menu</button>
+        <button onclick="if(isPro())document.getElementById('menu-photo-gallery').click();else showProPaywall('Menu Photo OCR', function(){document.getElementById('menu-photo-gallery').click();})" style="flex:1;background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:10px;padding:10px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">🖼️ From Gallery</button>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;text-align:center;">Works best when calories are printed on the menu (FDA-required for US chains 20+ locations).</div>
       <div id="restaurant-status" class="ai-status"></div>
       <div id="restaurant-results"></div>
     </div>
@@ -3712,6 +3720,160 @@ function setRestaurantMult(idx, val){
   renderRestaurantResults(items[idx]._restaurant || '');
   var inp = document.getElementById('rmult-'+idx);
   if(inp){ inp.focus(); inp.select(); }
+}
+
+// Photograph a printed/digital menu and have AI extract menu items + calories.
+// When calories are printed on the menu (FDA-required for US chains 20+ locations),
+// AI uses those exact numbers — far more accurate than guessing. For items
+// without printed calories, AI estimates and tags them.
+async function handleMenuPhoto(input){
+  const file = input.files[0];
+  if(!file) return;
+  if(!isPro()){
+    showProPaywall('Menu Photo OCR', function(){ handleMenuPhoto(input); });
+    return;
+  }
+  trackFeatureUse('menu_photo');
+  const status = document.getElementById('restaurant-status');
+  const results = document.getElementById('restaurant-results');
+  status.innerHTML = '<div class="ai-loading"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div><div style="font-size:11px;color:var(--muted);margin-top:6px;">Reading menu…</div>';
+  results.innerHTML = '';
+
+  const reader = new FileReader();
+  reader.onload = async function(e){
+    const b64 = e.target.result.split(',')[1];
+    try {
+      const prompt = 'You are looking at a photo of a restaurant menu. Extract every menu item visible.\n\n'
+        + 'Return ONLY a JSON object:\n'
+        + '{\n'
+        + '  "is_menu": true/false,\n'
+        + '  "restaurant_name": "best guess from menu branding, or empty string",\n'
+        + '  "items": [\n'
+        + '    {\n'
+        + '      "name": "Item name as printed",\n'
+        + '      "description": "Short description if visible",\n'
+        + '      "calories_printed": true/false,\n'
+        + '      "cal": 650,\n'
+        + '      "protein": 35, "carbs": 55, "fat": 28,\n'
+        + '      "fiber": 4, "sugar": 6, "sodium": 1200,\n'
+        + '      "satfat": 8, "potassium": 400, "calcium": 100, "iron": 3,\n'
+        + '      "vitc": 10, "vitd": 0, "vita": 50,\n'
+        + '      "serving_desc": "1 entree"\n'
+        + '    }\n'
+        + '  ]\n'
+        + '}\n\n'
+        + 'CRITICAL Rules:\n'
+        + '- If image is NOT a menu (selfie, food photo, random text), set is_menu:false and return empty items\n'
+        + '- For each item: if calories ARE printed on the menu, use that EXACT number and set calories_printed:true\n'
+        + '- If calories NOT printed for an item, estimate and set calories_printed:false\n'
+        + '- Other macros (protein/carbs/fat) usually NOT on menus — estimate from item name\n'
+        + '- Only include items you can actually see — do NOT make up items\n'
+        + '- Use exact item names as printed';
+
+      const res = await callClaude({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 3500,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: file.type, data: b64 } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      });
+      const data = await res.json();
+      const text = (data.content && data.content[0] && data.content[0].text) || '';
+      const match = text.match(/\{[\s\S]*\}/);
+      if(!match) throw new Error('AI response unreadable');
+      const parsed = JSON.parse(match[0]);
+
+      if(parsed.is_menu === false || !parsed.items || !parsed.items.length){
+        status.innerHTML = '<span style="color:var(--sugar);font-size:13px;">Couldn\'t find a menu in this photo. Try a clearer shot.</span>';
+        return;
+      }
+      status.textContent = '';
+
+      var restName = parsed.restaurant_name || 'Menu photo';
+      if(parsed.restaurant_name && parsed.restaurant_name.length >= 2){
+        try {
+          var recent = JSON.parse(localStorage.getItem('gn_recent_restaurants') || '[]') || [];
+          recent = [restName].concat(recent.filter(function(r){ return r.toLowerCase() !== restName.toLowerCase(); })).slice(0, 5);
+          localStorage.setItem('gn_recent_restaurants', JSON.stringify(recent));
+        } catch(e){}
+      }
+
+      window._restaurantResults = parsed.items.map(function(item, i){
+        item._rid = 'm_'+i+'_'+Date.now();
+        item._restaurant = restName;
+        item._mult = 1;
+        item._fromMenu = true;
+        item._caloriesPrinted = item.calories_printed === true;
+        item.source = item._caloriesPrinted
+          ? restName + ' (menu)'
+          : restName + ' (AI estimate)';
+        return item;
+      });
+      renderMenuPhotoResults(restName);
+      initRestaurantMode();
+    } catch(err){
+      console.error('[menu photo] failed:', err);
+      status.innerHTML = '<span style="color:#ff9090;font-size:13px;">✗ Couldn\'t read menu. Try a clearer photo or use restaurant search.</span>';
+    }
+  };
+  reader.onerror = function(){
+    status.innerHTML = '<span style="color:#ff9090;">Couldn\'t read image file.</span>';
+  };
+  reader.readAsDataURL(file);
+}
+
+// Render menu photo results — same layout as text-based restaurant lookup
+// but with badges showing whether calories came from the menu or AI estimate.
+function renderMenuPhotoResults(restaurantName){
+  var results = document.getElementById('restaurant-results');
+  if(!results) return;
+  var items = window._restaurantResults || [];
+  if(!items.length){ results.innerHTML = ''; return; }
+
+  var printedCount = items.filter(function(it){ return it._caloriesPrinted; }).length;
+  var totalCount = items.length;
+  var headerLabel = printedCount === totalCount
+    ? '✓ All calories from the menu (most accurate)'
+    : printedCount > 0
+      ? '✓ '+printedCount+' of '+totalCount+' from menu, rest are AI estimates'
+      : '⚠️ AI estimates (no calories on menu) — adjust portion if needed';
+
+  var rowsHtml = items.map(function(item, idx){
+    var mult = item._mult || 1;
+    var scaledCal = Math.round((item.cal||0) * mult);
+    var scaledP = Math.round((item.protein||0) * mult);
+    var scaledC = Math.round((item.carbs||0) * mult);
+    var scaledF = Math.round((item.fat||0) * mult);
+    var sourceBadge = item._caloriesPrinted
+      ? '<span style="display:inline-block;background:var(--fiber);color:#0a0a12;font-size:9px;font-weight:700;padding:2px 6px;border-radius:99px;margin-left:6px;" title="Calories from the menu">✓ MENU</span>'
+      : '<span style="display:inline-block;background:var(--sugar);color:#0a0a12;font-size:9px;font-weight:700;padding:2px 6px;border-radius:99px;margin-left:6px;" title="AI estimate">AI</span>';
+    return '<div style="background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:6px;">'
+      + '<div style="font-size:13px;font-weight:700;margin-bottom:2px;">'+escapeHtml(item.name||'')+sourceBadge+'</div>'
+      + (item.description ? '<div style="font-size:11px;color:var(--muted);margin-bottom:6px;line-height:1.4;">'+escapeHtml(item.description)+'</div>' : '')
+      + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">'+escapeHtml(item.serving_desc||'1 serving')+'</div>'
+      + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">'
+      + '<button onclick="adjustRestaurantMult('+idx+', -0.25)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:6px;width:28px;height:28px;font-size:14px;font-weight:700;cursor:pointer;">−</button>'
+      + '<input type="number" id="rmult-'+idx+'" value="'+mult+'" min="0.1" step="0.1" oninput="setRestaurantMult('+idx+', this.value)" style="flex:1;text-align:center;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px;font-size:12px;font-weight:700;color:var(--text);outline:none;">'
+      + '<button onclick="adjustRestaurantMult('+idx+', 0.25)" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:6px;width:28px;height:28px;font-size:14px;font-weight:700;cursor:pointer;">+</button>'
+      + '<div style="font-size:10px;color:var(--muted);">×</div>'
+      + '</div>'
+      + '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:8px;">'
+      + '<span><strong style="color:var(--text);">'+scaledCal+'</strong> kcal</span>'
+      + '<span>P '+scaledP+'g</span>'
+      + '<span>C '+scaledC+'g</span>'
+      + '<span>F '+scaledF+'g</span>'
+      + '</div>'
+      + '<button onclick="addRestaurantItemToLog('+idx+')" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">＋ Add to Log</button>'
+      + '</div>';
+  }).join('');
+
+  results.innerHTML = '<div style="font-size:11px;color:var(--accent2);margin-bottom:8px;background:rgba(45,212,160,.08);border:1px solid var(--fiber);border-radius:8px;padding:8px 10px;">'+headerLabel+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">'+items.length+' items found from <strong style="color:var(--text);">'+escapeHtml(restaurantName)+'</strong>. Tap one to add.</div>'
+    + rowsHtml;
 }
 
 function addRestaurantItemToLog(idx){
@@ -10901,6 +11063,7 @@ var FEATURE_LABELS = {
   photo: {icon:'📸', name:'Photo Logging', tagline:'AI plate identification'},
   restaurant: {icon:'🏪', name:'Restaurant Lookup', tagline:'Menu searches'},
   recipe_url: {icon:'🔗', name:'Recipe Import', tagline:'URL-based imports'},
+  menu_photo: {icon:'📷', name:'Menu Photo', tagline:'OCR menu lookups'},
   meal_create: {icon:'👨‍🍳', name:'Meal Builder', tagline:'Custom meal creations'},
   fasting: {icon:'⏱️', name:'Fasting Timer', tagline:'IF protocol changes'},
   carb_cycle: {icon:'📊', name:'Carb Cycling', tagline:'Cycle adjustments'},
