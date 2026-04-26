@@ -4019,13 +4019,52 @@ async function handlePhotoLog(input){
           ]
         }]
       });
+      // Check HTTP status before trying to parse
+      if(!res.ok){
+        var errBody = '';
+        try { errBody = await res.text(); } catch(e){}
+        console.error('[photo log] HTTP error', res.status, errBody);
+        if(res.status === 401 || res.status === 403){
+          throw new Error('auth');
+        } else if(res.status === 429){
+          throw new Error('rate_limit');
+        } else if(res.status >= 500){
+          throw new Error('server');
+        } else {
+          throw new Error('http_'+res.status);
+        }
+      }
       const data = await res.json();
+      // API can return errors in a structured format
+      if(data.error){
+        console.error('[photo log] API error:', data.error);
+        throw new Error('api: '+(data.error.message||data.error.type||'unknown'));
+      }
       const text = (data.content && data.content[0] && data.content[0].text) || '';
+      if(!text){
+        console.error('[photo log] empty response:', data);
+        throw new Error('empty_response');
+      }
       const match = text.match(/\{[\s\S]*\}/);
-      if(!match) throw new Error('AI response unreadable');
-      const parsed = JSON.parse(match[0]);
+      if(!match){
+        console.error('[photo log] no JSON in response:', text.substring(0, 500));
+        throw new Error('no_json');
+      }
+      var parsed;
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch(parseErr){
+        console.error('[photo log] JSON parse failed:', parseErr, 'text:', match[0].substring(0, 500));
+        throw new Error('parse_failed');
+      }
       if(parsed.is_food === false || !parsed.foods || !parsed.foods.length){
-        status.innerHTML = '<span style="color:var(--sugar);font-size:13px;">Couldn\'t identify food in this photo. Try a clearer shot, or use Describe mode for hard-to-photograph meals.</span>';
+        status.innerHTML = '<div style="background:rgba(245,158,11,.08);border:1px solid var(--sugar);border-radius:8px;padding:12px;font-size:12px;color:var(--text);line-height:1.5;">'
+          + '<div style="margin-bottom:8px;">🤔 Couldn\'t identify food clearly in this photo (might be unusual angle, lighting, or unfamiliar item).</div>'
+          + '<div style="margin-bottom:8px;color:var(--muted);">Type what it is and AI will estimate from your description:</div>'
+          + '<input type="text" id="photo-fallback-input" placeholder="e.g. glazed donut with sprinkles" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;outline:none;margin-bottom:8px;" onkeydown="if(event.key===\'Enter\') usePhotoFallback()">'
+          + '<button onclick="usePhotoFallback()" style="width:100%;background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px;font-family:DM Sans,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">Use Description Instead</button>'
+          + '</div>';
+        setTimeout(function(){ var inp = document.getElementById('photo-fallback-input'); if(inp) inp.focus(); }, 100);
         return;
       }
       status.textContent = '';
@@ -4038,13 +4077,52 @@ async function handlePhotoLog(input){
       renderPhotoLogPreview(parsed.notes);
     } catch(err){
       console.error('[photo log] failed:', err);
-      status.innerHTML = '<span style="color:#ff9090;font-size:13px;">✗ Couldn\'t process photo. Try again or use a clearer image.</span>';
+      var msg = '';
+      var errMsg = (err && err.message) || '';
+      if(errMsg === 'auth'){
+        msg = 'Authentication issue. Check your subscription status, or try refreshing the app.';
+      } else if(errMsg === 'rate_limit'){
+        msg = 'Too many requests. Wait a minute and try again.';
+      } else if(errMsg === 'server'){
+        msg = 'AI server is having issues. Try again in a moment.';
+      } else if(errMsg === 'empty_response' || errMsg === 'no_json' || errMsg === 'parse_failed'){
+        msg = 'AI returned an unexpected response. Try again — usually works on retry.';
+      } else if(errMsg.indexOf('api:') === 0){
+        msg = 'AI error: '+errMsg.substring(5)+'. Try again or use Describe mode.';
+      } else if(errMsg.indexOf('http_') === 0){
+        msg = 'Server error ('+errMsg.substring(5)+'). Try again.';
+      } else if(errMsg && errMsg.indexOf('Failed to fetch') !== -1){
+        msg = 'Network error. Check your connection and try again.';
+      } else {
+        msg = '✗ Couldn\'t process photo. Try again or use a clearer image.';
+      }
+      status.innerHTML = '<div style="background:rgba(255,107,107,.08);border:1px solid #ff9090;border-radius:8px;padding:10px;font-size:12px;color:#ff9090;line-height:1.5;">'+msg+'</div>';
     }
   };
   reader.onerror = function(){
     status.innerHTML = '<span style="color:#ff9090;">Couldn\'t read image file.</span>';
   };
   reader.readAsDataURL(file);
+}
+
+// Photo logging fallback: when AI couldn't ID the food in the image,
+// the user types what it was and we hand off to the existing Describe
+// mode (which is text-based AI lookup). Switches modes seamlessly.
+function usePhotoFallback(){
+  var input = document.getElementById('photo-fallback-input');
+  if(!input) return;
+  var desc = input.value.trim();
+  if(!desc || desc.length < 2){ showToast('Type a description first'); return; }
+  // Clear photo state
+  var photoStatus = document.getElementById('photo-status');
+  var photoPreview = document.getElementById('photo-preview');
+  if(photoStatus) photoStatus.innerHTML = '';
+  if(photoPreview) photoPreview.innerHTML = '';
+  // Switch to Describe mode and run the lookup with their text
+  setMode('describe', document.getElementById('mode-describe'));
+  var describeInput = document.getElementById('describe-input');
+  if(describeInput){ describeInput.value = desc; }
+  if(typeof doDescribeLookup === 'function'){ doDescribeLookup(); }
 }
 
 // Render the editable list of foods detected in the photo. Each row has
