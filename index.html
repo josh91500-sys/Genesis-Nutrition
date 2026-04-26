@@ -373,6 +373,8 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
     <div id="fasting-timer-bar" style="margin:8px 16px 0;"></div>
     <div style="margin:8px 16px 0;"><button onclick="if(isPro())showMealPlanModal();else showProPaywall('AI Meal Planner',null)" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:13px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;"><span style="font-size:22px;">&#x1F37D;&#xFE0F;</span><div><div style="font-size:14px;font-weight:700;color:var(--text);">Generate Meal Plan</div><div style="font-size:11px;color:var(--muted);">AI builds a full day from your goals</div></div><span style="margin-left:auto;color:var(--accent2);font-size:18px;">&#x203A;</span></button></div>
     <!-- Quick re-add recent foods -->
+    <div id="end-of-day-insight" style="margin:10px 16px 0;"></div>
+    <div id="adaptive-target" style="margin:10px 16px 0;"></div>
     <div id="weekly-summary" style="margin:10px 16px 0;"></div>
     <div id="quick-recent" style="margin:10px 16px 0;"></div>
 
@@ -546,6 +548,11 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
           <div class="more-icon">👥</div>
           <div class="more-label">Friends</div>
           <div class="more-sub">Connect & share</div>
+        </div>
+        <div class="more-item" onclick="showPortionGuide()">
+          <div class="more-icon">✋</div>
+          <div class="more-label">Portions</div>
+          <div class="more-sub">Hand-size guide</div>
         </div>
         <div class="more-item" onclick="openSettings()">
           <div class="more-icon">⚙️</div>
@@ -958,9 +965,48 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
 // ══════════════════════════════════════════════════════════════════════
 const MEALS = ['Breakfast','Lunch','Dinner','Snacks'];
 
-function loadGoals(){
+// Load the BASE goals object (the user's primary daily goal). Used by editing
+// flows and as the foundation for all goal calculations.
+function loadBaseGoals(){
   try{ return JSON.parse(localStorage.getItem('gn_goals')||'{"calories":2000,"protein":150,"carbs":200,"fat":65,"fiber":30,"sugar":50,"sodium":2300,"potassium":4700}'); }
   catch(e){ return {calories:2000,protein:150,carbs:200,fat:65,fiber:30,sugar:50,sodium:2300,potassium:4700}; }
+}
+
+// Load carb cycle configuration. Returns null if cycling is disabled or unset.
+// Schema: {enabled: true, schedule: ['low','high','low','high','low','high','low'] (Sun..Sat),
+//          dayTypes: {high:{calories,protein,carbs,fat}, low:{calories,protein,carbs,fat}}}
+function loadCarbCycle(){
+  try {
+    var c = JSON.parse(localStorage.getItem('gn_carb_cycle')||'null');
+    if(!c || !c.enabled || !c.schedule || !c.dayTypes) return null;
+    return c;
+  } catch(e){ return null; }
+}
+
+// Returns the ACTIVE goals for a specific day. If carb cycling is enabled,
+// returns the goals for that day's cycle type; otherwise returns base goals.
+// This is the function all UI code should call (replaces old loadGoals).
+function loadGoals(dayOff){
+  var base = loadBaseGoals();
+  var cycle = loadCarbCycle();
+  if(!cycle) return base;
+  // Determine the day-of-week for the given offset (default: today)
+  var offset = (dayOff === undefined || dayOff === null) ? 0 : dayOff;
+  var d = new Date();
+  d.setDate(d.getDate() + offset);
+  var dow = d.getDay();  // 0 = Sunday
+  var dayType = cycle.schedule[dow];
+  if(!dayType || !cycle.dayTypes[dayType]) return base;
+  // Merge: cycle overrides for cal+macros, base provides everything else
+  // (fiber, sugar, sodium, potassium — these don't cycle)
+  var dt = cycle.dayTypes[dayType];
+  return Object.assign({}, base, {
+    calories: dt.calories || base.calories,
+    protein: dt.protein || base.protein,
+    carbs: dt.carbs || base.carbs,
+    fat: dt.fat || base.fat,
+    _cycleDay: dayType  // Annotate so UI can show the badge
+  });
 }
 
 function dateKey(offset=0){
@@ -1097,14 +1143,22 @@ function showPage(name, btn){
 function renderNutrition(){
   updateDayLabel();
   const log = loadDayLog(dayOffset);
-  const goals = loadGoals();
+  const goals = loadGoals(dayOffset);
   const t = getTotals(log.foods);
 
   // Summary
   const pct = Math.min(100,(t.cal/goals.calories)*100);
   const remaining = goals.calories - t.cal;
   const over = t.cal > goals.calories;
+  // Carb cycle badge — only shown if cycling is active for this day
+  var cycleBadge = '';
+  if(goals._cycleDay){
+    var cycleLabel = goals._cycleDay === 'high' ? '🔼 High day' : goals._cycleDay === 'low' ? '🔽 Low day' : '➡️ '+goals._cycleDay;
+    var cycleColor = goals._cycleDay === 'high' ? 'var(--carbs)' : 'var(--accent2)';
+    cycleBadge = '<div style="display:inline-block;background:var(--bg4);border:1px solid '+cycleColor+';color:'+cycleColor+';font-size:10px;font-weight:700;padding:3px 9px;border-radius:99px;margin-bottom:8px;">'+cycleLabel+'</div>';
+  }
   document.getElementById('cal-summary').innerHTML = `
+    ${cycleBadge}
     <div class="cal-main">
       <div>
         <div class="cal-number">${Math.round(t.cal)}</div>
@@ -1671,7 +1725,10 @@ async function selectCnfResult(idx){
 }
 
 function renderQuickRecent(){
-  // Weekly summary (Mon mornings or anytime user asks). Shown above quick-log.
+  // Adaptive calorie target check + weekly summary + end-of-day insight.
+  // All appear above quick-log.
+  renderAdaptiveTargetPrompt();
+  renderEndOfDayInsight();
   renderWeeklySummary();
   const el = document.getElementById('quick-recent');
   // Build a frequency map across the last 30 days. Most-logged foods rank
@@ -1812,6 +1869,393 @@ function getISOWeekKey(){
   var yearStart = new Date(d.getFullYear(), 0, 1);
   var weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
   return d.getFullYear() + '-W' + String(weekNum).padStart(2,'0');
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// ADAPTIVE CALORIE TARGETS
+// ──────────────────────────────────────────────────────────────────────
+// Once a week, compares user's logged calorie intake against actual weight
+// change to back-calculate their real TDEE. If reality differs meaningfully
+// from the formula-based estimate, suggests a goal adjustment.
+//
+// Math: avg_cal_in - (weight_delta_lb × 3500) / days = real_TDEE
+// (3500 kcal ≈ 1 lb body weight; positive delta means gain)
+//
+// We require:
+//   - At least 14 days of logged food (>= 7 days with food logged)
+//   - At least 2 weight entries spanning >= 10 days apart
+//   - Both endpoints have weight smoothed (3-day rolling avg if possible)
+//
+// Adjustments are conservative: max ±200 kcal per suggestion.
+// ──────────────────────────────────────────────────────────────────────
+
+// Compute a smoothed weight near a given date by averaging weights within
+// ±3 days. Returns null if no data nearby. Avoids one-day water-weight noise
+// dominating the calculation.
+function getSmoothedWeightNear(wlog, targetDateStr){
+  if(!wlog || !wlog.length) return null;
+  var target = new Date(targetDateStr+'T12:00:00').getTime();
+  var nearby = wlog.filter(function(e){
+    var d = new Date(e.date+'T12:00:00').getTime();
+    return Math.abs(d - target) <= 3 * 86400000;
+  });
+  if(!nearby.length) return null;
+  var sum = nearby.reduce(function(a,e){ return a + (e.weight||0); }, 0);
+  return sum / nearby.length;
+}
+
+// Run the analysis. Returns null if not enough data, else an object with
+// {realTDEE, currentGoal, suggestedGoal, weightDelta, daysAnalyzed, ...}
+function computeAdaptiveTarget(){
+  var wlog = loadWeightLog();
+  if(!wlog || wlog.length < 2) return null;
+
+  // Sort weights by date to be safe
+  wlog = wlog.slice().sort(function(a,b){ return a.date.localeCompare(b.date); });
+
+  // Look at the past 14 days. We need both endpoints to have nearby weights.
+  var endDate = dateKey(0);
+  var startDate = dateKey(-13);
+
+  // Get smoothed start & end weights
+  var startWeight = getSmoothedWeightNear(wlog, startDate);
+  var endWeight = getSmoothedWeightNear(wlog, endDate);
+  if(startWeight === null || endWeight === null) return null;
+
+  // Sum food calories across those 14 days
+  var totalCal = 0;
+  var daysWithFood = 0;
+  for(var i = 0; i <= 13; i++){
+    var log = loadDayLog(-i);
+    if(log.foods && log.foods.length){
+      daysWithFood++;
+      log.foods.forEach(function(f){ totalCal += f.cal || 0; });
+    }
+  }
+  // Need at least 7 of 14 days logged to be statistically meaningful
+  if(daysWithFood < 7) return null;
+
+  var avgCalIn = totalCal / daysWithFood;
+  var weightDeltaLb = endWeight - startWeight;  // positive = gain
+
+  // Back-solve for real TDEE
+  // weight_delta = (cal_in - tdee) × days / 3500
+  // tdee = cal_in - (weight_delta × 3500 / days)
+  // Note: We use 14 days of weight tracking but only daysWithFood for avgCalIn.
+  // To keep math simple, assume 14-day window for weight delta.
+  var realTDEE = avgCalIn - (weightDeltaLb * 3500 / 14);
+
+  // Get current goal
+  var currentGoal = 2000;
+  try {
+    var g = JSON.parse(localStorage.getItem('gn_goals')||'{}');
+    if(g.calories) currentGoal = g.calories;
+  } catch(e){}
+
+  // Get user's primary goal direction (lose/maintain/gain)
+  var primaryGoal = 'maintain';
+  try {
+    var profile = JSON.parse(localStorage.getItem('gn_profile')||'{}');
+    primaryGoal = profile.primary_goal || 'maintain';
+  } catch(e){}
+
+  // Compute suggested goal based on direction
+  // Lose: aim for 500 kcal deficit (~1 lb/week)
+  // Gain: aim for 250 kcal surplus (~0.5 lb/week)
+  // Maintain: just match real TDEE
+  var idealAdjust = primaryGoal === 'lose' ? -500 : primaryGoal === 'gain' ? 250 : 0;
+  var idealGoal = Math.round(realTDEE + idealAdjust);
+
+  // Cap suggestion to within ±200 kcal of current goal — don't make
+  // dramatic jumps based on 14 days of data
+  var suggestedGoal = idealGoal;
+  if(Math.abs(idealGoal - currentGoal) > 200){
+    suggestedGoal = idealGoal > currentGoal
+      ? currentGoal + 200
+      : currentGoal - 200;
+  }
+  // Hard floor at 1200 kcal (safety) and ceiling at 5000 (sanity)
+  suggestedGoal = Math.max(1200, Math.min(5000, suggestedGoal));
+
+  // Determine if a meaningful adjustment is warranted
+  var diff = suggestedGoal - currentGoal;
+  // Threshold: only suggest if difference is >= 75 kcal (avoid noise)
+  if(Math.abs(diff) < 75) return null;
+
+  // Detect whether reality matches expectations
+  // Expected weight delta if user had been hitting their goal:
+  // expected_delta = (currentGoal - realTDEE) × 14 / 3500
+  var expectedDelta = (currentGoal - realTDEE) * 14 / 3500;
+
+  return {
+    realTDEE: Math.round(realTDEE),
+    currentGoal: currentGoal,
+    suggestedGoal: suggestedGoal,
+    weightDelta: weightDeltaLb,
+    avgCalIn: Math.round(avgCalIn),
+    daysWithFood: daysWithFood,
+    primaryGoal: primaryGoal,
+    diff: diff,
+    expectedDelta: expectedDelta
+  };
+}
+
+// Show the adaptive target prompt card on the home screen, above the
+// weekly summary. Dismissable per ISO week.
+function renderAdaptiveTargetPrompt(){
+  var el = document.getElementById('adaptive-target');
+  if(!el) return;
+
+  // Don't show if dismissed this week
+  var thisWeekKey = getISOWeekKey();
+  var dismissedWeek = localStorage.getItem('gn_adaptive_dismissed');
+  if(dismissedWeek === thisWeekKey){ el.innerHTML = ''; return; }
+
+  var analysis = computeAdaptiveTarget();
+  if(!analysis){ el.innerHTML = ''; return; }
+
+  // Decide on the message tone — is the user matching expectations or not?
+  var goalDir = analysis.primaryGoal;
+  var actualDelta = analysis.weightDelta;
+  var expectedDelta = analysis.expectedDelta;
+
+  var insight = '';
+  if(goalDir === 'lose'){
+    if(actualDelta > 0){
+      insight = 'You\'re trying to lose, but gained '+Math.abs(actualDelta).toFixed(1)+' lb in 14 days. Your real maintenance is higher than calculated — your goal needs to drop to actually create a deficit.';
+    } else if(Math.abs(actualDelta) < Math.abs(expectedDelta) * 0.5){
+      insight = 'You\'re losing slower than expected ('+Math.abs(actualDelta).toFixed(1)+' lb instead of ~'+Math.abs(expectedDelta).toFixed(1)+' lb in 14 days). The math says you need a bigger deficit.';
+    } else {
+      insight = 'Your data says we\'ve been overestimating your needs — a small adjustment could get you to your target faster.';
+    }
+  } else if(goalDir === 'gain'){
+    if(actualDelta < 0){
+      insight = 'You\'re trying to gain, but lost '+Math.abs(actualDelta).toFixed(1)+' lb in 14 days. You need more calories than your current goal.';
+    } else if(Math.abs(actualDelta) < Math.abs(expectedDelta) * 0.5){
+      insight = 'You\'re gaining slower than expected. The math suggests bumping up calories.';
+    } else {
+      insight = 'Your data suggests a calorie adjustment will optimize your gains.';
+    }
+  } else {
+    if(Math.abs(actualDelta) > 1.5){
+      insight = 'You\'re aiming to maintain but your weight shifted '+actualDelta.toFixed(1)+' lb in 14 days. Adjust to stay steady.';
+    } else {
+      insight = 'Small adjustment to better match your maintenance.';
+    }
+  }
+
+  var diffSign = analysis.diff > 0 ? '+' : '';
+  var diffColor = analysis.diff > 0 ? 'var(--fiber)' : 'var(--accent2)';
+
+  el.innerHTML = '<div style="background:linear-gradient(135deg,rgba(99,87,255,.15),rgba(245,158,11,.08));border:1px solid var(--accent);border-radius:12px;padding:14px;position:relative;margin-bottom:8px;">'
+    + '<button onclick="dismissAdaptiveTarget()" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1;" title="Hide for the week">×</button>'
+    + '<div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;">⚙️ Adaptive Calorie Check</div>'
+    + '<div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:12px;">'+escapeHtml(insight)+'</div>'
+    + '<div style="background:var(--bg4);border-radius:8px;padding:10px;margin-bottom:10px;">'
+    + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:6px;"><span>Current</span><span>Suggested</span></div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;">'
+    + '<div><div style="font-size:18px;font-weight:800;color:var(--muted);">'+analysis.currentGoal+'</div><div style="font-size:10px;color:var(--muted);">kcal/day</div></div>'
+    + '<div style="font-size:14px;color:'+diffColor+';font-weight:700;">'+diffSign+analysis.diff+'</div>'
+    + '<div style="text-align:right;"><div style="font-size:22px;font-weight:800;color:var(--accent2);">'+analysis.suggestedGoal+'</div><div style="font-size:10px;color:var(--muted);">kcal/day</div></div>'
+    + '</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5;">'
+    + 'Last 14 days: avg <strong style="color:var(--text);">'+analysis.avgCalIn+'</strong> kcal/day, weight '
+    + (actualDelta >= 0 ? '+' : '')+actualDelta.toFixed(1)+' lb. '
+    + 'Real maintenance ≈ <strong style="color:var(--text);">'+analysis.realTDEE+'</strong> kcal/day.'
+    + '</div>'
+    + '<button class="btn-primary" style="margin-top:0;" onclick="acceptAdaptiveTarget('+analysis.suggestedGoal+')">Use '+analysis.suggestedGoal+' kcal/day</button>'
+    + '<button class="btn-secondary" style="margin-top:6px;" onclick="dismissAdaptiveTarget()">Keep current goal</button>'
+    + '</div>';
+}
+
+function acceptAdaptiveTarget(newCal){
+  try {
+    var goals = {};
+    try { goals = JSON.parse(localStorage.getItem('gn_goals') || '{}') || {}; } catch(e){}
+    var oldCal = goals.calories || 2000;
+    goals.calories = newCal;
+    // Recompute macros at standard splits — protein 0.85g/lb, carbs 45%, fat 25%
+    var weightLb = (typeof getLatestWeight === 'function' && getLatestWeight()) || 180;
+    goals.protein = Math.round(weightLb * 0.85);
+    goals.carbs = Math.round((newCal * 0.45) / 4);
+    goals.fat = Math.round((newCal * 0.25) / 9);
+    localStorage.setItem('gn_goals', JSON.stringify(goals));
+
+    // If carb cycling is enabled, apply the same percentage adjustment to
+    // both day types so the cycle ratio stays intact. Without this, accepting
+    // adaptive would silently overwrite the cycle config.
+    try {
+      var cycle = JSON.parse(localStorage.getItem('gn_carb_cycle')||'null');
+      if(cycle && cycle.enabled && cycle.dayTypes && oldCal > 0){
+        var ratio = newCal / oldCal;
+        ['high','low'].forEach(function(t){
+          if(cycle.dayTypes[t]){
+            ['calories','protein','carbs','fat'].forEach(function(k){
+              if(cycle.dayTypes[t][k]){
+                cycle.dayTypes[t][k] = Math.round(cycle.dayTypes[t][k] * ratio);
+              }
+            });
+          }
+        });
+        localStorage.setItem('gn_carb_cycle', JSON.stringify(cycle));
+      }
+    } catch(e){}
+
+    // Track adjustment history for transparency
+    try {
+      var hist = JSON.parse(localStorage.getItem('gn_adaptive_history')||'[]') || [];
+      hist.push({date: dateKey(0), oldGoal: hist.length ? hist[hist.length-1].newGoal : 0, newGoal: newCal, ts: Date.now()});
+      if(hist.length > 24) hist = hist.slice(-24);
+      localStorage.setItem('gn_adaptive_history', JSON.stringify(hist));
+    } catch(e){}
+    localStorage.setItem('gn_adaptive_dismissed', getISOWeekKey());
+    showToast('✓ Goal updated to '+newCal+' kcal/day', 4000);
+    if(typeof renderNutrition === 'function') renderNutrition();
+  } catch(e){
+    showToast('Failed to update goal');
+  }
+}
+
+function dismissAdaptiveTarget(){
+  localStorage.setItem('gn_adaptive_dismissed', getISOWeekKey());
+  var el = document.getElementById('adaptive-target');
+  if(el) el.innerHTML = '';
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// END-OF-DAY INSIGHT CARD
+// ──────────────────────────────────────────────────────────────────────
+// After 6 PM, if user has logged ≥3 foods today, show a single AI-generated
+// observation about their day. Cached per-day so AI is only called once.
+// User can dismiss to hide for the day, or tap "Generate" to compute a
+// fresh insight if they haven't yet today.
+// ──────────────────────────────────────────────────────────────────────
+
+function renderEndOfDayInsight(){
+  var el = document.getElementById('end-of-day-insight');
+  if(!el) return;
+  // Only render on today's view
+  if(typeof dayOffset !== 'undefined' && dayOffset !== 0){ el.innerHTML = ''; return; }
+
+  var today = dateKey(0);
+  var dismissedDay = localStorage.getItem('gn_eod_dismissed');
+  if(dismissedDay === today){ el.innerHTML = ''; return; }
+
+  // Check time of day — only show after 6 PM (18:00)
+  var hour = new Date().getHours();
+  if(hour < 18){ el.innerHTML = ''; return; }
+
+  // Need at least 3 foods logged today
+  var log = loadDayLog(0);
+  var foods = (log.foods || []);
+  if(foods.length < 3){ el.innerHTML = ''; return; }
+
+  // If we already have a cached insight for today, show it
+  var cached = '';
+  try {
+    var c = JSON.parse(localStorage.getItem('gn_eod_insight_cache')||'null');
+    if(c && c.date === today) cached = c.text || '';
+  } catch(e){}
+
+  if(cached){
+    showEndOfDayInsightCard(cached, true);
+    return;
+  }
+
+  // Show "Generate" CTA — don't auto-fire AI without user consent (saves tokens)
+  el.innerHTML = '<div style="background:linear-gradient(135deg,rgba(45,212,160,.10),rgba(99,87,255,.06));border:1px solid var(--accent2);border-radius:12px;padding:14px;position:relative;">'
+    + '<button onclick="dismissEndOfDayInsight()" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1;" title="Hide for today">×</button>'
+    + '<div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px;">💡 End of day insight</div>'
+    + '<div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:10px;">Get an AI summary of your day — what went well, what to watch.</div>'
+    + '<button onclick="generateEndOfDayInsight()" style="width:100%;background:var(--accent2);color:#0a0a12;border:none;border-radius:8px;padding:10px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">✨ Generate insight</button>'
+    + '</div>';
+}
+
+function showEndOfDayInsightCard(text, fromCache){
+  var el = document.getElementById('end-of-day-insight');
+  if(!el) return;
+  el.innerHTML = '<div style="background:linear-gradient(135deg,rgba(45,212,160,.10),rgba(99,87,255,.06));border:1px solid var(--accent2);border-radius:12px;padding:14px;position:relative;">'
+    + '<button onclick="dismissEndOfDayInsight()" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1;" title="Hide for today">×</button>'
+    + '<div style="font-size:10px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;">💡 Today\'s insight</div>'
+    + '<div style="font-size:13px;color:var(--text);line-height:1.6;">'+escapeHtml(text)+'</div>'
+    + '</div>';
+}
+
+async function generateEndOfDayInsight(){
+  if(!isPro()){
+    showProPaywall('AI Daily Insights', generateEndOfDayInsight);
+    return;
+  }
+  var el = document.getElementById('end-of-day-insight');
+  if(el){
+    el.innerHTML = '<div style="background:linear-gradient(135deg,rgba(45,212,160,.10),rgba(99,87,255,.06));border:1px solid var(--accent2);border-radius:12px;padding:14px;text-align:center;">'
+      + '<div class="ai-loading" style="display:inline-flex;"><div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div></div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Analyzing your day…</div>'
+      + '</div>';
+  }
+
+  try {
+    var log = loadDayLog(0);
+    var foods = log.foods || [];
+    // Compute totals
+    var totals = {cal:0, protein:0, carbs:0, fat:0, fiber:0, sugar:0, sodium:0};
+    foods.forEach(function(f){
+      Object.keys(totals).forEach(function(k){ totals[k] += f[k] || 0; });
+    });
+    Object.keys(totals).forEach(function(k){ totals[k] = Math.round(totals[k] * 10) / 10; });
+
+    // Get goals
+    var goals = {};
+    try { goals = JSON.parse(localStorage.getItem('gn_goals')||'{}') || {}; } catch(e){}
+
+    // Build food list summary (name + cal only — keep prompt short)
+    var foodSummary = foods.map(function(f){
+      return '- '+(f.name||'Unknown')+' ('+(f.meal||'meal')+'): '+Math.round(f.cal||0)+' kcal';
+    }).join('\n');
+
+    var prompt = 'You are reviewing someone\'s daily food log. Generate ONE short observation (2-3 sentences max, no greeting, no sign-off) about their day. Focus on the most actionable insight — patterns they might miss, calorie sources that surprise, or what went well.\n\n'
+      + 'Today\'s totals:\n'
+      + '- Calories: '+totals.cal+' (goal: '+(goals.calories||'not set')+')\n'
+      + '- Protein: '+totals.protein+'g (goal: '+(goals.protein||'not set')+'g)\n'
+      + '- Carbs: '+totals.carbs+'g\n'
+      + '- Fat: '+totals.fat+'g\n'
+      + '- Fiber: '+totals.fiber+'g\n'
+      + '- Sodium: '+totals.sodium+'mg\n\n'
+      + 'Food log:\n'+foodSummary+'\n\n'
+      + 'Rules: Be specific (mention foods if relevant). Be honest but kind — not preachy. No emojis or markdown. Plain text only. Skip generic advice. If they hit goals well, say so concisely. Max 3 sentences.';
+
+    var res = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 500,
+      messages: [{role:'user', content: prompt}]
+    });
+    var data = await res.json();
+    var text = (data.content && data.content[0] && data.content[0].text) || '';
+    text = text.trim();
+    if(!text){ throw new Error('Empty response'); }
+
+    // Cache for the rest of the day
+    try {
+      localStorage.setItem('gn_eod_insight_cache', JSON.stringify({
+        date: dateKey(0),
+        text: text,
+        ts: Date.now()
+      }));
+    } catch(e){}
+
+    showEndOfDayInsightCard(text, false);
+  } catch(err){
+    console.error('[eod insight] failed:', err);
+    if(el){
+      el.innerHTML = '<div style="background:rgba(255,107,107,.08);border:1px solid #ff9090;border-radius:12px;padding:12px;font-size:12px;color:#ff9090;">Couldn\'t generate insight. Try again later.</div>';
+    }
+  }
+}
+
+function dismissEndOfDayInsight(){
+  localStorage.setItem('gn_eod_dismissed', dateKey(0));
+  var el = document.getElementById('end-of-day-insight');
+  if(el) el.innerHTML = '';
 }
 
 function reAddFood(idx){
@@ -7776,22 +8220,167 @@ function showSubPage(name){
 // GOALS SUB PAGE
 // ══════════════════════════════════════════════════════════════════════
 function renderGoalsSubPage(el){
-  var g=getGoals();
-  el.innerHTML='<div class="card"><div class="card-title">Daily Nutrition Goals</div>'
-    +[['calories','Calories (kcal)'],['protein','Protein (g)'],['carbs','Carbs (g)'],['fat','Fat (g)'],['fiber','Fiber (g)'],['sugar','Sugar (g)'],['sodium','Sodium (mg)'],['potassium','Potassium (mg)'],['water','Water (glasses)']].map(function(kv){
+  var g = loadBaseGoals();  // edit BASE goals, not cycle-adjusted
+  var cycle = (function(){
+    try { return JSON.parse(localStorage.getItem('gn_carb_cycle')||'null'); } catch(e){ return null; }
+  })();
+  var cycleEnabled = !!(cycle && cycle.enabled);
+
+  var goalsHtml = '<div class="card"><div class="card-title">Daily Nutrition Goals</div>'
+    + (cycleEnabled ? '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5;background:var(--bg4);border-radius:8px;padding:8px 10px;">📊 Carb cycling is ON. These are your <strong>base</strong> goals (used for fiber/sugar/sodium/water and as a fallback). High/Low day macros are configured below.</div>' : '')
+    + [['calories','Calories (kcal)'],['protein','Protein (g)'],['carbs','Carbs (g)'],['fat','Fat (g)'],['fiber','Fiber (g)'],['sugar','Sugar (g)'],['sodium','Sodium (mg)'],['potassium','Potassium (mg)'],['water','Water (glasses)']].map(function(kv){
       return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">'
         +'<span style="font-size:14px;font-weight:500;">'+kv[1]+'</span>'
         +'<input type="number" id="sg-'+kv[0]+'" value="'+(g[kv[0]]||'')+'" style="width:90px;text-align:right;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:6px 10px;color:var(--text);font-size:14px;outline:none;"></div>';
     }).join('')
     +'<button class="btn-primary" style="margin-top:14px;" onclick="saveSubGoals()">Save Goals</button></div>';
+
+  // Carb cycle configuration card
+  var cycleHtml = renderCarbCycleConfig(cycle);
+
+  el.innerHTML = goalsHtml + cycleHtml;
 }
-function saveSubGoals(){
-  var g=getGoals();
-  ['calories','protein','carbs','fat','fiber','sugar','sodium','potassium','water'].forEach(function(k){
-    var el=document.getElementById('sg-'+k); if(el&&el.value) g[k]=parseFloat(el.value);
+
+// Build the carb cycle config card. Toggle, day-type editors, weekly schedule.
+function renderCarbCycleConfig(cycle){
+  cycle = cycle || {};
+  var enabled = !!cycle.enabled;
+  var dayTypes = cycle.dayTypes || {};
+  var high = dayTypes.high || {calories:2400, protein:180, carbs:280, fat:70};
+  var low = dayTypes.low || {calories:1700, protein:180, carbs:100, fat:70};
+  var schedule = cycle.schedule || ['low','high','low','high','low','high','low'];  // Sun..Sat default
+
+  var dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  var html = '<div class="card"><div class="card-title">📊 Carb Cycling</div>'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 14px;border-bottom:1px solid var(--border);margin-bottom:14px;">'
+    + '<div><div style="font-size:13px;font-weight:600;">Enable carb cycling</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4;">Different cal/macro targets on different days (e.g., higher on training days).</div></div>'
+    + '<label style="position:relative;display:inline-block;width:48px;height:26px;flex-shrink:0;margin-left:12px;">'
+    + '<input type="checkbox" id="cc-enabled" '+(enabled?'checked':'')+' onchange="onCarbCycleToggle(this.checked)" style="opacity:0;width:0;height:0;">'
+    + '<span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:'+(enabled?'var(--accent)':'var(--bg5)')+';border-radius:26px;transition:.2s;"><span style="position:absolute;content:\'\';height:20px;width:20px;left:'+(enabled?'25px':'3px')+';top:3px;background:#fff;border-radius:50%;transition:.2s;"></span></span>'
+    + '</label></div>';
+
+  if(enabled){
+    // Day type editors
+    var typeRow = function(key, label, color, vals){
+      return '<div style="background:var(--bg4);border-left:3px solid '+color+';border-radius:8px;padding:12px;margin-bottom:10px;">'
+        + '<div style="font-size:13px;font-weight:700;color:'+color+';margin-bottom:8px;">'+label+'</div>'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
+        + ['calories','protein','carbs','fat'].map(function(k){
+          var prettyLabel = k === 'calories' ? 'Cal' : k.charAt(0).toUpperCase() + k.slice(1) + ' (g)';
+          return '<div style="display:flex;align-items:center;gap:6px;">'
+            + '<label style="font-size:11px;color:var(--muted);min-width:60px;">'+prettyLabel+'</label>'
+            + '<input type="number" id="cc-'+key+'-'+k+'" value="'+(vals[k]||0)+'" style="flex:1;text-align:right;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;outline:none;">'
+            + '</div>';
+        }).join('')
+        + '</div></div>';
+    };
+    html += typeRow('high', '🔼 High day', 'var(--carbs)', high);
+    html += typeRow('low', '🔽 Low day', 'var(--accent2)', low);
+
+    // Weekly schedule
+    html += '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin:14px 0 8px;">Weekly schedule — tap to toggle</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px;">';
+    dayLabels.forEach(function(d, i){
+      var t = schedule[i] || 'low';
+      var bg = t === 'high' ? 'var(--carbs)' : 'var(--accent2)';
+      var icon = t === 'high' ? '🔼' : '🔽';
+      html += '<button onclick="toggleCarbCycleDay('+i+')" style="background:'+bg+';color:#0a0a12;border:none;border-radius:8px;padding:10px 4px;cursor:pointer;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;">'
+        + '<div style="font-size:14px;margin-bottom:2px;">'+icon+'</div>'
+        + d
+        + '</button>';
+    });
+    html += '</div>';
+
+    html += '<button class="btn-primary" style="margin-top:8px;" onclick="saveCarbCycle()">Save Cycle</button>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+// Track in-memory toggle state since the user might toggle a few days then save
+var _carbCycleSchedule = null;
+
+function onCarbCycleToggle(enabled){
+  // Just re-render. The save button persists the state.
+  if(enabled){
+    // Initialize schedule if first time
+    var existing = null;
+    try { existing = JSON.parse(localStorage.getItem('gn_carb_cycle')||'null'); } catch(e){}
+    if(!existing){
+      existing = {
+        enabled: true,
+        dayTypes: {high:{calories:2400, protein:180, carbs:280, fat:70}, low:{calories:1700, protein:180, carbs:100, fat:70}},
+        schedule: ['low','high','low','high','low','high','low']
+      };
+      localStorage.setItem('gn_carb_cycle', JSON.stringify(existing));
+    } else {
+      existing.enabled = true;
+      localStorage.setItem('gn_carb_cycle', JSON.stringify(existing));
+    }
+  } else {
+    var c = null;
+    try { c = JSON.parse(localStorage.getItem('gn_carb_cycle')||'null'); } catch(e){}
+    if(c){ c.enabled = false; localStorage.setItem('gn_carb_cycle', JSON.stringify(c)); }
+    showToast('Carb cycling disabled');
+  }
+  // Re-render the goals page
+  var subEl = document.getElementById('sub-page-content');
+  if(subEl){ renderGoalsSubPage(subEl); }
+  // Refresh home so badge updates
+  if(typeof renderNutrition === 'function') renderNutrition();
+}
+
+function toggleCarbCycleDay(dayIdx){
+  var c = null;
+  try { c = JSON.parse(localStorage.getItem('gn_carb_cycle')||'null'); } catch(e){}
+  if(!c || !c.schedule) return;
+  c.schedule[dayIdx] = c.schedule[dayIdx] === 'high' ? 'low' : 'high';
+  localStorage.setItem('gn_carb_cycle', JSON.stringify(c));
+  // Re-render
+  var subEl = document.getElementById('sub-page-content');
+  if(subEl){ renderGoalsSubPage(subEl); }
+}
+
+function saveCarbCycle(){
+  var c = null;
+  try { c = JSON.parse(localStorage.getItem('gn_carb_cycle')||'null'); } catch(e){}
+  if(!c){ c = {enabled:true, dayTypes:{}, schedule:['low','high','low','high','low','high','low']}; }
+  c.enabled = true;
+  c.dayTypes = c.dayTypes || {};
+  // Pull values from form
+  ['high','low'].forEach(function(type){
+    c.dayTypes[type] = c.dayTypes[type] || {};
+    ['calories','protein','carbs','fat'].forEach(function(k){
+      var el = document.getElementById('cc-'+type+'-'+k);
+      if(el){
+        var v = parseFloat(el.value);
+        if(!isNaN(v) && v > 0) c.dayTypes[type][k] = Math.round(v);
+      }
+    });
   });
-  localStorage.setItem('gn_goals',JSON.stringify(g));
-  showToast('✓ Goals saved!'); renderNutrition();
+  // Sanity check: high day cal > low day cal
+  if(c.dayTypes.high.calories <= c.dayTypes.low.calories){
+    if(!confirm('Your High day calories ('+c.dayTypes.high.calories+') are not higher than Low day ('+c.dayTypes.low.calories+'). Save anyway?')){
+      return;
+    }
+  }
+  localStorage.setItem('gn_carb_cycle', JSON.stringify(c));
+  showToast('✓ Carb cycle saved');
+  if(typeof renderNutrition === 'function') renderNutrition();
+}
+
+function saveSubGoals(){
+  var g = loadBaseGoals();
+  ['calories','protein','carbs','fat','fiber','sugar','sodium','potassium','water'].forEach(function(k){
+    var el = document.getElementById('sg-'+k);
+    if(el && el.value) g[k] = parseFloat(el.value);
+  });
+  localStorage.setItem('gn_goals', JSON.stringify(g));
+  showToast('✓ Goals saved!');
+  renderNutrition();
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -9746,22 +10335,80 @@ function getLastEatenTime(){
 }
 function showFastingMenu(){
   var target = parseInt(localStorage.getItem('gn_fasting_target')||'16');
-  var opts = [12, 14, 16, 18, 20, 24];
+  var manualStart = parseInt(localStorage.getItem('gn_fasting_manual_start')||'0');
+  // Named protocols with eating-window summary
+  var protocols = [
+    {h:12, name:'12:12', desc:'Beginner', sub:'12h fast, 12h eat'},
+    {h:14, name:'14:10', desc:'Light', sub:'Skip a small meal'},
+    {h:16, name:'16:8', desc:'Most popular', sub:'Skip breakfast or dinner'},
+    {h:18, name:'18:6', desc:'Intermediate', sub:'Tighter eating window'},
+    {h:20, name:'20:4', desc:'Warrior', sub:'One main meal, light snacks'},
+    {h:24, name:'OMAD', desc:'One meal/day', sub:'Advanced — only one meal'}
+  ];
+  var lastEaten = parseInt(localStorage.getItem('gn_last_eaten_at')||'0');
+  var hoursSince = lastEaten ? ((Date.now() - lastEaten) / 3600000) : 0;
+  var stageInfo = '';
+  if(lastEaten && hoursSince > 0){
+    var stage = getFastingStage(hoursSince);
+    if(stage){
+      stageInfo = '<div style="background:linear-gradient(135deg,rgba(99,87,255,.12),rgba(45,212,160,.08));border:1px solid var(--accent);border-radius:10px;padding:12px;margin-bottom:14px;">'
+        + '<div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">📍 You are here ('+Math.floor(hoursSince)+'h '+Math.floor((hoursSince-Math.floor(hoursSince))*60)+'m)</div>'
+        + '<div style="font-size:13px;font-weight:700;margin-bottom:2px;">'+stage.name+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);line-height:1.5;">'+stage.desc+'</div>'
+        + '</div>';
+    }
+  }
   var modal = document.createElement('div');
   modal.className = 'modal-backdrop open';
   modal.id = 'fasting-menu';
-  modal.innerHTML = '<div class="modal-sheet">'
+  modal.innerHTML = '<div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">'
     +'<div class="modal-handle"></div>'
     +'<div class="modal-title">⏱️ Intermittent Fasting</div>'
-    +'<div style="font-size:13px;color:var(--muted);margin-bottom:14px;">Timer tracks time since your last logged food.</div>'
-    +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;">'
-    +opts.map(function(h){ return '<button onclick="setFastingTarget('+h+')" style="background:'+(h===target?'var(--accent)':'var(--bg4)')+';border:1px solid '+(h===target?'var(--accent)':'var(--border2)')+';color:'+(h===target?'#fff':'var(--text)')+';border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:700;cursor:pointer;">'+h+'h</button>'; }).join('')
+    + stageInfo
+    +'<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Pick a protocol</div>'
+    +protocols.map(function(p){
+      var sel = p.h === target;
+      return '<button onclick="setFastingTarget('+p.h+')" style="width:100%;background:'+(sel?'rgba(99,87,255,.15)':'var(--bg4)')+';border:1px solid '+(sel?'var(--accent)':'var(--border)')+';border-radius:10px;padding:12px;margin-bottom:6px;text-align:left;cursor:pointer;color:var(--text);font-family:DM Sans,sans-serif;display:flex;align-items:center;gap:12px;">'
+        + '<div style="font-family:Syne,sans-serif;font-size:18px;font-weight:800;color:var(--accent2);min-width:60px;">'+p.name+'</div>'
+        + '<div style="flex:1;"><div style="font-size:13px;font-weight:700;">'+p.desc+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+p.sub+'</div></div>'
+        + (sel ? '<div style="color:var(--accent2);font-size:18px;">✓</div>' : '')
+        + '</button>';
+    }).join('')
+    +'<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">'
+    +'<button onclick="manualStartFast()" style="width:100%;background:var(--bg4);border:1px solid var(--border2);color:var(--text);border-radius:10px;padding:10px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">⏰ Start fast now (set last meal = now)</button>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;text-align:center;">If you forgot to log your last meal, this resets the timer to start counting from this moment.</div>'
     +'</div>'
-    +'<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.6;">💡 Popular: 16:8, 18:6, or OMAD (24h).</div>'
-    +'<button class="btn-secondary" onclick="document.getElementById(\'fasting-menu\').remove()">Close</button>'
+    +'<button class="btn-secondary" style="margin-top:12px;" onclick="document.getElementById(\'fasting-menu\').remove()">Close</button>'
     +'</div>';
   document.body.appendChild(modal);
 }
+
+// Returns the metabolic "stage" the user is in based on hours since last meal.
+// Stages are simplified from physiology research (glycogen depletion → ketosis →
+// autophagy onset → deeper autophagy). Educational, not medical advice.
+function getFastingStage(hours){
+  if(hours < 4) return {name:'🍴 Fed state', desc:'Body is digesting and using glucose for fuel.'};
+  if(hours < 8) return {name:'🔄 Early fasting', desc:'Insulin drops, body starts pulling stored glucose from liver.'};
+  if(hours < 12) return {name:'⚡ Glycogen burn', desc:'Liver glycogen depleting. Energy levels can dip — drink water.'};
+  if(hours < 16) return {name:'🔥 Fat burn begins', desc:'Glycogen mostly gone. Body starts shifting to fat for fuel.'};
+  if(hours < 20) return {name:'🌱 Mild ketosis', desc:'Ketones rising. Some experience mental clarity around now.'};
+  if(hours < 24) return {name:'✨ Autophagy onset', desc:'Cellular cleanup begins — old/damaged cells get recycled.'};
+  if(hours < 36) return {name:'💪 Deep autophagy', desc:'Cell repair amplified. Growth hormone elevated.'};
+  return {name:'🚀 Extended fast', desc:'You\'re in deep fasted state. Listen to your body — break gently.'};
+}
+
+// Reset the fasting "anchor" to now — useful when user forgot to log
+// their last meal but knows when they actually finished eating.
+function manualStartFast(){
+  if(!confirm('Set last meal time to NOW? This restarts your fasting timer from this moment.')) return;
+  localStorage.setItem('gn_last_eaten_at', Date.now());
+  var modal = document.getElementById('fasting-menu');
+  if(modal) modal.remove();
+  renderFastingTimer();
+  showToast('✓ Fasting timer started');
+}
+
 function setFastingTarget(hours){
   localStorage.setItem('gn_fasting_target', hours);
   var modal = document.getElementById('fasting-menu');
@@ -10036,6 +10683,62 @@ function deleteTemplate(idx){
 // ══════════════════════════════════════════════════════════════════════
 function loadMeasurements(){ try{return JSON.parse(localStorage.getItem('gn_measurements')||'[]');}catch(e){return[];} }
 function saveMeasurementsList(m){ localStorage.setItem('gn_measurements',JSON.stringify(m)); }
+// ──────────────────────────────────────────────────────────────────────
+// HAND PORTION GUIDE
+// ──────────────────────────────────────────────────────────────────────
+// Quick reference for portion sizing without a food scale. Useful when
+// eating out, traveling, or any time precise weighing isn't practical.
+// Uses standard portion-by-hand-size guidance from sports nutrition.
+// ──────────────────────────────────────────────────────────────────────
+
+function showPortionGuide(){
+  var modal = document.getElementById('portion-guide-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'portion-guide-modal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+  var row = function(emoji, name, equiv, examples){
+    return '<div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">'
+      + '<div style="font-size:32px;width:40px;text-align:center;flex-shrink:0;">'+emoji+'</div>'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:13px;font-weight:700;margin-bottom:2px;">'+name+'</div>'
+      + '<div style="font-size:11px;color:var(--accent2);font-weight:700;margin-bottom:3px;">'+equiv+'</div>'
+      + '<div style="font-size:11px;color:var(--muted);line-height:1.4;">'+examples+'</div>'
+      + '</div></div>';
+  };
+  modal.innerHTML = '<div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">'
+    + '<div class="modal-handle"></div>'
+    + '<div class="modal-title">✋ Hand Portion Guide</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5;">No food scale handy? Use your own hand as a reference. Bigger people have bigger hands — the math scales naturally.</div>'
+    + row('✊', 'Palm (no fingers/thumb)', '≈ 4 oz / 113g protein', 'Chicken breast, fish fillet, ground beef, tofu')
+    + row('👊', 'Fist', '≈ 1 cup carbs / vegetables', 'Rice, pasta, oatmeal, broccoli, leafy greens')
+    + row('👍', 'Thumb', '≈ 1 tbsp / 14g fat', 'Butter, peanut butter, oil, mayo')
+    + row('🤲', 'Cupped hand', '≈ 1/2 cup grains/fruit', 'Berries, sliced fruit, cooked grains, beans')
+    + row('🖐️', 'Two cupped hands', '≈ 1-1.5 cups raw veg', 'Salad greens, raw vegetables')
+    + '<div style="background:var(--bg4);border-radius:10px;padding:12px;margin-top:14px;">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">📏 Quick rules of thumb</div>'
+    + '<ul style="font-size:11px;color:var(--muted);line-height:1.7;padding-left:20px;margin:0;">'
+    + '<li>1 deck of cards ≈ 3 oz of meat</li>'
+    + '<li>1 tennis ball ≈ 1/2 cup of fruit or veg</li>'
+    + '<li>1 baseball ≈ 1 cup of pasta or rice</li>'
+    + '<li>4 dice ≈ 1 oz of cheese</li>'
+    + '<li>1 ping-pong ball ≈ 2 tbsp of nut butter</li>'
+    + '</ul></div>'
+    + '<div style="background:rgba(245,158,11,.06);border:1px solid var(--sugar);border-radius:10px;padding:10px;margin-top:10px;">'
+    + '<div style="font-size:11px;color:var(--muted);line-height:1.5;">⚠️ These are estimates — within ±20% of true weight. For precision, use a scale. For consistency in the real world, your hand works fine.</div>'
+    + '</div>'
+    + '<button class="btn-secondary" style="margin-top:14px;" onclick="closePortionGuide()">Close</button>'
+    + '</div>';
+  modal.classList.add('open');
+}
+
+function closePortionGuide(){
+  var modal = document.getElementById('portion-guide-modal');
+  if(modal) modal.classList.remove('open');
+}
+
 function showMeasurementsModal(){
   var logs = loadMeasurements();
   var today = logs.find(function(e){return e.date===dateKey(0);}) || {};
@@ -10690,7 +11393,9 @@ var SYNC_KEYS = [
   // privacy settings, onboarding completion flag.
   'gn_profile','gn_user_profile','gn_barcode_corrections',
   'gn_privacy','gn_onboarding_done','gn_weekly_summary_dismissed',
-  'gn_streak_freezes'
+  'gn_streak_freezes','gn_adaptive_dismissed','gn_adaptive_history',
+  'gn_eod_dismissed','gn_eod_insight_cache','gn_fasting_target',
+  'gn_carb_cycle'
 ];
 
 function setAuthMode(mode){
