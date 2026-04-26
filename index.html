@@ -370,6 +370,7 @@ fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){co
     <div class="cal-summary" id="cal-summary" onclick="showNutritionDetail()" style="cursor:pointer;"></div>
 
     <div id="water-bar" style="margin:10px 16px 0;"></div>
+    <div id="trial-banner" style="margin:8px 16px 0;"></div>
     <div id="fasting-timer-bar" style="margin:8px 16px 0;"></div>
     <div style="margin:8px 16px 0;"><button onclick="if(isPro())showMealPlanModal();else showProPaywall('AI Meal Planner',null)" style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:13px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;"><span style="font-size:22px;">&#x1F37D;&#xFE0F;</span><div><div style="font-size:14px;font-weight:700;color:var(--text);">Generate Meal Plan</div><div style="font-size:11px;color:var(--muted);">AI builds a full day from your goals</div></div><span style="margin-left:auto;color:var(--accent2);font-size:18px;">&#x203A;</span></button></div>
     <!-- Quick re-add recent foods -->
@@ -1739,6 +1740,8 @@ async function selectCnfResult(idx){
 }
 
 function renderQuickRecent(){
+  // Trial banner first (highest priority for new users)
+  renderTrialBanner();
   // Adaptive calorie target check + weekly summary + end-of-day insight + hints.
   // All appear above quick-log.
   renderAdaptiveTargetPrompt();
@@ -2272,6 +2275,66 @@ function dismissEndOfDayInsight(){
   localStorage.setItem('gn_eod_dismissed', dateKey(0));
   var el = document.getElementById('end-of-day-insight');
   if(el) el.innerHTML = '';
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// FREE TRIAL BANNER
+// ──────────────────────────────────────────────────────────────────────
+// New signups get 7 days of Pro automatically. Banner shows on home with
+// days remaining + CTA to upgrade. Once expired, switches to a "trial
+// ended" prompt with Subscribe button. Dismissable but reappears on home
+// (since trial state is important to surface).
+// ──────────────────────────────────────────────────────────────────────
+
+function renderTrialBanner(){
+  var el = document.getElementById('trial-banner');
+  if(!el) return;
+  // Don't show on backward day navigation
+  if(typeof dayOffset !== 'undefined' && dayOffset !== 0){ el.innerHTML = ''; return; }
+
+  var state = getTrialState();
+  // Paid users — don't show
+  if(state === 'paid'){ el.innerHTML = ''; return; }
+  // Never started a trial yet — don't show (they're a guest or migrated user)
+  if(state === 'never'){ el.innerHTML = ''; return; }
+
+  if(state === 'active'){
+    var days = getTrialDaysRemaining();
+    // For days 1-3, low-key banner; for days 4-7, more prominent
+    var urgent = days <= 3;
+    var bg = urgent
+      ? 'linear-gradient(135deg,rgba(245,158,11,.18),rgba(99,87,255,.10))'
+      : 'linear-gradient(135deg,rgba(99,87,255,.12),rgba(45,212,160,.06))';
+    var border = urgent ? 'var(--sugar)' : 'var(--accent)';
+    el.innerHTML = '<div style="background:'+bg+';border:1px solid '+border+';border-radius:12px;padding:12px;display:flex;align-items:center;gap:12px;">'
+      + '<div style="font-size:24px;">'+(urgent ? '⏰' : '⭐')+'</div>'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--text);">Genesis Pro — '+days+' day'+(days===1?'':'s')+' left</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4;">'+(urgent ? 'Trial ends soon. Upgrade to keep AI features.' : 'Free trial active. All features unlocked.')+'</div>'
+      + '</div>'
+      + '<button onclick="showProUpgradeFromTrial()" style="background:'+(urgent?'var(--sugar)':'var(--accent)')+';color:#fff;border:none;border-radius:8px;padding:7px 12px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;">'+(urgent?'Upgrade':'$5/mo')+'</button>'
+      + '</div>';
+  } else if(state === 'expired'){
+    el.innerHTML = '<div style="background:linear-gradient(135deg,rgba(255,107,107,.10),rgba(245,158,11,.08));border:1px solid var(--sugar);border-radius:12px;padding:12px;display:flex;align-items:center;gap:12px;">'
+      + '<div style="font-size:24px;">⏰</div>'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--text);">Free trial ended</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4;">AI features locked. Upgrade for $5/mo to unlock again.</div>'
+      + '</div>'
+      + '<button onclick="showProUpgradeFromTrial()" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-family:DM Sans,sans-serif;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;">Upgrade</button>'
+      + '</div>';
+  }
+}
+
+// Called from the trial banner upgrade button. Routes to the existing
+// Stripe checkout flow with a contextual prompt.
+function showProUpgradeFromTrial(){
+  // Reuse existing paywall/upgrade flow
+  if(typeof showProPaywall === 'function'){
+    showProPaywall('Genesis Pro', null);
+  } else {
+    showToast('Upgrade unavailable. Try again later.');
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -6110,10 +6173,49 @@ document.addEventListener('DOMContentLoaded', function(){
 // ══════════════════════════════════════════════════════════════════════
 // CORE HELPERS
 // ══════════════════════════════════════════════════════════════════════
+// Returns true if user has access to Pro features. Three paths:
+//   1. They paid (gn_pro_paid)
+//   2. They have lifetime Pro from admin grant
+//   3. They're inside their 7-day free trial window
 function isPro(){
-  return localStorage.getItem('gn_pro_paid')==='true'
-    || sessionStorage.getItem('gn_pro_session')==='true'
-    || sessionStorage.getItem('gn_lifetime_pro')==='true';
+  if(localStorage.getItem('gn_pro_paid')==='true') return true;
+  if(sessionStorage.getItem('gn_pro_session')==='true') return true;
+  if(sessionStorage.getItem('gn_lifetime_pro')==='true') return true;
+  // Trial check
+  return isTrialActive();
+}
+
+// Check whether the user is currently in their 7-day free trial window.
+// Trial starts when account is created (handled in handlePostSignup).
+function isTrialActive(){
+  var startTs = parseInt(localStorage.getItem('gn_trial_started_at')||'0');
+  if(!startTs) return false;
+  var SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  return (Date.now() - startTs) < SEVEN_DAYS_MS;
+}
+
+// Number of days remaining in trial (rounded up). 0 if trial expired/never started.
+function getTrialDaysRemaining(){
+  var startTs = parseInt(localStorage.getItem('gn_trial_started_at')||'0');
+  if(!startTs) return 0;
+  var SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  var elapsed = Date.now() - startTs;
+  if(elapsed >= SEVEN_DAYS_MS) return 0;
+  return Math.ceil((SEVEN_DAYS_MS - elapsed) / (24 * 60 * 60 * 1000));
+}
+
+// Has the user EVER used a trial? Used to prevent re-trial on account deletion+recreation.
+function hasUsedTrial(){
+  return !!localStorage.getItem('gn_trial_started_at');
+}
+
+// Returns trial state for UI: 'never', 'active', 'expired', or 'paid'
+function getTrialState(){
+  if(localStorage.getItem('gn_pro_paid')==='true') return 'paid';
+  if(sessionStorage.getItem('gn_lifetime_pro')==='true') return 'paid';
+  if(!hasUsedTrial()) return 'never';
+  if(isTrialActive()) return 'active';
+  return 'expired';
 }
 function getGoals(){ return loadGoals(); }
 function copyYesterday(){
@@ -6371,12 +6473,27 @@ function showProPaywall(feature, onUnlock){
       + alternatives.map(function(a){ return '<li style="font-size:13px;color:var(--text);padding:4px 0;line-height:1.5;">• '+a+'</li>'; }).join('')
       + '</ul></div>';
   }
+  // Trial-state-aware messaging
+  var trialState = getTrialState();
+  var trialBlurb = '';
+  var subheadline = 'This feature uses AI and requires Genesis Pro.';
+  if(trialState === 'never'){
+    // Brand-new user who hasn't started a trial yet (e.g. migrated user)
+    trialBlurb = '<div style="background:linear-gradient(135deg,rgba(45,212,160,.15),rgba(99,87,255,.08));border:1px solid var(--fiber);border-radius:12px;padding:12px;margin-bottom:14px;text-align:center;">'
+      + '<div style="font-size:13px;font-weight:700;color:var(--fiber);margin-bottom:4px;">🎁 7-day free trial available</div>'
+      + '<div style="font-size:11px;color:var(--muted);line-height:1.5;">Try all Pro features free for a week. No card required to start.</div>'
+      + '<button onclick="startFreeTrial()" style="background:var(--fiber);color:#0a0a12;border:none;border-radius:8px;padding:9px 16px;font-family:DM Sans,sans-serif;font-size:13px;font-weight:700;cursor:pointer;margin-top:10px;">Start 7-day Free Trial</button>'
+      + '</div>';
+  } else if(trialState === 'expired'){
+    subheadline = 'Your free trial has ended. Subscribe to keep using AI features.';
+  }
   overlay.innerHTML='<div style="background:var(--bg2);border-radius:24px 24px 0 0;border:1px solid var(--border2);width:100%;max-width:480px;padding:24px 20px 40px;max-height:90vh;overflow-y:auto;">'
     +'<div style="text-align:center;margin-bottom:16px;">'
     +'<div style="font-size:38px;margin-bottom:8px;">⭐</div>'
     +'<div style="font-family:Syne,sans-serif;font-size:22px;font-weight:800;margin-bottom:6px;">'+feature+' is Pro</div>'
-    +'<div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:4px;">This feature uses AI and requires Genesis Pro.</div>'
+    +'<div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:4px;">'+subheadline+'</div>'
     +'</div>'
+    +trialBlurb
     +altHtml
     +'<button onclick="startCheckout()" style="width:100%;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:var(--r1);padding:14px;font-family:DM Sans,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;">Upgrade to Pro — $4.99/month</button>'
     +'<div style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:14px;">Cancel anytime · Secure via Stripe</div>'
@@ -6392,6 +6509,21 @@ function showProPaywall(feature, onUnlock){
   overlay.style.display='flex';
   overlay._onUnlock=onUnlock;
   setTimeout(function(){var el=document.getElementById('overlay-promo-input');if(el)el.focus();},300);
+}
+
+// Manually start the 7-day free trial. Called from the paywall when user
+// taps "Start 7-day Free Trial". Only works once per account — once trial
+// is started or expired, this won't grant a new one.
+function startFreeTrial(){
+  if(hasUsedTrial()){
+    showToast('You\'ve already used your free trial');
+    return;
+  }
+  localStorage.setItem('gn_trial_started_at', String(Date.now()));
+  var overlay = document.getElementById('pro-paywall-overlay');
+  if(overlay) overlay.style.display = 'none';
+  showToast('🎉 Free trial started! 7 days of Pro unlocked.', 5000);
+  if(typeof renderNutrition === 'function') renderNutrition();
 }
 
 function restorePurchase(){
@@ -11914,7 +12046,8 @@ var SYNC_KEYS = [
   'gn_privacy','gn_onboarding_done','gn_weekly_summary_dismissed',
   'gn_streak_freezes','gn_adaptive_dismissed','gn_adaptive_history',
   'gn_eod_dismissed','gn_eod_insight_cache','gn_fasting_target',
-  'gn_carb_cycle','gn_feature_stats','gn_hints_dismissed','gn_hints_off'
+  'gn_carb_cycle','gn_feature_stats','gn_hints_dismissed','gn_hints_off',
+  'gn_trial_started_at'
 ];
 
 function setAuthMode(mode){
@@ -12359,9 +12492,15 @@ async function handlePostSignup(user){
   }
   localStorage.removeItem('gn_guest_mode');
   hideAuthGate();
-  // Brand new signup with no migrated data → run onboarding flow.
-  // Migrating users skip it since they already have history.
+  // Brand new signup with no migrated data → start trial + run onboarding.
+  // Migrating users skip both since they already have history (and may have already used trial).
   if(!hasLocal){
+    // Start the 7-day Pro trial automatically. If they've never had a trial,
+    // grant one. We check this BEFORE setting so existing users (with synced
+    // gn_trial_started_at from another device) don't get a fresh trial.
+    if(!hasUsedTrial()){
+      localStorage.setItem('gn_trial_started_at', String(Date.now()));
+    }
     setTimeout(function(){
       try { startOnboarding(); } catch(e){ console.error('[onboarding] failed to start:', e); }
     }, 800);
